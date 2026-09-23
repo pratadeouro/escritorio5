@@ -1,0 +1,113 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: var(--primary-color);
+  --color-app-bg: var(--bg-color);
+  --color-app-surface: var(--surface-color);
+  --color-app-border: var(--border-color);
+  --color-app-text: var(--text-color);
+  --color-app-text-muted: var(--text-muted-color);
+  --color-app-secondary: var(--secondary-color);
+  
+  --color-slate-50: #f8fafc;
+  --color-slate-100: #f1f5f9;
+  --color-slate-200: #e2e8f0;
+  --color-slate-300: #cbd5e1;
+  --color-slate-400: #94a3b8;
+  --color-slate-500: #64748b;
+  --color-slate-600: #475569;
+  --color-slate-700: #334155;
+  --color-slate-800: #1e293b;
+  --color-slate-900: #0f172a;
+  --color-slate-950: #020617;
+}
+
+@layer base {
+  :root {
+    --primary-color: #4f46e5; /* Indigo 600 */
+    --bg-color: #fafafa; /* Zinc 50 - Neutral background */
+    --surface-color: #ffffff; /* White cards */
+    --border-color: #e4e4e7; /* Zinc 200 - Neutral border */
+    --text-color: #09090b; /* Zinc 950 */
+    --text-muted-color: #71717a; /* Zinc 500 */
+    --secondary-color: #f4f4f5; /* Zinc 100 */
+    color-scheme: light;
+  }
+  
+  .dark {
+    --primary-color: #6366f1; /* Indigo 500 */
+    --bg-color: #0f172a; /* Slate 900 - Less harsh than 950 */
+    --surface-color: #1e293b; /* Slate 800 */
+    --border-color: #334155; /* Slate 700 */
+    --text-color: #f8fafc; /* Slate 50 */
+    --text-muted-color: #94a3b8; /* Slate 400 */
+    --secondary-color: #1e293b; /* Slate 800 */
+    color-scheme: dark;
+  }
+
+  html, body, #root {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+  }
+
+  body {
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    @apply transition-colors duration-300;
+  }
+
+  ::selection {
+    background-color: var(--primary-color);
+    color: white;
+  }
+}
+
+/* Scrollbar Utilities */
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  
+  .scrollbar-thumb-app-border::-webkit-scrollbar-thumb {
+    background-color: var(--border-color);
+    border-radius: 10px;
+  }
+  
+  .scrollbar-track-transparent::-webkit-scrollbar-track {
+    background-color: transparent;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 5px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 10px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted-color);
+  }
+}
+
+/* Utility for dynamic primary color */
+.bg-primary { background-color: var(--primary-color); }
+.text-primary { color: var(--primary-color); }
+.border-primary { border-color: var(--primary-color); }
+.ring-primary { --tw-ring-color: var(--primary-color); }
+.accent-primary { accent-color: var(--primary-color); }
+
+@keyframes loading {
+  0% { transform: translateX(-100%); }
+  50% { transform: translateX(100%); }
+  100% { transform: translateX(-100%); }
+}

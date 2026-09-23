@@ -1,0 +1,55 @@
+name: Auto Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Configurar chave SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+
+      - name: Deploy
+        run: |
+          ssh \
+            -i ~/.ssh/id_rsa \
+            -p 22022 \
+            -o StrictHostKeyChecking=no \
+            -o HostKeyAlgorithms=+ssh-rsa \
+            -o PubkeyAcceptedAlgorithms=+ssh-rsa \
+            root@${{ secrets.SERVER_HOST }} << 'EOF'
+
+          set -e
+
+          cd /home/auto/escritorio5
+
+          echo "Atualizando código..."
+          git fetch origin
+          git reset --hard origin/main
+
+          echo "Instalando dependências..."
+          npm install
+
+          echo "Build do frontend..."
+          npm run build
+
+          echo "Reiniciando backend..."
+          pm2 restart escritorio-backend
+
+          echo "Salvando configuração..."
+          pm2 save
+
+          echo "Deploy finalizado!"
+
+          EOF
