@@ -14,21 +14,19 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Configurar chave SSH
+      - name: Instalar sshpass
         run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_rsa
-          chmod 600 ~/.ssh/id_rsa
+          sudo apt-get update
+          sudo apt-get install -y sshpass
 
       - name: Deploy
         run: |
-          ssh \
-            -i ~/.ssh/id_rsa \
-            -p 22022 \
+          sshpass -p "${{ secrets.SERVER_PASSWORD }}" ssh \
+            -p "${{ secrets.SERVER_PORT }}" \
             -o StrictHostKeyChecking=no \
             -o HostKeyAlgorithms=+ssh-rsa \
             -o PubkeyAcceptedAlgorithms=+ssh-rsa \
-            root@${{ secrets.SERVER_HOST }} << 'EOF'
+            "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" << 'EOF'
 
           set -e
 
