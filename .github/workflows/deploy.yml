@@ -1,15 +1,15 @@
-name: Auto Deploy
+name: Auto Deploy - Homogolacao
 
 on:
   push:
     branches:
-      - main
+      - teste
 
 concurrency:
   group: production
   cancel-in-progress: true
 
-jobs:
+jobs: 
   deploy:
     runs-on: ubuntu-latest
 
@@ -30,11 +30,11 @@ jobs:
 
           set -e
 
-          cd /home/auto/escritorio5
-
+          cd /home/auto/escritorio5teste
+  
           echo "Atualizando código..."
           git fetch origin
-          git reset --hard origin/main
+          git reset --hard origin/teste
 
           echo "Instalando dependências..."
           npm install
@@ -43,7 +43,7 @@ jobs:
           npm run build
 
           echo "Reiniciando backend..."
-          pm2 restart escritorio-backend
+          pm2 restart escritorio-teste-backend
 
           echo "Salvando configuração..."
           pm2 save
