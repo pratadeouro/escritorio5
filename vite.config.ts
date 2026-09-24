@@ -25,20 +25,14 @@ export default defineConfig(({ mode }) => {
     server: {
       host: '0.0.0.0',
       port: 5173,
-      allowedHosts: [
-        'escritorio.walbermendonca.com.br',
-        'localhost'
-      ],
+      allowedHosts: true,
       hmr: process.env.DISABLE_HMR !== 'true',
     },
 
     preview: {
       host: '0.0.0.0',
       port: 5173,
-      allowedHosts: [
-        'escritorio.walbermendonca.com.br',
-        'localhost'
-      ]
+      allowedHosts: true,
     }
   };
 });

@@ -152,6 +152,10 @@ export default function Login() {
         <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-primary to-transparent" />
         
         <div className="text-center relative z-10">
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 mb-4">
+            <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+            Ambiente de homologação
+          </div>
           <div className="mx-auto h-20 w-20 bg-primary/10 rounded-2xl flex items-center justify-center mb-6 transform rotate-3 hover:rotate-0 transition-transform duration-300">
             <Scale className="h-12 w-12 text-primary" />
           </div>
@@ -159,7 +163,7 @@ export default function Login() {
             {officeName || 'LexGestão'}
           </h2>
           <p className="text-sm text-app-text-muted font-medium">
-            Sistema Integrado de Gestão Jurídica
+            Escritório Jurídico
           </p>
         </div>
 
