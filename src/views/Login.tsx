@@ -159,7 +159,7 @@ export default function Login() {
             {officeName || 'LexGestão'}
           </h2>
           <p className="text-sm text-app-text-muted font-medium">
-            Sistema Integrado de Gestão Jurídica
+            Escritório Jurídico
           </p>
         </div>
 
