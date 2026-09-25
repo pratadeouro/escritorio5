@@ -29,10 +29,10 @@ export const SupabaseMigrationTab: React.FC = () => {
   const { state, forceLoad } = useAppContext();
 
   const [supabaseUrl, setSupabaseUrl] = useState<string>(() => {
-    return localStorage.getItem('supabase_migration_url') || (import.meta as any).env.VITE_SUPABASE_URL || '';
+    return localStorage.getItem('supabase_migration_url') || (import.meta as any).env.VITE_SUPABASE_URL || 'https://qhxdujbsipgwthrgvncl.supabase.co';
   });
   const [supabaseKey, setSupabaseKey] = useState<string>(() => {
-    return localStorage.getItem('supabase_migration_key') || (import.meta as any).env.VITE_SUPABASE_ANON_KEY || '';
+    return localStorage.getItem('supabase_migration_key') || (import.meta as any).env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL';
   });
 
   const [isTesting, setIsTesting] = useState(false);
