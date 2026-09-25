@@ -17,6 +17,7 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { useAppContext } from '../context';
+import { isSupabaseConfigured } from '../services/supabaseService';
 import { 
   SUPABASE_SCHEMA_SQL, 
   testSupabaseConnection, 
@@ -26,7 +27,7 @@ import {
 } from '../services/supabaseMigration';
 
 export const SupabaseMigrationTab: React.FC = () => {
-  const { state, forceLoad } = useAppContext();
+  const { state, forceLoad, dataSource, setDataSource } = useAppContext();
 
   const [supabaseUrl, setSupabaseUrl] = useState<string>(() => {
     return localStorage.getItem('supabase_migration_url') || (import.meta as any).env.VITE_SUPABASE_URL || 'https://qhxdujbsipgwthrgvncl.supabase.co';
@@ -170,6 +171,59 @@ export const SupabaseMigrationTab: React.FC = () => {
             <RefreshCw size={14} className={state.syncStatus === 'loading' ? 'animate-spin' : ''} />
             Recarregar Dados da Planilha
           </button>
+        </div>
+      </div>
+
+      {/* Switch de Ativação da Fonte de Dados */}
+      <div className={`border-2 rounded-2xl p-6 transition-all ${
+        dataSource === 'supabase'
+          ? 'bg-emerald-500/5 border-emerald-500/30'
+          : 'bg-app-surface border-app-border'
+      }`}>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className={`w-3 h-3 rounded-full ${dataSource === 'supabase' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
+              <h3 className="font-bold text-app-text text-base">
+                Fonte de Dados em Uso:{' '}
+                <span className={dataSource === 'supabase' ? 'text-emerald-600 dark:text-emerald-400 font-extrabold' : 'text-amber-600 font-extrabold'}>
+                  {dataSource === 'supabase' ? 'Supabase (PostgreSQL)' : 'Google Sheets (Planilha)'}
+                </span>
+              </h3>
+            </div>
+            <p className="text-xs text-app-text-muted">
+              {dataSource === 'supabase'
+                ? 'O aplicativo está operando com altíssima performance conectado diretamente ao seu banco de dados Supabase.'
+                : 'O aplicativo está operando conectado à planilha Google Sheets. Após migrar os dados, clique no botão ao lado para ativar o Supabase.'}
+            </p>
+          </div>
+
+          <div className="flex items-center gap-3 shrink-0">
+            {dataSource === 'supabase' ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setDataSource('sheets');
+                  setTimeout(() => forceLoad(), 100);
+                }}
+                className="px-4 py-2 bg-app-bg border border-app-border hover:bg-app-secondary rounded-xl text-xs font-bold text-app-text transition-all"
+              >
+                Reverter para Google Sheets
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  setDataSource('supabase');
+                  setTimeout(() => forceLoad(), 100);
+                }}
+                className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md hover:shadow-emerald-500/20 transition-all"
+              >
+                <CheckCircle2 size={16} />
+                Ativar Supabase como Banco Principal
+              </button>
+            )}
+          </div>
         </div>
       </div>
 

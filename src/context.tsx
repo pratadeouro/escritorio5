@@ -2,6 +2,27 @@ import React, { createContext, useContext, useState, ReactNode, useEffect, useRe
 import { AppState, Contato, Processo, Evento, Movimento, Transacao, Documento, Vara, Julgador, Escritorio, Usuario, Tarefa, Tribunal, View, RolePermission, Modelo, Etiqueta, TipoEnvolvimento, Envolvido, Calendario, UPJ, Recurso, Servidor, Forum, Lead, LeadStatus, DEFAULT_LEAD_STATUSES, LogRegistro } from './types';
 import { importFromGoogleSheets, generateId } from './services/googleSheets';
 import { saveAllDataToScript, saveLogToScript, upsertItemToScript, deleteItemFromScript, saveTableToScript } from './services/googleAppsScript';
+import { 
+  getActiveDataSource, 
+  setActiveDataSource, 
+  isSupabaseConfigured, 
+  fetchAllDataFromSupabase,
+  upsertProcessoSupabase,
+  deleteProcessoSupabase,
+  upsertContatoSupabase,
+  deleteContatoSupabase,
+  upsertTarefaSupabase,
+  deleteTarefaSupabase,
+  upsertEventoSupabase,
+  deleteEventoSupabase,
+  upsertFinanceiroSupabase,
+  deleteFinanceiroSupabase,
+  upsertMovimentoSupabase,
+  deleteMovimentoSupabase,
+  upsertItemGenericSupabase,
+  deleteItemGenericSupabase,
+  saveLogSupabase
+} from './services/supabaseService';
 
 const safeAlert = (message: string) => {
   console.warn('[System Message]', message);
@@ -165,6 +186,8 @@ interface AppContextType {
   deleteEnvolvimento: (id: string) => void;
   applyTheme: (theme: 'light' | 'dark' | 'system', primary: string, bg: string, secondary: string, officeName?: string) => void;
   setViewParams: (params: any) => void;
+  dataSource: 'supabase' | 'sheets';
+  setDataSource: (source: 'supabase' | 'sheets') => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -210,6 +233,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [authenticatedUserEmail, setAuthenticatedUserEmail] = useState<string | null>(() => {
     return localStorage.getItem('advocacia_user_email');
   });
+
+  const [dataSource, setDataSourceState] = useState<'supabase' | 'sheets'>(getActiveDataSource);
+
+  const setDataSource = useCallback((source: 'supabase' | 'sheets') => {
+    setActiveDataSource(source);
+    setDataSourceState(source);
+  }, []);
 
   const [escritorioAtivoId, setEscritorioAtivoIdState] = useState<string | null>(() => {
     const stored = localStorage.getItem('advocacia_escritorio_ativo');
@@ -562,9 +592,82 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
 
     try {
+      // 1. Salvamento atômico direto no Supabase (se configurado)
+      if (isSupabaseConfigured() && record) {
+        try {
+          if (acao === 'ADD_PROCESSO' || acao === 'UPDATE_PROCESSO') {
+            await upsertProcessoSupabase(record);
+          } else if (acao === 'DELETE_PROCESSO') {
+            await deleteProcessoSupabase(record?.id || record);
+          } else if (acao === 'ADD_CONTATO' || acao === 'UPDATE_CONTATO') {
+            await upsertContatoSupabase(record);
+          } else if (acao === 'DELETE_CONTATO') {
+            await deleteContatoSupabase(record?.id || record);
+          } else if (acao === 'ADD_TAREFA' || acao === 'UPDATE_TAREFA') {
+            await upsertTarefaSupabase(record);
+          } else if (acao === 'DELETE_TAREFA') {
+            await deleteTarefaSupabase(record?.ID_TAREFA || record?.id || record);
+          } else if (acao === 'ADD_EVENTO' || acao === 'UPDATE_EVENTO') {
+            await upsertEventoSupabase(record);
+          } else if (acao === 'DELETE_EVENTO') {
+            await deleteEventoSupabase(record?.id || record);
+          } else if (acao === 'ADD_MOVIMENTO' || acao === 'UPDATE_MOVIMENTO') {
+            await upsertMovimentoSupabase(record);
+          } else if (acao === 'DELETE_MOVIMENTO') {
+            await deleteMovimentoSupabase(record?.id || record);
+          } else if (acao === 'ADD_TRANSACAO' || acao === 'UPDATE_TRANSACAO') {
+            await upsertFinanceiroSupabase(record);
+          } else if (acao === 'DELETE_TRANSACAO') {
+            await deleteFinanceiroSupabase(record?.id || record);
+          } else if (acao === 'ADD_DOCUMENTO' || acao === 'UPDATE_DOCUMENTO') {
+            await upsertItemGenericSupabase('documentos', {
+              id: record.id,
+              titulo: record.titulo,
+              tipo: record.tipo || null,
+              processo_id: record.processoId || null,
+              data_criacao: record.dataCriacao ? new Date(record.dataCriacao).toISOString() : new Date().toISOString(),
+              conteudo: record.conteudo || null,
+              escritorio_id: record.escritorioId || null,
+              url: record.url || null,
+              data_upload: record.dataUpload ? new Date(record.dataUpload).toISOString() : null,
+            });
+          } else if (acao === 'DELETE_DOCUMENTO') {
+            await deleteItemGenericSupabase('documentos', record?.id || record);
+          } else if (acao === 'ADD_ETIQUETA' || acao === 'UPDATE_ETIQUETA') {
+            await upsertItemGenericSupabase('etiquetas', {
+              id: record.id,
+              nome: record.nome,
+              cor: record.cor || null,
+              escritorio_id: record.escritorioId || null,
+            });
+          } else if (acao === 'DELETE_ETIQUETA') {
+            await deleteItemGenericSupabase('etiquetas', record?.id || record);
+          } else if (acao === 'ADD_LEAD' || acao === 'UPDATE_LEAD') {
+            await upsertItemGenericSupabase('leads', {
+              id: record.id,
+              numero: record.numero || null,
+              classe: record.classe || null,
+              tribunal: record.tribunal || null,
+              orgao: record.orgao || null,
+              partes: record.partes || null,
+              advogados: record.advogados || null,
+              status: record.status || 'Novo',
+              escritorio_id: record.escritorioId || null,
+              resumo: record.resumo || null,
+              prioridade: record.prioridade || 'Média',
+            });
+          } else if (acao === 'DELETE_LEAD') {
+            await deleteItemGenericSupabase('leads', record?.id || record);
+          }
+          await saveLogSupabase(newLog);
+        } catch (sbErr) {
+          console.warn('[Supabase] Falha ao salvar atomicamente no Supabase:', sbErr);
+        }
+      }
+
       const scriptUrl = newStateWithLog.settings.scriptUrl;
 
-      // Executa salvamento atômico direto para máxima segurança multiusuário
+      // 2. Executa salvamento atômico direto na planilha para dual-write / redundância
       if (scriptUrl && record) {
         try {
           if (acao === 'ADD_ETIQUETA' || acao === 'UPDATE_ETIQUETA') {
@@ -1306,7 +1409,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       // Phase 1: Only core if not logged in
       const shouldLoadFull = isFullLoad || !!authenticatedUserEmail;
-      const importedData = await importFromGoogleSheets(stateRef.current.settings.spreadsheetId, !shouldLoadFull);
+      let importedData: Partial<AppState>;
+
+      if (getActiveDataSource() === 'supabase' && isSupabaseConfigured()) {
+        try {
+          importedData = await fetchAllDataFromSupabase(!shouldLoadFull);
+        } catch (sbErr) {
+          console.warn('[Supabase] Falha ao carregar do Supabase, tentando Sheets...', sbErr);
+          importedData = await importFromGoogleSheets(stateRef.current.settings.spreadsheetId, !shouldLoadFull);
+        }
+      } else {
+        importedData = await importFromGoogleSheets(stateRef.current.settings.spreadsheetId, !shouldLoadFull);
+      }
       
       const now = new Date().toISOString();
       setState(prevState => {
@@ -2480,7 +2594,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const setSelectedProcessId = useCallback((id: string | undefined) => setState(s => ({ ...s, selectedProcessId: id })), []);
   
   const forceLoad = useCallback(async () => {
-    if (!state.settings.spreadsheetId) {
+    const isSupabaseActive = getActiveDataSource() === 'supabase' && isSupabaseConfigured();
+
+    if (!isSupabaseActive && !state.settings.spreadsheetId) {
       setState(s => ({ ...s, syncStatus: 'error' }));
       safeAlert('Por favor, configure o ID da Planilha nas Configurações.');
       setTimeout(() => setState(s => ({ ...s, syncStatus: 'idle' })), 3000);
@@ -2490,7 +2606,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setIsImporting(true);
     setState(s => ({ ...s, syncStatus: 'loading' }));
     try {
-      const data = await importFromGoogleSheets(state.settings.spreadsheetId);
+      let data: Partial<AppState>;
+      if (isSupabaseActive) {
+        data = await fetchAllDataFromSupabase(false);
+      } else {
+        data = await importFromGoogleSheets(state.settings.spreadsheetId);
+      }
       const now = new Date().toISOString();
       setState(s => {
         const allSettings = data.allSettings || s.allSettings;
@@ -2506,14 +2627,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           lastSyncTime: now,
           syncLogs: [{
             timestamp: now,
-            action: 'Carga Forçada',
+            action: isSupabaseActive ? 'Carga Supabase' : 'Carga Forçada',
             status: 'success' as const,
-            details: 'Recarregamento total concluído.'
+            details: isSupabaseActive ? 'Dados recarregados diretamente do banco Supabase.' : 'Recarregamento total concluído.'
           }, ...s.syncLogs].slice(0, 20),
           hasLoaded: true
         };
       });
-      console.log('Dados carregados manualmente da planilha');
+      console.log(`Dados carregados com sucesso (${isSupabaseActive ? 'Supabase' : 'Planilha'})`);
     } catch (error) {
       console.error('Erro ao carregar dados:', error);
       const now = new Date().toISOString();
@@ -2522,7 +2643,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         syncStatus: 'error',
         syncLogs: [{
           timestamp: now,
-          action: 'Erro Carga Forçada',
+          action: isSupabaseActive ? 'Erro Carga Supabase' : 'Erro Carga Forçada',
           status: 'error' as const,
           details: error instanceof Error ? error.message : String(error)
         }, ...s.syncLogs].slice(0, 20)
@@ -2531,7 +2652,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     } finally {
       setIsImporting(false);
     }
-  }, [state.settings.spreadsheetId]);
+  }, [state.settings.spreadsheetId, escritorioAtivoId]);
 
   const forceSave = useCallback(async () => {
     if (isSyncingRef.current) {
@@ -2734,6 +2855,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     deleteEnvolvimento,
     applyTheme,
     setViewParams,
+    dataSource,
+    setDataSource,
     lastSyncTime: state.lastSyncTime,
     syncLogs: state.syncLogs,
   }), [
@@ -2823,6 +2946,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     deleteEnvolvimento,
     applyTheme,
     setViewParams,
+    dataSource,
+    setDataSource,
   ]);
 
   return (
