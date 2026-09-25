@@ -521,7 +521,29 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [state.usuarios, state.escritorios, state.settings.scriptUrl, setEscritorioAtivoId]);
 
   const logout = useCallback(async () => {
-    // Verificar se há sincronização pendente ou em curso
+    // 1. MODO SUPABASE: Logout limpo e imediato sem risco de perda de planilha
+    if (dataSource === 'supabase') {
+      try {
+        await signOutSupabase();
+      } catch (e) {
+        console.warn('Aviso ao deslogar do Supabase:', e);
+      }
+
+      setAuthenticatedUserEmail(null);
+      localStorage.removeItem('advocacia_user_email');
+      setEscritorioAtivoIdState(null);
+      localStorage.removeItem('advocacia_escritorio_ativo');
+
+      setState(prevState => ({
+        ...initialState,
+        settings: prevState.settings,
+        syncStatus: 'idle',
+        hasLoaded: false
+      }));
+      return;
+    }
+
+    // 2. MODO GOOGLE SHEETS: Mantém todas as verificações de salvaguarda da planilha
     const currentStateString = JSON.stringify({
       c: stateRef.current.contatos, p: stateRef.current.processos, e: stateRef.current.eventos, m: stateRef.current.movimentos,
       f: stateRef.current.financeiro, t: stateRef.current.tarefas, esc: stateRef.current.escritorios, u: stateRef.current.usuarios
@@ -583,7 +605,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }));
 
     setIsLoggingOut(false);
-  }, [authenticatedUserEmail, escritorioAtivoId]);
+  }, [authenticatedUserEmail, escritorioAtivoId, dataSource]);
 
   // Helper for centralized logging of actions with record details and error handling
   const saveAndLog = useCallback(async (newState: AppState, acao: string, detalhes: string, record?: any) => {
@@ -1187,6 +1209,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return;
     }
 
+    // No modo Supabase, não executa o loop pesado de auto-save em massa do Google Sheets
+    // nem as travas de janela parada/suspensa. As gravações são pontuais e atômicas no PostgreSQL.
+    if (dataSource === 'supabase') {
+      return;
+    }
+
     if (isImporting) {
       skipNextSave.current = true;
       return;
@@ -1381,7 +1409,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     state.settings.scriptUrl,
     state.settings.permissions,
     isImporting,
-    currentUser // Added currentUser to dependencies
+    currentUser,
+    dataSource
   ]);
 
   // --- PERSISTENCE ---
@@ -2690,6 +2719,24 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [state.settings.spreadsheetId, escritorioAtivoId]);
 
   const forceSave = useCallback(async () => {
+    // 1. MODO SUPABASE: Gravações pontuais já estão ativas e persistidas no PostgreSQL
+    if (dataSource === 'supabase') {
+      const now = new Date().toISOString();
+      setState(s => ({
+        ...s,
+        syncStatus: 'idle',
+        lastSyncTime: now,
+        syncLogs: [{
+          timestamp: now,
+          action: 'Sincronia Supabase',
+          status: 'success' as const,
+          details: 'Banco de dados Supabase operando com sincronização atômica em tempo real.'
+        }, ...s.syncLogs].slice(0, 20)
+      }));
+      return;
+    }
+
+    // 2. MODO GOOGLE SHEETS: Mantém todas as proteções contra perda acidental da planilha
     if (isSyncingRef.current) {
       console.log('Sincronização manual impedida: Já existe um salvamento em curso.');
       return;
@@ -2795,7 +2842,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     } finally {
       isSyncingRef.current = false;
     }
-  }, [state.settings.scriptUrl, currentUser, escritorioAtivoId]);
+  }, [state.settings.scriptUrl, currentUser, escritorioAtivoId, dataSource]);
 
   const resetPassword = useCallback(async (email: string) => {
     return resetSupabasePassword(email);
