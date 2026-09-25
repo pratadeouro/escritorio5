@@ -329,8 +329,12 @@ export default function Dashboard() {
           <h1 className="text-2xl font-bold text-app-text tracking-tight">
             Olá{currentUser?.nome ? `, ${currentUser.nome.split(' ')[0]}` : ''}!
           </h1>
-          <p className="text-app-text-muted text-sm font-medium">
-            Bem-vindo ao painel do <span className="text-primary font-bold">{activeOfficeName}</span>
+          <p className="text-app-text-muted text-sm font-medium flex items-center gap-2 flex-wrap">
+            <span>Bem-vindo ao painel do <span className="text-primary font-bold">{activeOfficeName}</span></span>
+            <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+              Ambiente de Homologação
+            </span>
           </p>
         </div>
         {!isConfigured && (

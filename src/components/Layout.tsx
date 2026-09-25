@@ -206,9 +206,15 @@ export default function Layout({ children, currentView, onNavigate }: LayoutProp
         pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)] pl-[env(safe-area-inset-left,0px)]
       `}>
         <div className="h-16 flex items-center justify-between px-6 border-b border-app-border flex-shrink-0">
-          <div className="flex items-center space-x-2 text-primary overflow-hidden">
+          <div className="flex items-center space-x-2 text-primary overflow-hidden min-w-0">
             <Scale size={28} strokeWidth={2.5} className="shrink-0" />
-            <span className="text-xl font-bold tracking-tight text-app-text truncate">{officeName}</span>
+            <div className="flex flex-col min-w-0">
+              <span className="text-xl font-bold tracking-tight text-app-text truncate">{officeName}</span>
+              <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                Ambiente de Homologação
+              </span>
+            </div>
           </div>
           <button 
             className="lg:hidden text-app-text-muted hover:text-app-text"
@@ -385,10 +391,14 @@ export default function Layout({ children, currentView, onNavigate }: LayoutProp
               <Menu size={22} />
             </button>
             
-            <div className="hidden sm:flex items-center">
-              <h1 className="text-xl font-bold text-app-text tracking-tight">
+            <div className="flex items-center gap-2.5">
+              <h1 className="text-base sm:text-xl font-bold text-app-text tracking-tight truncate max-w-[150px] sm:max-w-none">
                 {activeOfficeName}
               </h1>
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 whitespace-nowrap">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                Ambiente de Homologação
+              </span>
             </div>
           </div>
 
