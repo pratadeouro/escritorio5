@@ -74,6 +74,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import Modal from '../components/Modal';
 import ImportTab from '../components/ImportTab';
+import { SupabaseMigrationTab } from '../components/SupabaseMigrationTab';
 import { View, RolePermission, AppSettings } from '../types';
 import { checkSheetHeaders, fixSheetHeaders, sendTestEmail, sendTestEmailExternal } from '../services/googleAppsScript';
 import { 
@@ -248,7 +249,7 @@ export default function Settings() {
   };
 
   const [isSaved, setIsSaved] = useState(false);
-  const [activeTab, setActiveTab] = useState<'theme' | 'office' | 'email' | 'regional' | 'import'>('theme');
+  const [activeTab, setActiveTab] = useState<'theme' | 'office' | 'email' | 'regional' | 'import' | 'supabase'>('theme');
 
   const [isCheckingHeaders, setIsCheckingHeaders] = useState(false);
   const [headerReport, setHeaderReport] = useState<{ sheet: string; status: string; missingColumns: string[] }[] | null>(null);
@@ -973,6 +974,7 @@ export default function Settings() {
     { id: 'email', label: 'E-mail e Notificações', icon: <Mail size={18} /> },
     { id: 'regional', label: 'Regional', icon: <Globe size={18} /> },
     { id: 'import', label: 'Importar Processos', icon: <Upload size={18} /> },
+    { id: 'supabase', label: 'Migração Supabase', icon: <Database size={18} /> },
   ];
 
   const allMenuItems: { id: View; label: string; icon: React.ReactNode }[] = [
@@ -1839,9 +1841,13 @@ export default function Settings() {
           <ImportTab />
         )}
 
+        {activeTab === 'supabase' && (
+          <SupabaseMigrationTab />
+        )}
+
         {/* Bloqueio de interface removido para centralizar no Perfil/Preferências */}
 
-        {activeTab !== 'import' && (
+        {activeTab !== 'import' && activeTab !== 'supabase' && (
           <div className="flex items-center justify-end space-x-4">
             {isSaved && (
               <span className="text-emerald-600 dark:text-emerald-400 text-sm font-medium flex items-center">
