@@ -23,6 +23,12 @@ import {
   deleteItemGenericSupabase,
   saveLogSupabase
 } from './services/supabaseService';
+import { 
+  signInHybrid, 
+  signOutSupabase, 
+  getSupabaseSession, 
+  resetSupabasePassword 
+} from './services/supabaseAuth';
 
 const safeAlert = (message: string) => {
   console.warn('[System Message]', message);
@@ -162,6 +168,7 @@ interface AppContextType {
   login: (email: string, senha: string) => Promise<boolean>;
   loginWithGoogleEmail: (email: string) => Promise<boolean>;
   logout: () => void;
+  resetPassword: (email: string) => Promise<{ success: boolean; message: string }>;
   isImporting: boolean;
   lastSyncTime: string | null;
   syncLogs: Array<{timestamp: string, action: string, status: 'success' | 'error', details?: string}>;
@@ -255,6 +262,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       localStorage.removeItem('advocacia_escritorio_ativo');
     }
   }, []);
+
+  // Restaura sessão ativa do Supabase Auth se existir
+  useEffect(() => {
+    if (!isSupabaseConfigured()) return;
+
+    getSupabaseSession().then(session => {
+      if (session?.user?.email && !authenticatedUserEmail) {
+        console.log('[Supabase Auth] Restaurando sessão ativa detectada:', session.user.email);
+        setAuthenticatedUserEmail(session.user.email);
+        localStorage.setItem('advocacia_user_email', session.user.email);
+      }
+    }).catch(err => {
+      console.warn('Aviso ao verificar sessão do Supabase:', err);
+    });
+  }, [authenticatedUserEmail]);
 
   // Helper to apply theme to DOM
   const applyTheme = useCallback((theme: 'light' | 'dark' | 'system', primary: string, bg: string, secondary: string, officeName?: string) => {
@@ -373,34 +395,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const normalizedEmail = email.trim().toLowerCase();
     const normalizedSenha = senha.trim();
 
-    // Procura o usuário na lista carregada
-    // Search for user in the loaded list
+    // 1. Procura o usuário na lista carregada
     let user = state.usuarios.find(u => {
-      const matchEmail = u.email.trim().toLowerCase() === normalizedEmail;
-      // Handle password as string to avoid errors if it's a number in the sheet
+      const matchEmail = (u.email || '').trim().toLowerCase() === normalizedEmail;
       const matchSenha = (u.senha !== undefined && u.senha !== null) 
         ? u.senha.toString().trim() === normalizedSenha
         : false;
       return matchEmail && matchSenha;
     });
 
-    if (!user) {
-      console.warn(`Tentativa de login falhou para ${normalizedEmail}. Usuário não encontrado ou senha incorreta.`);
-      if (state.usuarios.length === 0) {
-        console.error('ERRO CRÍTICO: Lista de usuários está vazia. Verifique a conexão com a planilha.');
-      } else {
-        // Encontra o usuário por e-mail apenas, para dar feedback melhor (sem mostrar a senha)
-        const userByEmail = state.usuarios.find(u => u.email.trim().toLowerCase() === normalizedEmail);
-        if (userByEmail) {
-          console.warn(`E-mail ${normalizedEmail} encontrado, mas a senha não confere.`);
-        } else {
-          console.log(`E-mail ${normalizedEmail} NÃO encontrado na lista de ${state.usuarios.length} usuários.`);
-        }
-      }
-    }
-
     // Fallback para o administrador principal se a lista estiver vazia ou não contiver o usuário
-    // Aceita tanto o e-mail correto quanto o e-mail com o erro de digitação relatado pelo usuário
     if (!user && normalizedEmail === 'pratadeouro@gmail.com' && normalizedSenha === '12345') {
       user = {
         id: 'admin-fallback',
@@ -415,9 +419,33 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       };
     }
 
-    if (user) {
-      setAuthenticatedUserEmail(user.email);
-      localStorage.setItem('advocacia_user_email', user.email);
+    const userByEmail = user || state.usuarios.find(u => (u.email || '').trim().toLowerCase() === normalizedEmail);
+
+    // 2. Executa a Autenticação Híbrida Supabase (Opção 3)
+    let authSuccess = false;
+    if (isSupabaseConfigured()) {
+      try {
+        const hybridRes = await signInHybrid(normalizedEmail, normalizedSenha, userByEmail);
+        if (hybridRes.success) {
+          authSuccess = true;
+          if (!user && userByEmail) {
+            user = userByEmail;
+          }
+        } else {
+          console.warn('[Login Híbrido] Supabase Auth:', hybridRes.error);
+        }
+      } catch (authErr) {
+        console.warn('[Login Híbrido] Exceção ao autenticar com Supabase:', authErr);
+      }
+    }
+
+    // 3. Se autenticou com sucesso no Supabase OU confere credenciais locais (fallback)
+    if (authSuccess || user) {
+      const effectiveUser = user || userByEmail;
+      if (!effectiveUser) return false;
+
+      setAuthenticatedUserEmail(effectiveUser.email);
+      localStorage.setItem('advocacia_user_email', effectiveUser.email);
       
       // Limpa backup antigo pesado para liberar espaço (3MB cache issue)
       localStorage.removeItem('advocacia_data_backup');
@@ -425,22 +453,23 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       // Trigger full load after login
       handleImport(true);
       
-      if (user.escritoriosIds && user.escritoriosIds.length > 0) {
-        setEscritorioAtivoId(user.escritoriosIds[0]);
+      if (effectiveUser.escritoriosIds && effectiveUser.escritoriosIds.length > 0) {
+        setEscritorioAtivoId(effectiveUser.escritoriosIds[0]);
       }
       
       // Log de login
       if (state.settings.scriptUrl) {
         saveLogToScript(state.settings.scriptUrl, {
-          usuario: user.email,
+          usuario: effectiveUser.email,
           acao: 'LOGIN',
-          idEscritorio: user.escritoriosIds && user.escritoriosIds.length > 0 ? user.escritoriosIds[0] : '',
-          detalhes: `Usuário ${user.nome} logou no sistema.`
+          idEscritorio: effectiveUser.escritoriosIds && effectiveUser.escritoriosIds.length > 0 ? effectiveUser.escritoriosIds[0] : '',
+          detalhes: `Usuário ${effectiveUser.nome} logou no sistema (Autenticação Híbrida).`
         });
       }
       
       return true;
     }
+
     return false;
   }, [state.usuarios, state.escritorios, setEscritorioAtivoId]);
 
@@ -534,6 +563,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     // Limpar informações de autenticação
+    try {
+      await signOutSupabase();
+    } catch (e) {
+      console.warn('Aviso ao deslogar do Supabase:', e);
+    }
+
     setAuthenticatedUserEmail(null);
     localStorage.removeItem('advocacia_user_email');
     setEscritorioAtivoIdState(null);
@@ -2762,6 +2797,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   }, [state.settings.scriptUrl, currentUser, escritorioAtivoId]);
 
+  const resetPassword = useCallback(async (email: string) => {
+    return resetSupabasePassword(email);
+  }, []);
+
   const contextValue = React.useMemo(() => ({ 
     state, 
     addContato, 
@@ -2833,6 +2872,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     login,
     loginWithGoogleEmail,
     logout,
+    resetPassword,
     isAdmin,
     isImporting,
     currentUser,
@@ -2948,6 +2988,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setViewParams,
     dataSource,
     setDataSource,
+    resetPassword,
   ]);
 
   return (

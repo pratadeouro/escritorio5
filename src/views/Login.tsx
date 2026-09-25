@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAppContext } from '../context';
-import { Lock, Mail, Loader2, Scale, AlertCircle, Info } from 'lucide-react';
+import { Lock, Mail, Loader2, Scale, AlertCircle, Info, ShieldCheck, KeyRound, X as CloseIcon, CheckCircle2 } from 'lucide-react';
 import { CURRENT_APP_VERSION } from '../services/versionService';
 
 declare global {
@@ -10,7 +10,7 @@ declare global {
 }
 
 export default function Login() {
-  const { state, login, loginWithGoogleEmail, forceLoad, isImporting, activeOfficeName, escritorioAtivoId } = useAppContext();
+  const { state, login, loginWithGoogleEmail, forceLoad, isImporting, activeOfficeName, escritorioAtivoId, resetPassword } = useAppContext();
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
   const [error, setError] = useState('');
@@ -18,6 +18,12 @@ export default function Login() {
   const [isGoogleLoading, setIsGoogleLoading] = useState(false);
   const [cachedOfficeName, setCachedOfficeName] = useState('');
   const googleBtnRef = useRef<HTMLDivElement>(null);
+
+  // Estados para Recuperação de Senha (Supabase Auth)
+  const [isResetOpen, setIsResetOpen] = useState(false);
+  const [resetEmail, setResetEmail] = useState('');
+  const [isResetting, setIsResetting] = useState(false);
+  const [resetStatus, setResetStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Client ID do Google configurado no escritório ou nas configurações gerais
   const activeOffice = state.escritorios.find(e => e.id === escritorioAtivoId);
@@ -142,6 +148,25 @@ export default function Login() {
     }
   };
 
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resetEmail) return;
+    setIsResetting(true);
+    setResetStatus(null);
+    try {
+      const res = await resetPassword(resetEmail);
+      if (res.success) {
+        setResetStatus({ type: 'success', message: res.message });
+      } else {
+        setResetStatus({ type: 'error', message: res.message });
+      }
+    } catch (err: any) {
+      setResetStatus({ type: 'error', message: err.message || 'Erro ao enviar redefinição.' });
+    } finally {
+      setIsResetting(false);
+    }
+  };
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-app-bg p-4 transition-colors duration-700 relative overflow-hidden">
       {/* Background Decorative Elements */}
@@ -152,9 +177,15 @@ export default function Login() {
         <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-primary to-transparent" />
         
         <div className="text-center relative z-10">
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 mb-4">
-            <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
-            Ambiente de homologação
+          <div className="flex items-center justify-center gap-2 mb-4 flex-wrap">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+              Ambiente de homologação
+            </div>
+            <div className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+              <ShieldCheck size={13} />
+              Supabase Auth Híbrido
+            </div>
           </div>
           <div className="mx-auto h-20 w-20 bg-primary/10 rounded-2xl flex items-center justify-center mb-6 transform rotate-3 hover:rotate-0 transition-transform duration-300">
             <Scale className="h-12 w-12 text-primary" />
@@ -208,6 +239,19 @@ export default function Login() {
                   onChange={(e) => setSenha(e.target.value)}
                 />
               </div>
+              <div className="flex justify-end pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setResetEmail(email);
+                    setResetStatus(null);
+                    setIsResetOpen(true);
+                  }}
+                  className="text-xs font-semibold text-primary hover:underline transition-all"
+                >
+                  Esqueceu a senha?
+                </button>
+              </div>
             </div>
           </div>
 
@@ -239,6 +283,82 @@ export default function Login() {
           </p>
         </div>
       </div>
+
+      {/* Modal de Recuperação de Senha (Supabase Auth) */}
+      {isResetOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fadeIn">
+          <div className="bg-app-surface border border-app-border max-w-md w-full rounded-3xl p-6 shadow-2xl relative space-y-4">
+            <div className="flex items-center justify-between border-b border-app-border pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-primary/10 text-primary rounded-xl">
+                  <KeyRound size={20} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-app-text text-base">Recuperar Senha</h3>
+                  <p className="text-xs text-app-text-muted">Redefinição segura via Supabase Auth</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsResetOpen(false)}
+                className="text-app-text-muted hover:text-app-text p-1 rounded-lg"
+              >
+                <CloseIcon size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleResetPassword} className="space-y-4">
+              <p className="text-xs text-app-text-muted leading-relaxed">
+                Digite o seu e-mail cadastrado. Enviaremos um link seguro para você definir uma nova senha no Supabase.
+              </p>
+
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-app-text-muted uppercase">E-mail Cadastrado</label>
+                <div className="relative">
+                  <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 text-app-text-muted" size={16} />
+                  <input
+                    type="email"
+                    required
+                    value={resetEmail}
+                    onChange={(e) => setResetEmail(e.target.value)}
+                    placeholder="seuemail@adv.com.br"
+                    className="w-full pl-10 pr-3.5 py-2.5 rounded-xl border border-app-border bg-app-bg text-sm text-app-text focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                  />
+                </div>
+              </div>
+
+              {resetStatus && (
+                <div className={`p-3 rounded-xl text-xs flex items-center gap-2 ${
+                  resetStatus.type === 'success'
+                    ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
+                    : 'bg-red-500/10 text-red-600 border border-red-500/20'
+                }`}>
+                  {resetStatus.type === 'success' ? <CheckCircle2 size={16} className="shrink-0" /> : <AlertCircle size={16} className="shrink-0" />}
+                  <span>{resetStatus.message}</span>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsResetOpen(false)}
+                  className="px-4 py-2 text-xs font-semibold text-app-text-muted hover:text-app-text rounded-xl"
+                >
+                  Fechar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isResetting || !resetEmail}
+                  className="flex items-center gap-2 px-5 py-2.5 bg-primary hover:bg-primary/90 text-white text-xs font-bold rounded-xl shadow-md transition-all disabled:opacity-50"
+                >
+                  {isResetting ? <Loader2 size={14} className="animate-spin" /> : <Mail size={14} />}
+                  {isResetting ? 'Enviando...' : 'Enviar Link de Redefinição'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
