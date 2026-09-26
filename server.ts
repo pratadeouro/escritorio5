@@ -566,6 +566,119 @@ async function startServer() {
     }
   });
 
+  // API para importação em lote de usuários para o Supabase Auth
+  app.post("/api/supabase/import-users-batch", async (req, res) => {
+    const { users, defaultPassword = 'Mudar123!' } = req.body;
+    if (!Array.isArray(users) || users.length === 0) {
+      return res.status(400).json({ success: false, error: "Nenhum usuário informado para importação." });
+    }
+
+    const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://qhxdujbsipgwthrgvncl.supabase.co';
+    const supabaseKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL';
+    const hasServiceRole = !!process.env.SUPABASE_SECRET_KEY;
+
+    let createdCount = 0;
+    let alreadyRegisteredCount = 0;
+    const errors: Array<{ email: string; nome: string; error: string }> = [];
+
+    for (const u of users) {
+      const email = (u.email || '').trim().toLowerCase();
+      const nome = u.nome || 'Usuário';
+
+      if (!email || !email.includes('@') || !email.includes('.')) {
+        errors.push({ email: email || 'Não informado', nome, error: 'E-mail inválido ou vazio.' });
+        continue;
+      }
+
+      const rawPassword = (u.senha || defaultPassword).toString().trim();
+      const safePassword = rawPassword.length >= 6 ? rawPassword : rawPassword.padEnd(6, '0');
+
+      try {
+        if (hasServiceRole) {
+          const resp = await fetch(`${supabaseUrl}/auth/v1/admin/users`, {
+            method: "POST",
+            headers: {
+              "apikey": supabaseKey,
+              "Authorization": `Bearer ${supabaseKey}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              email,
+              password: safePassword,
+              email_confirm: true,
+              user_metadata: {
+                nome,
+                cargo: u.cargo || '',
+                permissao: u.permissao || 'user',
+                oab: u.oab || '',
+                cpf: u.cpf || ''
+              },
+            }),
+          });
+
+          const data = await resp.json();
+          if (resp.ok) {
+            createdCount++;
+          } else {
+            const msg = data.msg || data.message || JSON.stringify(data);
+            if (msg.includes('already registered') || msg.includes('already been registered')) {
+              alreadyRegisteredCount++;
+            } else {
+              errors.push({ email, nome, error: msg });
+            }
+          }
+        } else {
+          const resp = await fetch(`${supabaseUrl}/auth/v1/signup`, {
+            method: "POST",
+            headers: {
+              "apikey": supabaseKey,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              email,
+              password: safePassword,
+              data: {
+                nome,
+                cargo: u.cargo || '',
+                permissao: u.permissao || 'user',
+                oab: u.oab || '',
+                cpf: u.cpf || ''
+              },
+            }),
+          });
+
+          const data = await resp.json();
+          if (resp.ok) {
+            // Se identities estiver vazio, usuário já existe no auth
+            if (data.identities && data.identities.length === 0) {
+              alreadyRegisteredCount++;
+            } else {
+              createdCount++;
+            }
+          } else {
+            const msg = data.msg || data.message || JSON.stringify(data);
+            if (msg.includes('already registered') || msg.includes('already been registered')) {
+              alreadyRegisteredCount++;
+            } else {
+              errors.push({ email, nome, error: msg });
+            }
+          }
+        }
+      } catch (err: any) {
+        errors.push({ email, nome, error: err.message || String(err) });
+      }
+    }
+
+    return res.json({
+      success: true,
+      total: users.length,
+      created: createdCount,
+      alreadyRegistered: alreadyRegisteredCount,
+      errorsCount: errors.length,
+      errors
+    });
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

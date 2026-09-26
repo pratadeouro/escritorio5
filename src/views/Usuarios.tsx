@@ -1,14 +1,15 @@
 import React, { useState } from 'react';
 import { useAppContext } from '../context';
-import { Users, Plus, Search, Edit2, Trash2, Mail, Phone, ShieldCheck, ChevronRight, Copy, Check, ListOrdered } from 'lucide-react';
+import { Users, Plus, Search, Edit2, Trash2, Mail, Phone, ShieldCheck, ChevronRight, Copy, Check, ListOrdered, KeyRound } from 'lucide-react';
 import Modal from '../components/Modal';
 import { Usuario, RolePermission, View } from '../types';
+import { SupabaseAuthImportModule } from '../components/SupabaseAuthImportModule';
 
 export default function Usuarios() {
   const { state, addUsuario, updateUsuario, deleteUsuario, hasPermission, getPermissions, currentUser, escritorioAtivoId, isAdmin, updateSettings } = useAppContext();
   const canWrite = hasPermission('usuarios', 'write');
   const canDelete = hasPermission('usuarios', 'delete');
-  const [activeTab, setActiveTab] = useState<'usuarios' | 'permissions'>('usuarios');
+  const [activeTab, setActiveTab] = useState<'usuarios' | 'permissions' | 'import_auth'>('usuarios');
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingUsuario, setEditingUsuario] = useState<Usuario | null>(null);
@@ -567,9 +568,25 @@ export default function Usuarios() {
             )}
           </button>
         )}
+        {isAdmin() && (
+          <button
+            onClick={() => setActiveTab('import_auth')}
+            className={`flex items-center gap-2 px-6 py-3 text-sm font-medium transition-colors relative ${
+              activeTab === 'import_auth'
+                ? 'text-primary'
+                : 'text-app-text-muted hover:text-app-text'
+            }`}
+          >
+            <KeyRound size={18} />
+            Importar para Supabase Auth
+            {activeTab === 'import_auth' && (
+              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+            )}
+          </button>
+        )}
       </div>
 
-      {activeTab === 'usuarios' ? (
+      {activeTab === 'usuarios' && (
         <div className="bg-app-surface rounded-xl shadow-sm border border-app-border overflow-hidden">
           <div className="p-4 border-b border-app-border flex items-center">
             <div className="relative flex-1 max-w-md">
@@ -670,7 +687,9 @@ export default function Usuarios() {
             </table>
           </div>
         </div>
-      ) : (
+      )}
+
+      {activeTab === 'permissions' && (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
           <div className="bg-app-surface rounded-xl shadow-sm border border-app-border overflow-hidden">
             <div className="p-4 border-b border-app-border bg-app-secondary flex items-center justify-between">
@@ -901,6 +920,10 @@ export default function Usuarios() {
             </div>
           </div>
         </div>
+      )}
+
+      {activeTab === 'import_auth' && (
+        <SupabaseAuthImportModule />
       )}
 
       {/* Delete Role Confirmation Modal */}
