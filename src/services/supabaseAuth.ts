@@ -211,3 +211,44 @@ export const updateSupabasePassword = async (newPassword: string): Promise<{ suc
     return { success: false, message: err.message || 'Erro ao atualizar senha.' };
   }
 };
+
+/**
+ * Cria ou pré-provisiona um usuário diretamente no Supabase Auth
+ */
+export const registerUserInSupabaseAuth = async (
+  email: string,
+  senha?: string,
+  metadata?: { nome?: string; cargo?: string; permissao?: string }
+): Promise<{ success: boolean; user?: any; error?: string }> => {
+  if (!isSupabaseConfigured() || !email || !senha) {
+    return { success: false, error: 'Credenciais ou configuração incompletas.' };
+  }
+
+  const supabase = getSupabase();
+  const normalizedEmail = email.trim().toLowerCase();
+  const normalizedSenha = senha.trim();
+
+  try {
+    const { data, error } = await supabase.auth.signUp({
+      email: normalizedEmail,
+      password: normalizedSenha,
+      options: {
+        data: {
+          nome: metadata?.nome || 'Usuário',
+          cargo: metadata?.cargo || '',
+          permissao: metadata?.permissao || 'user',
+        }
+      }
+    });
+
+    if (error) {
+      console.warn('[Supabase Auth] Aviso ao registrar no Auth:', error.message);
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, user: data.user };
+  } catch (err: any) {
+    return { success: false, error: err.message || String(err) };
+  }
+};
+

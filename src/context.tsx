@@ -19,6 +19,10 @@ import {
   deleteFinanceiroSupabase,
   upsertMovimentoSupabase,
   deleteMovimentoSupabase,
+  upsertUsuarioSupabase,
+  deleteUsuarioSupabase,
+  upsertEscritorioSupabase,
+  deleteEscritorioSupabase,
   upsertItemGenericSupabase,
   deleteItemGenericSupabase,
   saveLogSupabase
@@ -27,7 +31,8 @@ import {
   signInHybrid, 
   signOutSupabase, 
   getSupabaseSession, 
-  resetSupabasePassword 
+  resetSupabasePassword,
+  registerUserInSupabaseAuth
 } from './services/supabaseAuth';
 
 const safeAlert = (message: string) => {
@@ -715,6 +720,54 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             });
           } else if (acao === 'DELETE_LEAD') {
             await deleteItemGenericSupabase('leads', record?.id || record);
+          } else if (acao === 'ADD_USUARIO' || acao === 'UPDATE_USUARIO') {
+            await upsertUsuarioSupabase(record);
+            if (record.email && record.senha) {
+              try {
+                await registerUserInSupabaseAuth(record.email, record.senha, {
+                  nome: record.nome,
+                  cargo: record.cargo,
+                  permissao: record.permissao
+                });
+              } catch (authErr) {
+                console.warn('[Supabase Auth] Aviso ao provisionar credencial no Auth:', authErr);
+              }
+            }
+          } else if (acao === 'DELETE_USUARIO') {
+            await deleteUsuarioSupabase(record?.id || record);
+          } else if (acao === 'ADD_ESCRITORIO' || acao === 'UPDATE_ESCRITORIO') {
+            await upsertEscritorioSupabase(record);
+          } else if (acao === 'DELETE_ESCRITORIO') {
+            await deleteEscritorioSupabase(record?.id || record);
+          } else if (acao === 'ADD_MODELO' || acao === 'UPDATE_MODELO') {
+            await upsertItemGenericSupabase('modelos', {
+              id: record.id,
+              nome: record.nome,
+              fase: record.fase || null,
+              materia: record.materia || null,
+              link: record.link || null,
+              escritorio_id: record.escritorioId || null,
+            });
+          } else if (acao === 'DELETE_MODELO') {
+            await deleteItemGenericSupabase('modelos', record?.id || record);
+          } else if (acao === 'ADD_VARA' || acao === 'UPDATE_VARA') {
+            await upsertItemGenericSupabase('varas', {
+              id: record.id,
+              nome: record.nome,
+              forum: record.forum || null,
+              localizacao: record.localizacao || null,
+              telefone: record.telefone || null,
+              email: record.email || null,
+              balcao_virtual: record.balcaoVirtual || null,
+              juiz: record.juiz || null,
+              juiz_2: record.juiz_2 || null,
+              secretaria: record.secretaria || null,
+              id_servidores: record.id_servidores || [],
+              escritorio_id: record.escritorioId || null,
+              id_tj: record.idTj || null,
+            });
+          } else if (acao === 'DELETE_VARA') {
+            await deleteItemGenericSupabase('varas', record?.id || record);
           }
           await saveLogSupabase(newLog);
         } catch (sbErr) {
@@ -724,8 +777,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       const scriptUrl = newStateWithLog.settings.scriptUrl;
 
-      // 2. Executa salvamento atômico direto na planilha para dual-write / redundância
-      if (scriptUrl && record) {
+      // 2. Executa salvamento atômico direto na planilha APENAS se o modo Google Sheets estiver ativo
+      if (dataSource === 'sheets' && scriptUrl && record) {
         try {
           if (acao === 'ADD_ETIQUETA' || acao === 'UPDATE_ETIQUETA') {
             await upsertItemToScript(scriptUrl, 'Etiquetas', {
@@ -818,12 +871,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
       }
 
-      // Salva estado geral apenas se tiver certeza de que todos os dados foram carregados (hasFullLoaded)
-      if (newStateWithLog.hasFullLoaded !== false && scriptUrl) {
+      // Salva estado geral na planilha APENAS se estiver no modo Google Sheets
+      if (dataSource === 'sheets' && newStateWithLog.hasFullLoaded !== false && scriptUrl) {
         await saveAllDataToScript(newStateWithLog, scriptUrl);
       }
       
-      if (scriptUrl) {
+      if (dataSource === 'sheets' && scriptUrl) {
         await saveLogToScript(scriptUrl, {
           usuario: authenticatedUserEmail || 'Desconhecido',
           acao: acao,
@@ -835,7 +888,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const errorMsg = error instanceof Error ? error.message : String(error);
       console.error(`Erro na ação ${acao}:`, error);
       
-      if (newStateWithLog.settings.scriptUrl) {
+      if (dataSource === 'sheets' && newStateWithLog.settings.scriptUrl) {
         try {
           await saveLogToScript(newStateWithLog.settings.scriptUrl, {
             usuario: authenticatedUserEmail || 'Desconhecido',
@@ -848,7 +901,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
       }
     }
-  }, [authenticatedUserEmail, escritorioAtivoId]);
+  }, [authenticatedUserEmail, escritorioAtivoId, dataSource]);
 
 
   const parsePermissions = useCallback((raw: any): RolePermission[] => {

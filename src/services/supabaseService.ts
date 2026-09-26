@@ -739,6 +739,75 @@ export const deleteMovimentoSupabase = async (id: string): Promise<boolean> => {
   return !error;
 };
 
+export const upsertUsuarioSupabase = async (u: Usuario): Promise<boolean> => {
+  const supabase = getSupabase();
+  const { error } = await supabase.from('usuarios').upsert({
+    id: u.id,
+    nome: u.nome,
+    email: u.email ? u.email.trim().toLowerCase() : '',
+    cargo: u.cargo || '',
+    contato: u.contato || '',
+    senha: u.senha || null,
+    oab: u.oab || null,
+    cpf: u.cpf || '',
+    permissao: u.permissao || 'user',
+    escritorios_ids: u.escritoriosIds || [],
+    status: u.status || 'Ativo',
+    foto_url: u.fotoUrl || null,
+    theme: u.theme || null,
+    items_per_page: u.itemsPerPage ? Number(u.itemsPerPage) : null,
+    menu_order: u.menuOrder || [],
+    enable_notifications: u.enableNotifications !== false,
+  }, { onConflict: 'id' });
+
+  if (error) console.error('[Supabase] Erro ao salvar usuário:', error);
+  return !error;
+};
+
+export const deleteUsuarioSupabase = async (id: string): Promise<boolean> => {
+  const supabase = getSupabase();
+  const { error } = await supabase.from('usuarios').delete().eq('id', id);
+  if (error) console.error('[Supabase] Erro ao excluir usuário:', error);
+  return !error;
+};
+
+export const upsertEscritorioSupabase = async (e: Escritorio): Promise<boolean> => {
+  const supabase = getSupabase();
+  const { error } = await supabase.from('escritorios').upsert({
+    id: e.id,
+    nome: e.nome,
+    cnpj: e.cnpj || null,
+    endereco: e.endereco || null,
+    telefone: e.telefone || null,
+    email: e.email || null,
+    logo_url: e.logoUrl || null,
+    responsavel: e.responsavel || null,
+    oab: e.oab || null,
+    uf: e.uf || null,
+    theme: e.theme || 'light',
+    primary_color: e.primaryColor || '#4f46e5',
+    background_color: e.backgroundColor || '#ffffff',
+    secondary_color: e.secondaryColor || '#f8fafc',
+    timezone: e.timezone || 'America/Sao_Paulo',
+    items_per_page: e.itemsPerPage || 10,
+    menu_order: e.menuOrder || [],
+    google_forms_spreadsheet_id: e.googleFormsSpreadsheetId || null,
+    google_forms_sheet_name: e.googleFormsSheetName || null,
+    google_client_id: e.googleClientId || null,
+    app_version: e.appVersion || null,
+  }, { onConflict: 'id' });
+
+  if (error) console.error('[Supabase] Erro ao salvar escritório:', error);
+  return !error;
+};
+
+export const deleteEscritorioSupabase = async (id: string): Promise<boolean> => {
+  const supabase = getSupabase();
+  const { error } = await supabase.from('escritorios').delete().eq('id', id);
+  if (error) console.error('[Supabase] Erro ao excluir escritório:', error);
+  return !error;
+};
+
 export const upsertItemGenericSupabase = async (table: string, data: any): Promise<boolean> => {
   const supabase = getSupabase();
   const { error } = await supabase.from(table).upsert(data, { onConflict: 'id' });
