@@ -85,6 +85,16 @@ export default function Usuarios() {
     e.preventDefault();
     if (!formData.nome) return;
 
+    if (!formData.email) {
+      alert('Por favor, informe o e-mail do usuário.');
+      return;
+    }
+
+    if (formData.senha && formData.senha.trim().length < 6) {
+      alert('A senha deve possuir no mínimo 6 caracteres para criação no Supabase Auth.');
+      return;
+    }
+
     if (!formData.escritoriosIds || formData.escritoriosIds.length === 0) {
       alert('Por favor, selecione ao menos um escritório de atuação para o usuário.');
       return;
@@ -1014,11 +1024,14 @@ export default function Usuarios() {
               />
             </div>
             <div className="space-y-1">
-              <label className="text-sm font-medium text-app-text">Senha</label>
+              <label className="text-sm font-medium text-app-text flex items-center justify-between">
+                <span>Senha de Acesso</span>
+                <span className="text-xs text-primary font-normal">Mínimo 6 dígitos (Supabase Auth)</span>
+              </label>
               <input 
                 type="password" 
                 className="w-full px-3 py-2 border border-app-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary bg-app-surface text-app-text"
-                placeholder="Senha de acesso"
+                placeholder="Mínimo 6 caracteres para o login"
                 value={formData.senha}
                 onChange={e => setFormData({...formData, senha: e.target.value})}
               />

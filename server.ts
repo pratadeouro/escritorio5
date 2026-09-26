@@ -500,6 +500,72 @@ async function startServer() {
     }
   });
 
+  // API para criação/provisionamento de usuário no Supabase Auth
+  app.post("/api/supabase/create-user", async (req, res) => {
+    const { email, password, nome, cargo, permissao } = req.body;
+    if (!email || !password) {
+      return res.status(400).json({ success: false, error: "E-mail e senha são obrigatórios." });
+    }
+
+    const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://qhxdujbsipgwthrgvncl.supabase.co';
+    const supabaseKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL';
+    const hasServiceRole = !!process.env.SUPABASE_SECRET_KEY;
+
+    // Garante que a senha atenda ao requisito mínimo de 6 dígitos do Supabase Auth
+    const safePassword = password.toString().trim().length >= 6 
+      ? password.toString().trim() 
+      : password.toString().trim().padEnd(6, '0');
+
+    try {
+      if (hasServiceRole) {
+        const adminResp = await fetch(`${supabaseUrl}/auth/v1/admin/users`, {
+          method: "POST",
+          headers: {
+            "apikey": supabaseKey,
+            "Authorization": `Bearer ${supabaseKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            email: email.trim().toLowerCase(),
+            password: safePassword,
+            email_confirm: true,
+            user_metadata: { nome, cargo, permissao },
+          }),
+        });
+
+        const adminData = await adminResp.json();
+        if (!adminResp.ok) {
+          console.warn("[Server Supabase Auth Admin] Erro:", adminData);
+          return res.status(adminResp.status).json({ success: false, error: adminData.msg || adminData.message || JSON.stringify(adminData) });
+        }
+        return res.json({ success: true, user: adminData });
+      } else {
+        const signUpResp = await fetch(`${supabaseUrl}/auth/v1/signup`, {
+          method: "POST",
+          headers: {
+            "apikey": supabaseKey,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            email: email.trim().toLowerCase(),
+            password: safePassword,
+            data: { nome, cargo, permissao },
+          }),
+        });
+
+        const signUpData = await signUpResp.json();
+        if (!signUpResp.ok) {
+          console.warn("[Server Supabase Auth Signup] Erro:", signUpData);
+          return res.status(signUpResp.status).json({ success: false, error: signUpData.msg || signUpData.message || JSON.stringify(signUpData) });
+        }
+        return res.json({ success: true, user: signUpData });
+      }
+    } catch (err: any) {
+      console.error("[Server Supabase Auth] Exceção:", err);
+      return res.status(500).json({ success: false, error: err.message || String(err) });
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

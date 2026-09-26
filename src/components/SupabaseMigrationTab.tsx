@@ -25,6 +25,7 @@ import {
   generateFullSQLDump,
   MigrationProgress 
 } from '../services/supabaseMigration';
+import { registerUserInSupabaseAuth } from '../services/supabaseAuth';
 
 export const SupabaseMigrationTab: React.FC = () => {
   const { state, forceLoad, dataSource, setDataSource } = useAppContext();
@@ -121,6 +122,48 @@ export const SupabaseMigrationTab: React.FC = () => {
     } finally {
       setIsMigrating(false);
     }
+  };
+
+  const [isSyncingAuth, setIsSyncingAuth] = useState(false);
+  const [authSyncStatus, setAuthSyncStatus] = useState<string | null>(null);
+
+  const handleSyncAuthUsers = async () => {
+    const usuarios = state.usuarios || [];
+    if (usuarios.length === 0) {
+      alert('Nenhum usuário encontrado na memória para sincronizar.');
+      return;
+    }
+
+    setIsSyncingAuth(true);
+    setAuthSyncStatus('Iniciando provisionamento de usuários no Supabase Auth...');
+    let successCount = 0;
+    let failCount = 0;
+
+    for (let i = 0; i < usuarios.length; i++) {
+      const u = usuarios[i];
+      if (!u.email) continue;
+      const senhaToUse = u.senha ? u.senha.toString() : '123456';
+      setAuthSyncStatus(`Provisionando (${i + 1}/${usuarios.length}): ${u.email}...`);
+      
+      try {
+        const res = await registerUserInSupabaseAuth(u.email, senhaToUse, {
+          nome: u.nome,
+          cargo: u.cargo,
+          permissao: u.permissao
+        });
+
+        if (res.success) {
+          successCount++;
+        } else {
+          failCount++;
+        }
+      } catch {
+        failCount++;
+      }
+    }
+
+    setIsSyncingAuth(false);
+    setAuthSyncStatus(`Concluído! ${successCount} usuário(s) sincronizados no Supabase Auth.`);
   };
 
   // Contagem de registros atuais carregados da planilha
@@ -369,7 +412,18 @@ export const SupabaseMigrationTab: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleSyncAuthUsers}
+              disabled={isSyncingAuth || !supabaseUrl || !supabaseKey}
+              className="flex items-center gap-1.5 px-3.5 py-2 bg-primary/10 border border-primary/20 hover:bg-primary/20 text-primary rounded-xl text-xs font-semibold transition-all disabled:opacity-50"
+              title="Pré-provisionar todos os usuários existentes diretamente no Supabase Auth"
+            >
+              {isSyncingAuth ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
+              {isSyncingAuth ? 'Provisionando no Auth...' : 'Sincronizar Usuários no Supabase Auth'}
+            </button>
+
             <button
               type="button"
               onClick={handleDownloadDump}
@@ -391,6 +445,14 @@ export const SupabaseMigrationTab: React.FC = () => {
             </button>
           </div>
         </div>
+
+        {/* Status da Sincronização de Usuários no Auth */}
+        {authSyncStatus && (
+          <div className="p-3 bg-primary/10 border border-primary/20 rounded-xl text-xs font-medium text-primary flex items-center gap-2 animate-fadeIn">
+            {isSyncingAuth ? <Loader2 size={14} className="animate-spin shrink-0" /> : <CheckCircle2 size={14} className="shrink-0" />}
+            <span>{authSyncStatus}</span>
+          </div>
+        )}
 
         {/* Barra de Progresso */}
         {progress && (

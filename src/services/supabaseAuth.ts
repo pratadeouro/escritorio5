@@ -32,17 +32,29 @@ export const signInHybrid = async (
   const normalizedSenha = senha.trim();
 
   try {
-    // 1. Tenta autenticação nativa no Supabase Auth
-    const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+    // 1. Tenta autenticação nativa no Supabase Auth com a senha digitada ou versão com padding (min 6 dígitos)
+    const safePass = normalizedSenha.length >= 6 ? normalizedSenha : normalizedSenha.padEnd(6, '0');
+    
+    let signInRes = await supabase.auth.signInWithPassword({
       email: normalizedEmail,
       password: normalizedSenha,
     });
 
-    if (!signInError && signInData?.session) {
+    if (signInRes.error && safePass !== normalizedSenha) {
+      const retryRes = await supabase.auth.signInWithPassword({
+        email: normalizedEmail,
+        password: safePass,
+      });
+      if (!retryRes.error) {
+        signInRes = retryRes;
+      }
+    }
+
+    if (!signInRes.error && signInRes.data?.session) {
       console.log('[Supabase Auth] Login realizado com sucesso via Supabase Auth.');
       return {
         success: true,
-        user: signInData.user,
+        user: signInRes.data.user,
       };
     }
 
@@ -56,33 +68,26 @@ export const signInHybrid = async (
       console.log(`[Supabase Auth] Usuário ${normalizedEmail} elegível para migração no 1º login. Criando credenciais no Supabase Auth...`);
       
       try {
-        // Cria a conta no Supabase Auth
-        const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-          email: normalizedEmail,
-          password: normalizedSenha,
-          options: {
-            data: {
-              nome: localUser?.nome || 'Usuário',
-              cargo: localUser?.cargo || '',
-              permissao: localUser?.permissao || 'user',
-            }
-          }
+        // Cria a conta no Supabase Auth via servidor ou cliente isolado
+        const regRes = await registerUserInSupabaseAuth(normalizedEmail, normalizedSenha, {
+          nome: localUser?.nome || 'Usuário',
+          cargo: localUser?.cargo || '',
+          permissao: localUser?.permissao || 'user',
         });
 
-        if (!signUpError && signUpData.user) {
+        if (regRes.success) {
           console.log('[Supabase Auth] Conta criada com sucesso no Supabase Auth. Autenticando sessão...');
 
-          // Tenta login para obter a sessão ativa (caso auto-confirm esteja ativo)
-          const { data: followSignIn, error: followSignInError } = await supabase.auth.signInWithPassword({
+          // Tenta login para obter a sessão ativa
+          const followSignIn = await supabase.auth.signInWithPassword({
             email: normalizedEmail,
-            password: normalizedSenha,
+            password: safePass,
           });
 
-          if (!followSignInError && followSignIn.session) {
-            // Sincroniza a tabela public.usuarios com o ID do Supabase
+          if (!followSignIn.error && followSignIn.data?.session) {
             try {
               await supabase.from('usuarios').upsert({
-                id: localUser?.id || followSignIn.user.id,
+                id: localUser?.id || followSignIn.data.user.id,
                 email: normalizedEmail,
                 nome: localUser?.nome || 'Usuário',
                 permissao: localUser?.permissao || 'user',
@@ -98,19 +103,18 @@ export const signInHybrid = async (
 
             return {
               success: true,
-              user: followSignIn.user,
+              user: followSignIn.data.user,
               firstLoginMigrated: true,
             };
           }
 
-          // Se a sessão ainda não abriu mas a conta foi criada, autoriza via localUser
           return {
             success: true,
-            user: signUpData.user,
+            user: regRes.user,
             firstLoginMigrated: true,
           };
-        } else if (signUpError) {
-          console.warn('[Supabase Auth] Aviso ao auto-provisionar usuário no Supabase:', signUpError.message);
+        } else {
+          console.warn('[Supabase Auth] Aviso ao auto-provisionar usuário no Supabase:', regRes.error);
         }
       } catch (autoProvErr) {
         console.warn('[Supabase Auth] Falha ao tentar auto-provisionamento:', autoProvErr);
@@ -224,14 +228,49 @@ export const registerUserInSupabaseAuth = async (
     return { success: false, error: 'Credenciais ou configuração incompletas.' };
   }
 
-  const supabase = getSupabase();
   const normalizedEmail = email.trim().toLowerCase();
   const normalizedSenha = senha.trim();
+  const safePassword = normalizedSenha.length >= 6 ? normalizedSenha : normalizedSenha.padEnd(6, '0');
 
+  // 1. Tenta criar pelo endpoint isolado do servidor (evita qualquer interferência com a sessão ativa do navegador)
   try {
+    const resp = await fetch('/api/supabase/create-user', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: normalizedEmail,
+        password: safePassword,
+        nome: metadata?.nome || 'Usuário',
+        cargo: metadata?.cargo || '',
+        permissao: metadata?.permissao || 'user',
+      })
+    });
+
+    if (resp.ok) {
+      const data = await resp.json();
+      console.log('[Supabase Auth] Usuário criado com sucesso via servidor:', normalizedEmail);
+      return { success: true, user: data.user };
+    } else {
+      const errData = await resp.json().catch(() => ({}));
+      console.warn('[Supabase Auth] Servidor retornou aviso ao criar usuário:', errData);
+      // Se já existir ou erro de senha, retorna o detalhe
+      if (errData.error) {
+        // Se já está registrado, consideramos sucesso de provisionamento
+        if (errData.error.includes('already registered') || errData.error.includes('already been registered')) {
+          return { success: true, error: 'Usuário já existe no Supabase Auth.' };
+        }
+      }
+    }
+  } catch (serverErr) {
+    console.warn('[Supabase Auth] Erro ao chamar servidor, tentando via cliente:', serverErr);
+  }
+
+  // 2. Fallback direto via cliente Supabase (usando a instância existente)
+  try {
+    const supabase = getSupabase();
     const { data, error } = await supabase.auth.signUp({
       email: normalizedEmail,
-      password: normalizedSenha,
+      password: safePassword,
       options: {
         data: {
           nome: metadata?.nome || 'Usuário',
@@ -242,7 +281,10 @@ export const registerUserInSupabaseAuth = async (
     });
 
     if (error) {
-      console.warn('[Supabase Auth] Aviso ao registrar no Auth:', error.message);
+      if (error.message.includes('already registered')) {
+        return { success: true, error: 'Usuário já cadastrado no Supabase Auth.' };
+      }
+      console.warn('[Supabase Auth] Aviso ao registrar no Auth via cliente:', error.message);
       return { success: false, error: error.message };
     }
 
