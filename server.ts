@@ -508,8 +508,8 @@ async function startServer() {
     }
 
     const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://qhxdujbsipgwthrgvncl.supabase.co';
-    const supabaseKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL';
-    const hasServiceRole = !!process.env.SUPABASE_SECRET_KEY;
+    const supabaseKey = process.env.SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || process.env.ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL';
+    const hasServiceRole = !!(process.env.SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY);
 
     // Garante que a senha atenda ao requisito mínimo de 6 dígitos do Supabase Auth
     const safePassword = password.toString().trim().length >= 6 
@@ -574,8 +574,8 @@ async function startServer() {
     }
 
     const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://qhxdujbsipgwthrgvncl.supabase.co';
-    const supabaseKey = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL';
-    const hasServiceRole = !!process.env.SUPABASE_SECRET_KEY;
+    const supabaseKey = process.env.SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || process.env.ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL';
+    const hasServiceRole = !!(process.env.SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY);
 
     let createdCount = 0;
     let alreadyRegisteredCount = 0;

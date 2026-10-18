@@ -30,7 +30,7 @@ import {
 
 // Credenciais configuradas
 const SUPABASE_URL = (import.meta as any).env.VITE_SUPABASE_URL || 'https://qhxdujbsipgwthrgvncl.supabase.co';
-const SUPABASE_KEY = (import.meta as any).env.VITE_SUPABASE_ANON_KEY || (import.meta as any).env.VITE_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL';
+const SUPABASE_KEY = (import.meta as any).env.VITE_SUPABASE_ANON_KEY || (import.meta as any).env.VITE_ANON_KEY || (import.meta as any).env.VITE_SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL';
 
 let supabaseInstance: SupabaseClient | null = null;
 
