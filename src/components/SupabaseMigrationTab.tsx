@@ -20,6 +20,7 @@ import { useAppContext } from '../context';
 import { isSupabaseConfigured } from '../services/supabaseService';
 import { 
   SUPABASE_SCHEMA_SQL, 
+  SUPABASE_RLS_SQL,
   testSupabaseConnection, 
   migrateAllDataToSupabase, 
   generateFullSQLDump,
@@ -77,6 +78,25 @@ export const SupabaseMigrationTab: React.FC = () => {
     const link = document.createElement('a');
     link.href = url;
     link.download = 'supabase_schema.sql';
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const [sqlViewTab, setSqlViewTab] = useState<'schema' | 'rls'>('schema');
+  const [copiedRls, setCopiedRls] = useState(false);
+
+  const handleCopyRls = () => {
+    navigator.clipboard.writeText(SUPABASE_RLS_SQL);
+    setCopiedRls(true);
+    setTimeout(() => setCopiedRls(false), 2500);
+  };
+
+  const handleDownloadRls = () => {
+    const blob = new Blob([SUPABASE_RLS_SQL], { type: 'text/sql;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'supabase_rls_policies.sql';
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -359,42 +379,99 @@ export const SupabaseMigrationTab: React.FC = () => {
         </div>
       </div>
 
-      {/* Passo 3: Script DDL do Schema SQL */}
+      {/* Passo 3: Script DDL do Schema SQL & RLS */}
       <div className="bg-app-surface border border-app-border rounded-2xl p-6 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-app-border pb-3">
           <div className="flex items-center gap-2">
             <span className="w-6 h-6 rounded-full bg-primary/20 text-primary flex items-center justify-center text-xs font-bold">3</span>
             <div>
-              <h3 className="font-bold text-app-text">Criar Tabelas no Supabase (Schema SQL)</h3>
+              <h3 className="font-bold text-app-text">Scripts SQL para o Supabase (Schema & RLS)</h3>
               <p className="text-xs text-app-text-muted">
-                Execute este script no <b>SQL Editor</b> do Supabase para criar as 24 tabelas antes de enviar os dados.
+                Execute os scripts no <b>SQL Editor</b> do Supabase para criar as tabelas e aplicar as regras de segurança.
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={handleCopySchema}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-white rounded-lg text-xs font-bold hover:bg-primary/90 transition-all shadow-sm"
-            >
-              {copiedSchema ? <Check size={14} /> : <Copy size={14} />}
-              {copiedSchema ? 'Copiado!' : 'Copiar Script SQL'}
-            </button>
-            <button
-              type="button"
-              onClick={handleDownloadSchema}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-app-bg border border-app-border text-app-text rounded-lg text-xs font-semibold hover:bg-app-secondary transition-all"
-            >
-              <Download size={14} />
-              Baixar .sql
-            </button>
+            {sqlViewTab === 'schema' ? (
+              <>
+                <button
+                  type="button"
+                  onClick={handleCopySchema}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-white rounded-lg text-xs font-bold hover:bg-primary/90 transition-all shadow-sm"
+                >
+                  {copiedSchema ? <Check size={14} /> : <Copy size={14} />}
+                  {copiedSchema ? 'Copiado!' : 'Copiar Schema SQL'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDownloadSchema}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-app-bg border border-app-border text-app-text rounded-lg text-xs font-semibold hover:bg-app-secondary transition-all"
+                >
+                  <Download size={14} />
+                  Baixar Schema .sql
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={handleCopyRls}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-xs font-bold hover:bg-emerald-700 transition-all shadow-sm"
+                >
+                  {copiedRls ? <Check size={14} /> : <ShieldCheck size={14} />}
+                  {copiedRls ? 'Copiado!' : 'Copiar RLS SQL'}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDownloadRls}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-app-bg border border-app-border text-app-text rounded-lg text-xs font-semibold hover:bg-app-secondary transition-all"
+                >
+                  <Download size={14} />
+                  Baixar RLS .sql
+                </button>
+              </>
+            )}
           </div>
         </div>
 
+        {/* Abas do Script: Schema vs RLS */}
+        <div className="flex items-center gap-2 border-b border-app-border">
+          <button
+            type="button"
+            onClick={() => setSqlViewTab('schema')}
+            className={`px-3 py-2 text-xs font-bold transition-all relative ${
+              sqlViewTab === 'schema' 
+                ? 'text-primary' 
+                : 'text-app-text-muted hover:text-app-text'
+            }`}
+          >
+            1. Tabelas (Schema DDL)
+            {sqlViewTab === 'schema' && (
+              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSqlViewTab('rls')}
+            className={`px-3 py-2 text-xs font-bold transition-all relative flex items-center gap-1.5 ${
+              sqlViewTab === 'rls' 
+                ? 'text-emerald-600 dark:text-emerald-400' 
+                : 'text-app-text-muted hover:text-app-text'
+            }`}
+          >
+            <ShieldCheck size={13} />
+            2. Regras de Segurança (RLS Policies)
+            {sqlViewTab === 'rls' && (
+              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-emerald-500" />
+            )}
+          </button>
+        </div>
+
         <div className="relative">
-          <pre className="bg-app-bg border border-app-border rounded-xl p-4 text-[11px] font-mono text-app-text-muted max-h-48 overflow-y-auto scrollbar-thin">
-            {SUPABASE_SCHEMA_SQL}
+          <pre className="bg-app-bg border border-app-border rounded-xl p-4 text-[11px] font-mono text-app-text-muted max-h-56 overflow-y-auto scrollbar-thin">
+            {sqlViewTab === 'schema' ? SUPABASE_SCHEMA_SQL : SUPABASE_RLS_SQL}
           </pre>
         </div>
       </div>
