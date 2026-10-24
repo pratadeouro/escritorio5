@@ -41,12 +41,6 @@ export default function Login() {
 
   const officeName = activeOfficeName || cachedOfficeName;
 
-  // Sincronizar ao entrar na página de login, apenas se ainda não carregamos dados
-  useEffect(() => {
-    if (!state.hasLoaded) {
-      forceLoad();
-    }
-  }, [state.hasLoaded, forceLoad]);
 
   // Decodifica JWT do Google sem dependências externas
   const decodeGoogleCredential = (credential: string): { email?: string; name?: string; sub?: string } | null => {
@@ -125,7 +119,7 @@ export default function Login() {
         setError('E-mail ou senha incorretos.');
       }
     } catch (err) {
-      setError('Ocorreu um erro ao tentar fazer login.');
+      setError('E-mail ou senha incorretos.');
     } finally {
       setIsLoading(false);
     }

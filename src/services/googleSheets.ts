@@ -376,7 +376,7 @@ export const importFromGoogleSheets = async (spreadsheetId: string, coreOnly: bo
       { name: 'Varas', key: 'varas', core: false },
       { name: 'Tarefas', key: 'tarefas', core: false },
       { name: 'escritorio', key: 'escritorios', core: true },
-      { name: 'Usuarios', key: 'usuarios', core: true },
+      { name: 'Usuarios', key: 'usuarios', core: false },
       { name: 'Modelos', key: 'modelos', core: false },
       { name: 'Julgadores', key: 'julgadores', core: false },
       { name: 'Recursos', key: 'recursos', core: false },
@@ -404,7 +404,7 @@ export const importFromGoogleSheets = async (spreadsheetId: string, coreOnly: bo
     let contatosData, processosData, eventosData, movimentosData, financeiroData, documentosData, varasData, tarefasData, escritoriosData, usuariosData, modelosData, julgadoresData, recursosData, upjData, forumData, tribunaisData, servidoresData, envolvidosData, etiquetasData, tipoEnvolvimentosData, calendarioData, leadsData, leadsStatusData, logsData, permissoesData, settingsData;
 
     if (coreOnly) {
-      [escritoriosData, usuariosData, permissoesData, settingsData] = results;
+      [escritoriosData, permissoesData, settingsData] = results;
     } else {
       [
         contatosData,

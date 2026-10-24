@@ -86,18 +86,17 @@ export const fetchAllDataFromSupabase = async (coreOnly = false): Promise<Partia
   const supabase = getSupabase();
   console.log(`[Supabase] Carregando dados (${coreOnly ? 'ESSENCIAIS' : 'COMPLETOS'})...`);
 
-  // Tabelas essenciais para login e perfil do escritório
+  // Tabelas essenciais para personalização visual antes do login (escritório e tema)
   const coreQueries = [
     supabase.from('escritorios').select('*'),
-    supabase.from('usuarios').select('*'),
     supabase.from('app_settings').select('*'),
   ];
 
   if (coreOnly) {
-    const [escRes, usuRes, setRes] = await Promise.all(coreQueries);
+    const [escRes, setRes] = await Promise.all(coreQueries);
     return {
       escritorios: (escRes.data || []).map(mapEscritorioFromDb),
-      usuarios: (usuRes.data || []).map(mapUsuarioFromDb),
+      usuarios: [], // SEGURANÇA: Usuários NUNCA são expostos antes da autenticação
       allSettings: (setRes.data || []).map(mapSettingsFromDb),
     };
   }
@@ -221,7 +220,7 @@ const mapEscritorioFromDb = (r: any): Escritorio => ({
   appVersion: r.app_version || undefined,
 });
 
-const mapUsuarioFromDb = (r: any): Usuario => ({
+export const mapUsuarioFromDb = (r: any): Usuario => ({
   id: r.id,
   nome: r.nome,
   email: r.email,
