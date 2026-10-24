@@ -14,6 +14,9 @@ export default defineConfig(({ mode }) => {
 
     define: {
       'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY),
+      'import.meta.env.VITE_SUPABASE_URL': JSON.stringify('https://qhxdujbsipgwthrgvncl.supabase.co'),
+      'import.meta.env.VITE_SUPABASE_ANON_KEY': JSON.stringify('sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL'),
+      'import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY': JSON.stringify('sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL'),
     },
 
     resolve: {

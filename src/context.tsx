@@ -249,6 +249,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return localStorage.getItem('advocacia_user_email');
   });
 
+  // Limpeza de URLs antigas ou chaves residuais de outros ambientes
+  useEffect(() => {
+    try {
+      ['supabase_migration_url', 'supabase_migration_key'].forEach(k => {
+        const val = localStorage.getItem(k);
+        if (val && (val.includes('walbermendonca') || val.includes('127.0.0.1') || val.startsWith('eyJhbGciOi'))) {
+          localStorage.removeItem(k);
+        }
+      });
+    } catch {}
+  }, []);
+
   const [dataSource, setDataSourceState] = useState<'supabase' | 'sheets'>(getActiveDataSource);
 
   const setDataSource = useCallback((source: 'supabase' | 'sheets') => {

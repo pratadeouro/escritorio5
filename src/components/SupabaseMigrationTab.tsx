@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Database, 
   CheckCircle2, 
@@ -32,11 +32,25 @@ export const SupabaseMigrationTab: React.FC = () => {
   const { state, forceLoad, dataSource, setDataSource } = useAppContext();
 
   const [supabaseUrl, setSupabaseUrl] = useState<string>(() => {
-    return localStorage.getItem('supabase_migration_url') || (import.meta as any).env.VITE_SUPABASE_URL || 'https://qhxdujbsipgwthrgvncl.supabase.co';
+    const saved = localStorage.getItem('supabase_migration_url');
+    if (saved && !saved.includes('walbermendonca') && !saved.includes('127.0.0.1')) return saved;
+    return 'https://qhxdujbsipgwthrgvncl.supabase.co';
   });
   const [supabaseKey, setSupabaseKey] = useState<string>(() => {
-    return localStorage.getItem('supabase_migration_key') || (import.meta as any).env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL';
+    const saved = localStorage.getItem('supabase_migration_key');
+    if (saved && !saved.startsWith('eyJhbGciOi')) return saved;
+    return 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL';
   });
+
+  useEffect(() => {
+    const saved = localStorage.getItem('supabase_migration_url');
+    if (saved && (saved.includes('walbermendonca') || saved.includes('127.0.0.1'))) {
+      localStorage.removeItem('supabase_migration_url');
+      localStorage.removeItem('supabase_migration_key');
+      setSupabaseUrl('https://qhxdujbsipgwthrgvncl.supabase.co');
+      setSupabaseKey('sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL');
+    }
+  }, []);
 
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);

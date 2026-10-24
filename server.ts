@@ -507,9 +507,9 @@ async function startServer() {
       return res.status(400).json({ success: false, error: "E-mail e senha são obrigatórios." });
     }
 
-    const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://qhxdujbsipgwthrgvncl.supabase.co';
-    const supabaseKey = process.env.SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || process.env.ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL';
-    const hasServiceRole = !!(process.env.SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY);
+    const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca')) ? process.env.SUPABASE_URL : 'https://qhxdujbsipgwthrgvncl.supabase.co';
+    const supabaseKey = (process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi')) ? process.env.SUPABASE_SECRET_KEY : (process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL');
+    const hasServiceRole = !!(process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi'));
 
     // Garante que a senha atenda ao requisito mínimo de 6 dígitos do Supabase Auth
     const safePassword = password.toString().trim().length >= 6 
@@ -573,9 +573,9 @@ async function startServer() {
       return res.status(400).json({ success: false, error: "Nenhum usuário informado para importação." });
     }
 
-    const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || 'https://qhxdujbsipgwthrgvncl.supabase.co';
-    const supabaseKey = process.env.SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || process.env.ANON_KEY || process.env.SUPABASE_PUBLISHABLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL';
-    const hasServiceRole = !!(process.env.SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY);
+    const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca')) ? process.env.SUPABASE_URL : 'https://qhxdujbsipgwthrgvncl.supabase.co';
+    const supabaseKey = (process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi')) ? process.env.SUPABASE_SECRET_KEY : (process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL');
+    const hasServiceRole = !!(process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi'));
 
     let createdCount = 0;
     let alreadyRegisteredCount = 0;
