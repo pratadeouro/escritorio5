@@ -243,6 +243,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const isFirstRender = useRef(true);
   const skipNextSave = useRef(false);
   const lastSavedStateRef = useRef<string>('');
+  const handleImportRef = useRef<(isFullLoad?: boolean) => Promise<void>>(() => Promise.resolve());
 
   const [authenticatedUserEmail, setAuthenticatedUserEmail] = useState<string | null>(() => {
     return localStorage.getItem('advocacia_user_email');
@@ -499,7 +500,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       localStorage.removeItem('advocacia_data_backup');
       
       // Carrega dados completos APENAS após a confirmação do login
-      await handleImport(true);
+      await handleImportRef.current(true);
       
       if (safeUser.escritoriosIds && safeUser.escritoriosIds.length > 0) {
         setEscritorioAtivoId(safeUser.escritoriosIds[0]);
@@ -518,7 +519,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     return false;
-  }, [state.usuarios, state.escritorios, state.settings.scriptUrl, setEscritorioAtivoId, handleImport]);
+  }, [state.usuarios, state.escritorios, state.settings.scriptUrl, setEscritorioAtivoId]);
 
   const loginWithGoogleEmail = useCallback(async (googleEmail: string): Promise<boolean> => {
     const normalizedEmail = googleEmail.trim().toLowerCase();
@@ -566,7 +567,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setAuthenticatedUserEmail(safeUser.email);
       localStorage.setItem('advocacia_user_email', safeUser.email);
       localStorage.removeItem('advocacia_data_backup');
-      await handleImport(true);
+      await handleImportRef.current(true);
 
       if (safeUser.escritoriosIds && safeUser.escritoriosIds.length > 0) {
         setEscritorioAtivoId(safeUser.escritoriosIds[0]);
@@ -585,7 +586,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     return false;
-  }, [state.usuarios, state.escritorios, state.settings.scriptUrl, setEscritorioAtivoId, handleImport]);
+  }, [state.usuarios, state.escritorios, state.settings.scriptUrl, setEscritorioAtivoId]);
 
   const logout = useCallback(async () => {
     // 1. MODO SUPABASE: Logout limpo e imediato sem risco de perda de planilha
@@ -1741,6 +1742,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setIsImporting(false);
     }
   }, [authenticatedUserEmail, escritorioAtivoId]);
+  handleImportRef.current = handleImport;
 
   useEffect(() => {
     const onImportEvent = () => handleImport(true);
