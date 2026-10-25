@@ -123,7 +123,7 @@ export const signInHybrid = async (
 
     return {
       success: false,
-      error: signInError?.message || 'E-mail ou senha incorretos.',
+      error: signInRes?.error?.message || 'E-mail ou senha incorretos.',
     };
   } catch (err: any) {
     console.error('[Supabase Auth] Erro inesperado na autenticação:', err);
