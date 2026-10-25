@@ -518,13 +518,26 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setEscritorioAtivoId(safeUser.escritoriosIds[0]);
       }
       
-      if (state.settings.scriptUrl) {
-        saveLogToScript(state.settings.scriptUrl, {
-          usuario: safeUser.email,
-          acao: 'LOGIN',
-          idEscritorio: safeUser.escritoriosIds && safeUser.escritoriosIds.length > 0 ? safeUser.escritoriosIds[0] : '',
-          detalhes: `Usuário ${safeUser.nome} logou no sistema com sucesso.`
-        });
+      const loginLogData = {
+        usuario: safeUser.email,
+        acao: 'LOGIN',
+        idEscritorio: safeUser.escritoriosIds && safeUser.escritoriosIds.length > 0 ? safeUser.escritoriosIds[0] : '',
+        detalhes: `Usuário ${safeUser.nome} logou no sistema com sucesso.`
+      };
+
+      if (getActiveDataSource() === 'supabase' && isSupabaseConfigured()) {
+        const newLog: LogRegistro = {
+          id: generateId('log'),
+          data: new Date().toLocaleString('pt-BR'),
+          ...loginLogData
+        };
+        saveLogSupabase(newLog);
+        setState(s => ({
+          ...s,
+          logs: [newLog, ...(s.logs || [])].slice(0, 200)
+        }));
+      } else if (state.settings.scriptUrl) {
+        saveLogToScript(state.settings.scriptUrl, loginLogData);
       }
       
       return true;
@@ -585,13 +598,26 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setEscritorioAtivoId(safeUser.escritoriosIds[0]);
       }
 
-      if (state.settings.scriptUrl) {
-        saveLogToScript(state.settings.scriptUrl, {
-          usuario: safeUser.email,
-          acao: 'LOGIN_GMAIL',
-          idEscritorio: safeUser.escritoriosIds && safeUser.escritoriosIds.length > 0 ? safeUser.escritoriosIds[0] : '',
-          detalhes: `Usuário ${safeUser.nome} autenticou via Gmail/Google.`
-        });
+      const googleLoginLogData = {
+        usuario: safeUser.email,
+        acao: 'LOGIN_GMAIL',
+        idEscritorio: safeUser.escritoriosIds && safeUser.escritoriosIds.length > 0 ? safeUser.escritoriosIds[0] : '',
+        detalhes: `Usuário ${safeUser.nome} autenticou via Gmail/Google.`
+      };
+
+      if (getActiveDataSource() === 'supabase' && isSupabaseConfigured()) {
+        const newLog: LogRegistro = {
+          id: generateId('log'),
+          data: new Date().toLocaleString('pt-BR'),
+          ...googleLoginLogData
+        };
+        saveLogSupabase(newLog);
+        setState(s => ({
+          ...s,
+          logs: [newLog, ...(s.logs || [])].slice(0, 200)
+        }));
+      } else if (state.settings.scriptUrl) {
+        saveLogToScript(state.settings.scriptUrl, googleLoginLogData);
       }
 
       return true;
@@ -651,14 +677,26 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const currentEscritorioId = escritorioAtivoId || '';
 
     // Log de logout
-    if (currentState.settings.scriptUrl) {
+    const logoutLogData = {
+      usuario: userEmail,
+      acao: 'LOGOUT',
+      idEscritorio: currentEscritorioId,
+      detalhes: 'Usuário efetuou logout.'
+    };
+
+    if (getActiveDataSource() === 'supabase' && isSupabaseConfigured()) {
       try {
-        await saveLogToScript(currentState.settings.scriptUrl, {
-          usuario: userEmail,
-          acao: 'LOGOUT',
-          idEscritorio: currentEscritorioId,
-          detalhes: `Usuário efetuou logout.`
+        await saveLogSupabase({
+          id: generateId('log'),
+          data: new Date().toISOString(),
+          ...logoutLogData
         });
+      } catch (e) {
+        console.error("Erro ao registrar log de logout no Supabase:", e);
+      }
+    } else if (currentState.settings.scriptUrl) {
+      try {
+        await saveLogToScript(currentState.settings.scriptUrl, logoutLogData);
       } catch (e) {
         console.error("Erro ao logar logout:", e);
       }
@@ -1239,8 +1277,23 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         enableNotifications: currentUser?.enableNotifications
       };
 
+      // Se as permissões do escritório ativo estiverem vazias, herda as permissões válidas de allSettings (cfg_1)
+      const fallbackPermissions = state.allSettings.find(s => {
+        const p = s.permissions;
+        return (Array.isArray(p) && p.length > 0) || (typeof p === 'string' && p.startsWith('[') && p.length > 2);
+      })?.permissions;
+
+      const hasValidOfficePerms = (() => {
+        const p = officeSettings.permissions;
+        if (!p) return false;
+        if (Array.isArray(p)) return p.length > 0;
+        if (typeof p === 'string') return p.trim().startsWith('[') && p.trim().length > 2;
+        return false;
+      })();
+
       const mergedSettings = {
         ...officeSettings,
+        permissions: hasValidOfficePerms ? officeSettings.permissions : (fallbackPermissions || officeSettings.permissions),
         ...(personalSettings.theme ? { theme: personalSettings.theme } : {}),
         ...(personalSettings.itemsPerPage ? { itemsPerPage: personalSettings.itemsPerPage } : {}),
         ...(personalSettings.menuOrder ? { menuOrder: personalSettings.menuOrder } : {}),
@@ -1378,7 +1431,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       (currentPermissionsCount === 0 && state.lastSyncTime !== null && state.usuarios.length > 5)
     );
 
-    if (!state.settings.scriptUrl || !state.hasLoaded || state.hasFullLoaded === false || !currentUser || isIntegrityCompromised || document.visibilityState === 'hidden') {
+    // No modo Supabase as alterações são persistidas imediatamente no banco; não aciona script de planilha
+    if (dataSource === 'supabase' || !state.settings.scriptUrl || !state.hasLoaded || state.hasFullLoaded === false || !currentUser || isIntegrityCompromised || document.visibilityState === 'hidden') {
       if (document.visibilityState === 'hidden') {
         // Ignora auto-save com aba suspensa/tela de celular bloqueada
         return;
@@ -1722,9 +1776,22 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             }
             const eid = localStorage.getItem('advocacia_escritorio_ativo') || escritorioAtivoId;
             const officeSettings = allSettings.find((s: any) => s.idEscritorio === eid);
+            const globalFallbackSettings = allSettings.find((s: any) => {
+              const p = s.permissions;
+              return (Array.isArray(p) && p.length > 0) || (typeof p === 'string' && p.startsWith('[') && p.length > 2);
+            });
+            const chosen = officeSettings || importedData.settings || {};
+            const hasPerms = (() => {
+              const p = chosen.permissions;
+              if (!p) return false;
+              if (Array.isArray(p)) return p.length > 0;
+              if (typeof p === 'string') return p.trim().startsWith('[') && p.trim().length > 2;
+              return false;
+            })();
             return { 
               ...prevState.settings, 
-              ...(officeSettings || importedData.settings || {}) 
+              ...chosen,
+              permissions: hasPerms ? chosen.permissions : (globalFallbackSettings?.permissions || chosen.permissions || prevState.settings.permissions)
             };
           })(),
           hasLoaded: true,

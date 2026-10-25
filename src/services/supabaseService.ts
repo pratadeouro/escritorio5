@@ -824,17 +824,17 @@ export const deleteItemGenericSupabase = async (table: string, id: string): Prom
   return !error;
 };
 
-export const saveLogSupabase = async (log: LogRegistro): Promise<void> => {
+export const saveLogSupabase = async (log: Partial<LogRegistro>): Promise<void> => {
   if (!isSupabaseConfigured()) return;
   try {
     const supabase = getSupabase();
     await supabase.from('logs').insert({
-      id: log.id,
+      id: log.id || `log_${Math.random().toString(36).substring(2, 9)}_${Date.now()}`,
       data: new Date().toISOString(),
-      usuario: log.usuario,
-      acao: log.acao,
-      id_escritorio: log.idEscritorio,
-      detalhes: log.detalhes,
+      usuario: log.usuario || 'Sistema',
+      acao: log.acao || 'INFO',
+      id_escritorio: log.idEscritorio || null,
+      detalhes: log.detalhes || '',
     });
   } catch (err) {
     console.error('[Supabase] Erro ao registrar log:', err);
