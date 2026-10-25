@@ -548,6 +548,27 @@ const mapSettingsFromDb = (r: any): AppSettings => ({
 // OPERAÇÕES ATÔMICAS DE ESCRITA NO SUPABASE (UPSERT / DELETE)
 // ==============================================================================
 
+export const toIsoDate = (val?: string | null): string | null => {
+  if (!val || typeof val !== 'string' || val.trim() === '') return null;
+  try {
+    const clean = val.trim();
+    // Se estiver em formato brasileiro dd/mm/aaaa ou dd/mm/aaaa hh:mm:ss
+    if (/^\d{1,2}\/\d{1,2}\/\d{4}/.test(clean)) {
+      const parts = clean.split(/[\s,]+/);
+      const dateParts = parts[0].split('/');
+      const d = dateParts[0].padStart(2, '0');
+      const m = dateParts[1].padStart(2, '0');
+      const y = dateParts[2];
+      const timePart = parts[1] || '12:00:00';
+      return `${y}-${m}-${d}T${timePart}Z`;
+    }
+    const d = new Date(clean);
+    return isNaN(d.getTime()) ? null : d.toISOString();
+  } catch {
+    return null;
+  }
+};
+
 const executeUpsert = async (table: string, data: any, conflictCol: string = 'id'): Promise<boolean> => {
   if (!isSupabaseConfigured()) return false;
   const supabase = getSupabase();
@@ -604,7 +625,7 @@ export const upsertProcessoSupabase = async (p: Processo): Promise<boolean> => {
     parte_contraria: p.parteContraria || null,
     tribunal: p.tribunal || null,
     status: p.status || p.ativo || 'Ativo',
-    data_distribuicao: p.dataDistribuicao ? new Date(p.dataDistribuicao).toISOString() : null,
+    data_distribuicao: toIsoDate(p.dataDistribuicao),
     escritorio_id: p.escritorioId || null,
     id_proc: p.idProc || null,
     tipo: p.tipo || null,
@@ -619,9 +640,9 @@ export const upsertProcessoSupabase = async (p: Processo): Promise<boolean> => {
     link: p.link || null,
     tags: p.tags || null,
     pasta: p.pasta || null,
-    disponibilizacao: p.disponibilizacao ? new Date(p.disponibilizacao).toISOString() : null,
-    publicacao: p.publicacao ? new Date(p.publicacao).toISOString() : null,
-    inicio_prazo: p.inicioPrazo ? new Date(p.inicioPrazo).toISOString() : null,
+    disponibilizacao: toIsoDate(p.disponibilizacao),
+    publicacao: toIsoDate(p.publicacao),
+    inicio_prazo: toIsoDate(p.inicioPrazo),
     envolvidos_ids: p.envolvidosIds || [],
     tribunal_id: p.tribunalId || null,
     forum_id: p.forumId || null,
@@ -653,7 +674,7 @@ export const upsertContatoSupabase = async (c: Contato): Promise<boolean> => {
     email: c.email || null,
     tipo: c.tipo || 'Cliente',
     escritorio_id: c.escritorioId || null,
-    data_cadastro: c.dataCadastro ? new Date(c.dataCadastro).toISOString() : new Date().toISOString(),
+    data_cadastro: toIsoDate(c.dataCadastro) || new Date().toISOString(),
     observacoes: c.observacoes || null,
     dados_pagamento: c.dadosPagamento || null,
   }, 'id');
@@ -671,11 +692,11 @@ export const upsertTarefaSupabase = async (t: Tarefa): Promise<boolean> => {
     descricao: String(t.DESCRICAO || ''),
     status: String(t.STATUS || 'Pendente'),
     prioridade: String(t.PRIORIDADE || 'Normal'),
-    data_limite: t.DATA_LIMITE || t.PRAZO_FIM ? new Date(t.DATA_LIMITE || t.PRAZO_FIM!).toISOString() : null,
+    data_limite: toIsoDate(t.DATA_LIMITE || t.PRAZO_FIM),
     responsavel_id: String(t.RESPONSAVEL_ID || t.ID_USER || '') || null,
     processo_id: String(t.PROCESSO_ID || t.ID_PROC || '') || null,
     escritorio_id: String(t.ID_ESCRITORIO || '') || null,
-    data_criacao: t.DATA_CRIACAO ? new Date(t.DATA_CRIACAO).toISOString() : new Date().toISOString(),
+    data_criacao: toIsoDate(t.DATA_CRIACAO) || new Date().toISOString(),
     proc_nome: String(t.PROC_NOME || t['PROC.NOME'] || '') || null,
     vara_id: String(t.VARA_ID || t.ID_VARA || '') || null,
     vara_nome: String(t.VARA_NOME || t['VARA.NOME'] || '') || null,
@@ -693,7 +714,7 @@ export const upsertEventoSupabase = async (e: Evento): Promise<boolean> => {
   return executeUpsert('eventos', {
     id: e.id,
     titulo: e.titulo,
-    data: e.data ? new Date(e.data).toISOString() : new Date().toISOString(),
+    data: toIsoDate(e.data) || new Date().toISOString(),
     tipo: e.tipo || 'Prazo',
     processo_id: e.processoId || null,
     usuario_id: e.usuarioId || null,
@@ -713,7 +734,7 @@ export const upsertFinanceiroSupabase = async (f: Transacao): Promise<boolean> =
     id: f.id,
     tipo: f.tipo,
     valor: Number(f.valor) || 0,
-    data: f.data ? new Date(f.data).toISOString() : new Date().toISOString(),
+    data: toIsoDate(f.data) || new Date().toISOString(),
     descricao: f.descricao,
     processo_id: f.processoId || null,
     status: f.status || (f.pago ? 'Pago' : 'Pendente'),
@@ -735,7 +756,7 @@ export const upsertMovimentoSupabase = async (m: Movimento): Promise<boolean> =>
   return executeUpsert('movimentos', {
     id: m.id,
     processo_id: m.processoId,
-    data: m.data ? new Date(m.data).toISOString() : new Date().toISOString(),
+    data: toIsoDate(m.data) || new Date().toISOString(),
     descricao: m.descricao,
     pagina: m.pagina || null,
     usuario_id: m.usuarioId || null,

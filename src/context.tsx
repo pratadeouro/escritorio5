@@ -1873,8 +1873,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const addContato = useCallback((contato: Contato) => {
     setState(s => {
-      const newState = { ...s, contatos: [...s.contatos, contato] };
-      saveAndLog(newState, 'ADD_CONTATO', `Novo contato adicionado: ${contato.nome}`, contato);
+      const generatedId = generateId('contato');
+      const finalContato = {
+        ...contato,
+        id: (contato.id || generatedId).toString().trim().toUpperCase(),
+        escritorioId: (contato.escritorioId || s.settings.idEscritorio || '').toString().trim().toUpperCase()
+      };
+      const newState = { ...s, contatos: [...s.contatos, finalContato] };
+      saveAndLog(newState, 'ADD_CONTATO', `Novo contato adicionado: ${finalContato.nome}`, finalContato);
       return newState;
     });
   }, [saveAndLog]);

@@ -296,8 +296,8 @@ export default function Contatos() {
       estado: novoContato.estado || '',
       dadosPagamento: novoContato.dadosPagamento || '',
       observacoes: novoContato.observacoes || '',
-      escritorioId: novoContato.escritorioId || escritorioAtivoId || '',
-      dataCadastro: formattedDateTime
+      escritorioId: novoContato.escritorioId || escritorioAtivoId || (state.escritorios.length > 0 ? state.escritorios[0].id : ''),
+      dataCadastro: new Date().toISOString()
     });
     setIsModalOpen(false);
     resetNovoContato();
