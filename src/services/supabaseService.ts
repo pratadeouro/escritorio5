@@ -548,9 +548,56 @@ const mapSettingsFromDb = (r: any): AppSettings => ({
 // OPERAÇÕES ATÔMICAS DE ESCRITA NO SUPABASE (UPSERT / DELETE)
 // ==============================================================================
 
-export const upsertProcessoSupabase = async (p: Processo): Promise<boolean> => {
+const executeUpsert = async (table: string, data: any, conflictCol: string = 'id'): Promise<boolean> => {
+  if (!isSupabaseConfigured()) return false;
   const supabase = getSupabase();
-  const { error } = await supabase.from('processos').upsert({
+  const { error } = await supabase.from(table).upsert(data, { onConflict: conflictCol });
+  if (!error) return true;
+
+  console.warn(`[Supabase] Gravação direta via cliente em ${table} encontrou restrição (${error.code || error.message}). Acionando proxy do servidor...`);
+  
+  try {
+    const resp = await fetch('/api/supabase/upsert', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ table, record: data, conflictColumn: conflictCol })
+    });
+    if (resp.ok) {
+      console.log(`[Supabase] Gravação em ${table} persistida com sucesso via servidor.`);
+      return true;
+    }
+  } catch (serverErr) {
+    console.error(`[Supabase] Falha no fallback do servidor para ${table}:`, serverErr);
+  }
+  return false;
+};
+
+const executeDelete = async (table: string, id: string, column: string = 'id'): Promise<boolean> => {
+  if (!isSupabaseConfigured()) return false;
+  const supabase = getSupabase();
+  const { error } = await supabase.from(table).delete().eq(column, id);
+  if (!error) return true;
+
+  console.warn(`[Supabase] Exclusão direta via cliente em ${table} encontrou restrição (${error.code || error.message}). Acionando proxy do servidor...`);
+  
+  try {
+    const resp = await fetch('/api/supabase/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ table, id, column })
+    });
+    if (resp.ok) {
+      console.log(`[Supabase] Exclusão em ${table} realizada com sucesso via servidor.`);
+      return true;
+    }
+  } catch (serverErr) {
+    console.error(`[Supabase] Falha no fallback do servidor para ${table}:`, serverErr);
+  }
+  return false;
+};
+
+export const upsertProcessoSupabase = async (p: Processo): Promise<boolean> => {
+  return executeUpsert('processos', {
     id: p.id,
     numero: p.numero,
     cliente_id: p.clienteId || null,
@@ -581,22 +628,15 @@ export const upsertProcessoSupabase = async (p: Processo): Promise<boolean> => {
     advogado_id: p.advogadoId || null,
     upj_id: p.upjId || null,
     servidor_id: p.servidorId || null,
-  }, { onConflict: 'id' });
-
-  if (error) console.error('[Supabase] Erro ao salvar processo:', error);
-  return !error;
+  }, 'id');
 };
 
 export const deleteProcessoSupabase = async (id: string): Promise<boolean> => {
-  const supabase = getSupabase();
-  const { error } = await supabase.from('processos').delete().eq('id', id);
-  if (error) console.error('[Supabase] Erro ao excluir processo:', error);
-  return !error;
+  return executeDelete('processos', id, 'id');
 };
 
 export const upsertContatoSupabase = async (c: Contato): Promise<boolean> => {
-  const supabase = getSupabase();
-  const { error } = await supabase.from('contatos').upsert({
+  return executeUpsert('contatos', {
     id: c.id,
     nome: c.nome,
     apelido: c.apelido || null,
@@ -616,23 +656,16 @@ export const upsertContatoSupabase = async (c: Contato): Promise<boolean> => {
     data_cadastro: c.dataCadastro ? new Date(c.dataCadastro).toISOString() : new Date().toISOString(),
     observacoes: c.observacoes || null,
     dados_pagamento: c.dadosPagamento || null,
-  }, { onConflict: 'id' });
-
-  if (error) console.error('[Supabase] Erro ao salvar contato:', error);
-  return !error;
+  }, 'id');
 };
 
 export const deleteContatoSupabase = async (id: string): Promise<boolean> => {
-  const supabase = getSupabase();
-  const { error } = await supabase.from('contatos').delete().eq('id', id);
-  if (error) console.error('[Supabase] Erro ao excluir contato:', error);
-  return !error;
+  return executeDelete('contatos', id, 'id');
 };
 
 export const upsertTarefaSupabase = async (t: Tarefa): Promise<boolean> => {
-  const supabase = getSupabase();
   const id = String(t.ID_TAREFA || (t as any).id || '');
-  const { error } = await supabase.from('tarefas').upsert({
+  return executeUpsert('tarefas', {
     id,
     titulo: String(t.TITULO || t.TAREFA || ''),
     descricao: String(t.DESCRICAO || ''),
@@ -649,22 +682,15 @@ export const upsertTarefaSupabase = async (t: Tarefa): Promise<boolean> => {
     upj_nome: String(t.UPJ_NOME || '') || null,
     atribuido_id: String(t.ATRIBUIDO_ID || '') || null,
     prazo_tipo: String(t.prazo_tipo || 'Corridos'),
-  }, { onConflict: 'id' });
-
-  if (error) console.error('[Supabase] Erro ao salvar tarefa:', error);
-  return !error;
+  }, 'id');
 };
 
 export const deleteTarefaSupabase = async (id: string): Promise<boolean> => {
-  const supabase = getSupabase();
-  const { error } = await supabase.from('tarefas').delete().eq('id', id);
-  if (error) console.error('[Supabase] Erro ao excluir tarefa:', error);
-  return !error;
+  return executeDelete('tarefas', id, 'id');
 };
 
 export const upsertEventoSupabase = async (e: Evento): Promise<boolean> => {
-  const supabase = getSupabase();
-  const { error } = await supabase.from('eventos').upsert({
+  return executeUpsert('eventos', {
     id: e.id,
     titulo: e.titulo,
     data: e.data ? new Date(e.data).toISOString() : new Date().toISOString(),
@@ -675,22 +701,15 @@ export const upsertEventoSupabase = async (e: Evento): Promise<boolean> => {
     concluido: !!e.concluido,
     escritorio_id: e.escritorioId || null,
     link: e.link || null,
-  }, { onConflict: 'id' });
-
-  if (error) console.error('[Supabase] Erro ao salvar evento:', error);
-  return !error;
+  }, 'id');
 };
 
 export const deleteEventoSupabase = async (id: string): Promise<boolean> => {
-  const supabase = getSupabase();
-  const { error } = await supabase.from('eventos').delete().eq('id', id);
-  if (error) console.error('[Supabase] Erro ao excluir evento:', error);
-  return !error;
+  return executeDelete('eventos', id, 'id');
 };
 
 export const upsertFinanceiroSupabase = async (f: Transacao): Promise<boolean> => {
-  const supabase = getSupabase();
-  const { error } = await supabase.from('financeiro').upsert({
+  return executeUpsert('financeiro', {
     id: f.id,
     tipo: f.tipo,
     valor: Number(f.valor) || 0,
@@ -705,22 +724,15 @@ export const upsertFinanceiroSupabase = async (f: Transacao): Promise<boolean> =
     contato_id: f.contatoId || f.clienteId || null,
     cliente_id: f.clienteId || null,
     pago: !!f.pago,
-  }, { onConflict: 'id' });
-
-  if (error) console.error('[Supabase] Erro ao salvar transação financeira:', error);
-  return !error;
+  }, 'id');
 };
 
 export const deleteFinanceiroSupabase = async (id: string): Promise<boolean> => {
-  const supabase = getSupabase();
-  const { error } = await supabase.from('financeiro').delete().eq('id', id);
-  if (error) console.error('[Supabase] Erro ao excluir transação financeira:', error);
-  return !error;
+  return executeDelete('financeiro', id, 'id');
 };
 
 export const upsertMovimentoSupabase = async (m: Movimento): Promise<boolean> => {
-  const supabase = getSupabase();
-  const { error } = await supabase.from('movimentos').upsert({
+  return executeUpsert('movimentos', {
     id: m.id,
     processo_id: m.processoId,
     data: m.data ? new Date(m.data).toISOString() : new Date().toISOString(),
@@ -728,22 +740,15 @@ export const upsertMovimentoSupabase = async (m: Movimento): Promise<boolean> =>
     pagina: m.pagina || null,
     usuario_id: m.usuarioId || null,
     escritorio_id: m.escritorioId || null,
-  }, { onConflict: 'id' });
-
-  if (error) console.error('[Supabase] Erro ao salvar movimento:', error);
-  return !error;
+  }, 'id');
 };
 
 export const deleteMovimentoSupabase = async (id: string): Promise<boolean> => {
-  const supabase = getSupabase();
-  const { error } = await supabase.from('movimentos').delete().eq('id', id);
-  if (error) console.error('[Supabase] Erro ao excluir movimento:', error);
-  return !error;
+  return executeDelete('movimentos', id, 'id');
 };
 
 export const upsertUsuarioSupabase = async (u: Usuario): Promise<boolean> => {
-  const supabase = getSupabase();
-  const { error } = await supabase.from('usuarios').upsert({
+  return executeUpsert('usuarios', {
     id: u.id,
     nome: u.nome,
     email: u.email ? u.email.trim().toLowerCase() : '',
@@ -760,22 +765,15 @@ export const upsertUsuarioSupabase = async (u: Usuario): Promise<boolean> => {
     items_per_page: u.itemsPerPage ? Number(u.itemsPerPage) : null,
     menu_order: u.menuOrder || [],
     enable_notifications: u.enableNotifications !== false,
-  }, { onConflict: 'id' });
-
-  if (error) console.error('[Supabase] Erro ao salvar usuário:', error);
-  return !error;
+  }, 'id');
 };
 
 export const deleteUsuarioSupabase = async (id: string): Promise<boolean> => {
-  const supabase = getSupabase();
-  const { error } = await supabase.from('usuarios').delete().eq('id', id);
-  if (error) console.error('[Supabase] Erro ao excluir usuário:', error);
-  return !error;
+  return executeDelete('usuarios', id, 'id');
 };
 
 export const upsertEscritorioSupabase = async (e: Escritorio): Promise<boolean> => {
-  const supabase = getSupabase();
-  const { error } = await supabase.from('escritorios').upsert({
+  return executeUpsert('escritorios', {
     id: e.id,
     nome: e.nome,
     cnpj: e.cnpj || null,
@@ -797,46 +795,29 @@ export const upsertEscritorioSupabase = async (e: Escritorio): Promise<boolean> 
     google_forms_sheet_name: e.googleFormsSheetName || null,
     google_client_id: e.googleClientId || null,
     app_version: e.appVersion || null,
-  }, { onConflict: 'id' });
-
-  if (error) console.error('[Supabase] Erro ao salvar escritório:', error);
-  return !error;
+  }, 'id');
 };
 
 export const deleteEscritorioSupabase = async (id: string): Promise<boolean> => {
-  const supabase = getSupabase();
-  const { error } = await supabase.from('escritorios').delete().eq('id', id);
-  if (error) console.error('[Supabase] Erro ao excluir escritório:', error);
-  return !error;
+  return executeDelete('escritorios', id, 'id');
 };
 
 export const upsertItemGenericSupabase = async (table: string, data: any): Promise<boolean> => {
-  const supabase = getSupabase();
-  const { error } = await supabase.from(table).upsert(data, { onConflict: 'id' });
-  if (error) console.error(`[Supabase] Erro ao salvar em ${table}:`, error);
-  return !error;
+  return executeUpsert(table, data, 'id');
 };
 
 export const deleteItemGenericSupabase = async (table: string, id: string): Promise<boolean> => {
-  const supabase = getSupabase();
-  const { error } = await supabase.from(table).delete().eq('id', id);
-  if (error) console.error(`[Supabase] Erro ao excluir de ${table}:`, error);
-  return !error;
+  return executeDelete(table, id, 'id');
 };
 
 export const saveLogSupabase = async (log: Partial<LogRegistro>): Promise<void> => {
   if (!isSupabaseConfigured()) return;
-  try {
-    const supabase = getSupabase();
-    await supabase.from('logs').insert({
-      id: log.id || `log_${Math.random().toString(36).substring(2, 9)}_${Date.now()}`,
-      data: new Date().toISOString(),
-      usuario: log.usuario || 'Sistema',
-      acao: log.acao || 'INFO',
-      id_escritorio: log.idEscritorio || null,
-      detalhes: log.detalhes || '',
-    });
-  } catch (err) {
-    console.error('[Supabase] Erro ao registrar log:', err);
-  }
+  await executeUpsert('logs', {
+    id: log.id || `log_${Math.random().toString(36).substring(2, 9)}_${Date.now()}`,
+    data: new Date().toISOString(),
+    usuario: log.usuario || 'Sistema',
+    acao: log.acao || 'INFO',
+    id_escritorio: log.idEscritorio || null,
+    detalhes: log.detalhes || '',
+  }, 'id');
 };

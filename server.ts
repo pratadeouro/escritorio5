@@ -500,6 +500,74 @@ async function startServer() {
     }
   });
 
+  // API para gravação atômica segura no Supabase (com bypass de RLS via chave do servidor)
+  app.post("/api/supabase/upsert", async (req, res) => {
+    const { table, record, conflictColumn } = req.body;
+    if (!table || !record) {
+      return res.status(400).json({ success: false, error: "Tabela e registro são obrigatórios." });
+    }
+
+    const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca')) ? process.env.SUPABASE_URL : 'https://qhxdujbsipgwthrgvncl.supabase.co';
+    const supabaseKey = (process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi')) ? process.env.SUPABASE_SECRET_KEY : (process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL');
+
+    try {
+      const conflictHeader = conflictColumn ? `resolution=merge-duplicates,on_conflict=${conflictColumn}` : 'resolution=merge-duplicates';
+      const resp = await fetch(`${supabaseUrl}/rest/v1/${table}`, {
+        method: "POST",
+        headers: {
+          "apikey": supabaseKey,
+          "Authorization": `Bearer ${supabaseKey}`,
+          "Content-Type": "application/json",
+          "Prefer": conflictHeader
+        },
+        body: JSON.stringify(record)
+      });
+
+      if (!resp.ok) {
+        const errText = await resp.text();
+        console.error(`[Server Supabase Upsert] Erro em ${table}:`, errText);
+        return res.status(resp.status).json({ success: false, error: errText });
+      }
+
+      return res.json({ success: true });
+    } catch (err: any) {
+      console.error(`[Server Supabase Upsert] Exceção em ${table}:`, err);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/supabase/delete", async (req, res) => {
+    const { table, id, column } = req.body;
+    if (!table || !id) {
+      return res.status(400).json({ success: false, error: "Tabela e id são obrigatórios." });
+    }
+
+    const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca')) ? process.env.SUPABASE_URL : 'https://qhxdujbsipgwthrgvncl.supabase.co';
+    const supabaseKey = (process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi')) ? process.env.SUPABASE_SECRET_KEY : (process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL');
+
+    try {
+      const idCol = column || 'id';
+      const resp = await fetch(`${supabaseUrl}/rest/v1/${table}?${idCol}=eq.${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        headers: {
+          "apikey": supabaseKey,
+          "Authorization": `Bearer ${supabaseKey}`,
+        }
+      });
+
+      if (!resp.ok) {
+        const errText = await resp.text();
+        console.error(`[Server Supabase Delete] Erro em ${table}:`, errText);
+        return res.status(resp.status).json({ success: false, error: errText });
+      }
+
+      return res.json({ success: true });
+    } catch (err: any) {
+      console.error(`[Server Supabase Delete] Exceção em ${table}:`, err);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // API para criação/provisionamento de usuário no Supabase Auth
   app.post("/api/supabase/create-user", async (req, res) => {
     const { email, password, nome, cargo, permissao } = req.body;
