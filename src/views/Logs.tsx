@@ -21,42 +21,72 @@ import {
 import Modal from '../components/Modal';
 import { LogRegistro } from '../types';
 
-// Helper to normalize various date formats (e.g. "dd/MM/yyyy HH:mm:ss" or ISO) into "yyyy-MM-dd"
+// Helper to normalize various date formats (e.g. "dd/MM/yyyy, HH:mm:ss", "dd/MM/yyyy HH:mm:ss", or ISO) into "yyyy-MM-dd"
 const parseToYmd = (dateStr: string | undefined | null): string => {
   if (!dateStr) return '';
   const trimmed = dateStr.trim();
 
-  // If already yyyy-MM-dd at start
-  if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
-    return trimmed.substring(0, 10);
-  }
-
-  // If dd/MM/yyyy or dd/MM/yy
+  // If format is dd/MM/yyyy (with or without comma/time: "25/10/2026, 16:20:18" or "25/10/2026 16:20:18")
   if (trimmed.includes('/')) {
-    const datePart = trimmed.split(' ')[0];
+    const datePart = trimmed.split(/[\s,T]+/)[0];
     const parts = datePart.split('/');
     if (parts.length === 3) {
       let [day, month, year] = parts;
+      day = day.replace(/\D/g, '').padStart(2, '0');
+      month = month.replace(/\D/g, '').padStart(2, '0');
+      year = year.replace(/\D/g, '');
       if (year.length === 2) year = '20' + year;
-      return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
-    }
-  }
-
-  // If dd-MM-yyyy or similar
-  if (trimmed.includes('-')) {
-    const datePart = trimmed.split('T')[0].split(' ')[0];
-    const parts = datePart.split('-');
-    if (parts.length === 3) {
-      const [p1, p2, p3] = parts;
-      if (p1.length === 4) {
-        return `${p1}-${p2.padStart(2, '0')}-${p3.padStart(2, '0')}`;
-      } else if (p3.length === 4) {
-        return `${p3}-${p2.padStart(2, '0')}-${p1.padStart(2, '0')}`;
+      if (year.length === 4) {
+        return `${year}-${month}-${day}`;
       }
     }
   }
 
+  // If ISO format (e.g. "2026-10-25T16:20:18.856Z")
+  if (/^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
+    try {
+      const d = new Date(trimmed);
+      if (!isNaN(d.getTime())) {
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+      }
+    } catch {}
+    return trimmed.substring(0, 10);
+  }
+
+  // Generic fallback with Date constructor
+  try {
+    const d = new Date(trimmed);
+    if (!isNaN(d.getTime())) {
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+  } catch {}
+
   return trimmed.substring(0, 10);
+};
+
+// Helper to convert date to timestamp for reliable chronological sorting
+const getTimeValue = (dStr: string | undefined | null): number => {
+  if (!dStr) return 0;
+  try {
+    const clean = dStr.trim();
+    if (clean.includes('/')) {
+      const parts = clean.split(/[\s,]+/);
+      const [day, month, year] = parts[0].split('/').map(Number);
+      const timePart = parts.find(p => p.includes(':')) || '00:00:00';
+      const [h, m, s] = timePart.split(':').map(Number);
+      return new Date(year, (month || 1) - 1, day || 1, h || 0, m || 0, s || 0).getTime();
+    }
+    const t = new Date(clean).getTime();
+    return isNaN(t) ? 0 : t;
+  } catch {
+    return 0;
+  }
 };
 
 export default function Logs() {
@@ -169,12 +199,12 @@ export default function Logs() {
   // Sort logs by date (newest first or oldest first based on sortOrder)
   const sortedLogs = useMemo(() => {
     return [...filteredLogs].sort((a, b) => {
-      const dateA = a.data || '';
-      const dateB = b.data || '';
+      const timeA = getTimeValue(a.data);
+      const timeB = getTimeValue(b.data);
       if (sortOrder === 'asc') {
-        return dateA.localeCompare(dateB);
+        return timeA - timeB;
       } else {
-        return dateB.localeCompare(dateA);
+        return timeB - timeA;
       }
     });
   }, [filteredLogs, sortOrder]);
