@@ -232,6 +232,8 @@ export const registerUserInSupabaseAuth = async (
   const normalizedSenha = senha.trim();
   const safePassword = normalizedSenha.length >= 6 ? normalizedSenha : normalizedSenha.padEnd(6, '0');
 
+  const fullName = metadata?.nome || 'Usuário';
+
   // 1. Tenta criar pelo endpoint isolado do servidor (evita qualquer interferência com a sessão ativa do navegador)
   try {
     const resp = await fetch('/api/supabase/create-user', {
@@ -240,7 +242,10 @@ export const registerUserInSupabaseAuth = async (
       body: JSON.stringify({
         email: normalizedEmail,
         password: safePassword,
-        nome: metadata?.nome || 'Usuário',
+        nome: fullName,
+        display_name: fullName,
+        full_name: fullName,
+        name: fullName,
         cargo: metadata?.cargo || '',
         permissao: metadata?.permissao || 'user',
       })
@@ -273,7 +278,10 @@ export const registerUserInSupabaseAuth = async (
       password: safePassword,
       options: {
         data: {
-          nome: metadata?.nome || 'Usuário',
+          nome: fullName,
+          display_name: fullName,
+          full_name: fullName,
+          name: fullName,
           cargo: metadata?.cargo || '',
           permissao: metadata?.permissao || 'user',
         }

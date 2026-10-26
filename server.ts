@@ -597,7 +597,14 @@ async function startServer() {
             email: email.trim().toLowerCase(),
             password: safePassword,
             email_confirm: true,
-            user_metadata: { nome, cargo, permissao },
+            user_metadata: {
+              nome,
+              display_name: nome,
+              full_name: nome,
+              name: nome,
+              cargo,
+              permissao
+            },
           }),
         });
 
@@ -617,7 +624,14 @@ async function startServer() {
           body: JSON.stringify({
             email: email.trim().toLowerCase(),
             password: safePassword,
-            data: { nome, cargo, permissao },
+            data: {
+              nome,
+              display_name: nome,
+              full_name: nome,
+              name: nome,
+              cargo,
+              permissao
+            },
           }),
         });
 
@@ -676,6 +690,9 @@ async function startServer() {
               email_confirm: true,
               user_metadata: {
                 nome,
+                display_name: nome,
+                full_name: nome,
+                name: nome,
                 cargo: u.cargo || '',
                 permissao: u.permissao || 'user',
                 oab: u.oab || '',
@@ -707,6 +724,9 @@ async function startServer() {
               password: safePassword,
               data: {
                 nome,
+                display_name: nome,
+                full_name: nome,
+                name: nome,
                 cargo: u.cargo || '',
                 permissao: u.permissao || 'user',
                 oab: u.oab || '',
