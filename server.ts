@@ -568,6 +568,337 @@ async function startServer() {
     }
   });
 
+  // ============================================================================
+  // GESTÃO COMPLETA DE USUÁRIOS BASEADA EM AUTH.USERS
+  // ============================================================================
+
+  // 1. CONSULTAR USUÁRIOS DIRETAMENTE DE AUTH.USERS (com dados mesclados de public.usuarios)
+  app.get("/api/supabase/admin/users", async (req, res) => {
+    const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca')) ? process.env.SUPABASE_URL : 'https://qhxdujbsipgwthrgvncl.supabase.co';
+    const supabaseKey = (process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi')) ? process.env.SUPABASE_SECRET_KEY : (process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL');
+    const hasServiceRole = !!(process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi'));
+
+    if (!hasServiceRole) {
+      return res.status(500).json({ success: false, error: "Chave administrativa não configurada para consultar auth.users." });
+    }
+
+    try {
+      const [authRes, pubRes] = await Promise.all([
+        fetch(`${supabaseUrl}/auth/v1/admin/users?per_page=1000`, {
+          headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+        }).then(r => r.json()),
+        fetch(`${supabaseUrl}/rest/v1/usuarios?select=*`, {
+          headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+        }).then(r => r.json()).catch(() => [])
+      ]);
+
+      const pubUsers = Array.isArray(pubRes) ? pubRes : [];
+      const pubByEmail = new Map<string, any>();
+      pubUsers.forEach(u => {
+        if (u.email) pubByEmail.set(u.email.trim().toLowerCase(), u);
+      });
+
+      const authUsers = authRes.users || [];
+      const mergedUsers = authUsers.map((au: any) => {
+        const email = (au.email || "").trim().toLowerCase();
+        const pu = pubByEmail.get(email) || {};
+        const meta = au.user_metadata || {};
+        const nome = meta.display_name || meta.nome || meta.full_name || meta.name || pu.nome || email;
+
+        return {
+          id: au.id,
+          authId: au.id,
+          nome,
+          email: au.email,
+          cargo: meta.cargo || pu.cargo || '',
+          contato: pu.contato || meta.contato || '',
+          cpf: pu.cpf || meta.cpf || '',
+          senha: pu.senha || '',
+          oab: pu.oab || meta.oab || '',
+          permissao: meta.permissao || pu.permissao || 'user',
+          escritoriosIds: meta.escritorios_ids || pu.escritorios_ids || [],
+          status: meta.status || pu.status || (au.banned_until ? 'Inativo' : 'Ativo'),
+          fotoUrl: meta.avatar_url || pu.foto_url,
+          theme: pu.theme,
+          itemsPerPage: pu.items_per_page,
+          menuOrder: pu.menu_order,
+          enableNotifications: pu.enable_notifications !== false,
+          createdAt: au.created_at,
+          lastSignInAt: au.last_sign_in_at
+        };
+      });
+
+      return res.json({ success: true, users: mergedUsers });
+    } catch (err: any) {
+      console.error("[Server Supabase Admin Users] Erro ao listar usuários:", err);
+      return res.status(500).json({ success: false, error: err.message || String(err) });
+    }
+  });
+
+  // 2. ADICIONAR USUÁRIO DIRETAMENTE EM AUTH.USERS (e sincronizar public.usuarios)
+  app.post("/api/supabase/admin/users", async (req, res) => {
+    const { email, nome, cargo, permissao, escritoriosIds, oab, cpf, contato, status } = req.body;
+    const password = req.body.password || req.body.senha;
+    if (!email || !password) {
+      return res.status(400).json({ success: false, error: "E-mail e senha são obrigatórios." });
+    }
+
+    const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca')) ? process.env.SUPABASE_URL : 'https://qhxdujbsipgwthrgvncl.supabase.co';
+    const supabaseKey = (process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi')) ? process.env.SUPABASE_SECRET_KEY : (process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL');
+    const hasServiceRole = !!(process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi'));
+
+    const safePassword = password.toString().trim().length >= 6 
+      ? password.toString().trim() 
+      : password.toString().trim().padEnd(6, '0');
+    const normalizedEmail = email.trim().toLowerCase();
+    const fullName = nome ? nome.trim() : normalizedEmail;
+
+    try {
+      if (!hasServiceRole) {
+        return res.status(500).json({ success: false, error: "Chave administrativa não configurada para criar em auth.users." });
+      }
+
+      // 1. Cria em auth.users
+      const adminResp = await fetch(`${supabaseUrl}/auth/v1/admin/users`, {
+        method: "POST",
+        headers: {
+          "apikey": supabaseKey,
+          "Authorization": `Bearer ${supabaseKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email: normalizedEmail,
+          password: safePassword,
+          email_confirm: true,
+          user_metadata: {
+            nome: fullName,
+            display_name: fullName,
+            full_name: fullName,
+            name: fullName,
+            cargo: cargo || '',
+            permissao: permissao || 'user',
+            escritorios_ids: escritoriosIds || [],
+            oab: oab || '',
+            cpf: cpf || '',
+            contato: contato || '',
+            status: status || 'Ativo'
+          },
+        }),
+      });
+
+      const adminData = await adminResp.json();
+      if (!adminResp.ok) {
+        const errorMsg = adminData.msg || adminData.message || JSON.stringify(adminData);
+        return res.status(adminResp.status).json({ success: false, error: errorMsg });
+      }
+
+      const authId = adminData.id;
+
+      // 2. Sincroniza em public.usuarios com o mesmo UUID de auth.users
+      await fetch(`${supabaseUrl}/rest/v1/usuarios`, {
+        method: "POST",
+        headers: {
+          "apikey": supabaseKey,
+          "Authorization": `Bearer ${supabaseKey}`,
+          "Content-Type": "application/json",
+          "Prefer": "resolution=merge-duplicates"
+        },
+        body: JSON.stringify({
+          id: authId,
+          nome: fullName,
+          email: normalizedEmail,
+          cargo: cargo || '',
+          contato: contato || '',
+          senha: password || null,
+          oab: oab || null,
+          cpf: cpf || '',
+          permissao: permissao || 'user',
+          escritorios_ids: escritoriosIds || [],
+          status: status || 'Ativo',
+          enable_notifications: true
+        })
+      });
+
+      return res.json({
+        success: true,
+        user: {
+          id: authId,
+          nome: fullName,
+          email: normalizedEmail,
+          cargo: cargo || '',
+          contato: contato || '',
+          cpf: cpf || '',
+          oab: oab || '',
+          permissao: permissao || 'user',
+          escritoriosIds: escritoriosIds || [],
+          status: status || 'Ativo'
+        }
+      });
+    } catch (err: any) {
+      console.error("[Server Supabase Admin Create User] Exceção:", err);
+      return res.status(500).json({ success: false, error: err.message || String(err) });
+    }
+  });
+
+  // 3. ALTERAR USUÁRIO E SENHA DIRETAMENTE EM AUTH.USERS
+  app.put("/api/supabase/admin/users/:id", async (req, res) => {
+    const { id } = req.params;
+    const { email, nome, cargo, permissao, escritoriosIds, oab, cpf, contato, status } = req.body;
+    const password = req.body.password || req.body.senha;
+
+    const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca')) ? process.env.SUPABASE_URL : 'https://qhxdujbsipgwthrgvncl.supabase.co';
+    const supabaseKey = (process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi')) ? process.env.SUPABASE_SECRET_KEY : (process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL');
+    const hasServiceRole = !!(process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi'));
+
+    if (!hasServiceRole) {
+      return res.status(500).json({ success: false, error: "Chave administrativa não configurada para atualizar em auth.users." });
+    }
+
+    try {
+      let targetAuthId = id;
+      const normalizedEmail = email ? email.trim().toLowerCase() : undefined;
+
+      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+      if (!isUUID && normalizedEmail) {
+        const listRes = await fetch(`${supabaseUrl}/auth/v1/admin/users?per_page=1000`, {
+          headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+        }).then(r => r.json());
+        const match = (listRes.users || []).find((u: any) => (u.email || "").toLowerCase().trim() === normalizedEmail);
+        if (match) targetAuthId = match.id;
+      }
+
+      // Monta payload de atualização para auth.users
+      const authUpdatePayload: any = {
+        user_metadata: {
+          nome: nome?.trim(),
+          display_name: nome?.trim(),
+          full_name: nome?.trim(),
+          name: nome?.trim(),
+          cargo: cargo || '',
+          permissao: permissao || 'user',
+          escritorios_ids: escritoriosIds || [],
+          oab: oab || '',
+          cpf: cpf || '',
+          contato: contato || '',
+          status: status || 'Ativo'
+        }
+      };
+
+      if (password && password.trim().length >= 6) {
+        authUpdatePayload.password = password.trim();
+      }
+
+      if (normalizedEmail) {
+        authUpdatePayload.email = normalizedEmail;
+        authUpdatePayload.email_confirm = true;
+      }
+
+      // 1. Atualiza em auth.users
+      const updateAuthResp = await fetch(`${supabaseUrl}/auth/v1/admin/users/${targetAuthId}`, {
+        method: "PUT",
+        headers: {
+          "apikey": supabaseKey,
+          "Authorization": `Bearer ${supabaseKey}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(authUpdatePayload)
+      });
+
+      if (!updateAuthResp.ok) {
+        const errJson = await updateAuthResp.json();
+        console.warn("[Server Supabase Admin Update User] Erro ao atualizar em auth.users:", errJson);
+        return res.status(updateAuthResp.status).json({ success: false, error: errJson.msg || errJson.message || JSON.stringify(errJson) });
+      }
+
+      // 2. Sincroniza em public.usuarios
+      const pubPayload: any = {
+        id: targetAuthId,
+        nome: nome?.trim(),
+        cargo: cargo || '',
+        contato: contato || '',
+        oab: oab || null,
+        cpf: cpf || '',
+        permissao: permissao || 'user',
+        escritorios_ids: escritoriosIds || [],
+        status: status || 'Ativo'
+      };
+      if (normalizedEmail) pubPayload.email = normalizedEmail;
+      if (password && password.trim().length >= 6) pubPayload.senha = password.trim();
+
+      await fetch(`${supabaseUrl}/rest/v1/usuarios`, {
+        method: "POST",
+        headers: {
+          "apikey": supabaseKey,
+          "Authorization": `Bearer ${supabaseKey}`,
+          "Content-Type": "application/json",
+          "Prefer": "resolution=merge-duplicates"
+        },
+        body: JSON.stringify(pubPayload)
+      });
+
+      return res.json({ success: true, updated: true });
+    } catch (err: any) {
+      console.error("[Server Supabase Admin Update User] Exceção:", err);
+      return res.status(500).json({ success: false, error: err.message || String(err) });
+    }
+  });
+
+  // 4. EXCLUIR USUÁRIO DIRETAMENTE DE AUTH.USERS (e de public.usuarios)
+  app.delete("/api/supabase/admin/users/:id", async (req, res) => {
+    const { id } = req.params;
+    const email = req.query.email as string | undefined;
+
+    const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca')) ? process.env.SUPABASE_URL : 'https://qhxdujbsipgwthrgvncl.supabase.co';
+    const supabaseKey = (process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi')) ? process.env.SUPABASE_SECRET_KEY : (process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL');
+    const hasServiceRole = !!(process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi'));
+
+    if (!hasServiceRole) {
+      return res.status(500).json({ success: false, error: "Chave administrativa não configurada para excluir de auth.users." });
+    }
+
+    try {
+      let targetAuthId = id;
+      const normalizedEmail = email ? email.trim().toLowerCase() : undefined;
+
+      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+      if (!isUUID && normalizedEmail) {
+        const listRes = await fetch(`${supabaseUrl}/auth/v1/admin/users?per_page=1000`, {
+          headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+        }).then(r => r.json());
+        const match = (listRes.users || []).find((u: any) => (u.email || "").toLowerCase().trim() === normalizedEmail);
+        if (match) targetAuthId = match.id;
+      }
+
+      // 1. Exclui de auth.users
+      const delAuthResp = await fetch(`${supabaseUrl}/auth/v1/admin/users/${targetAuthId}`, {
+        method: "DELETE",
+        headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+      });
+
+      if (!delAuthResp.ok) {
+        const errJson = await delAuthResp.json().catch(() => ({}));
+        console.warn("[Server Supabase Admin Delete User] Aviso ao excluir de auth.users:", errJson);
+      }
+
+      // 2. Exclui de public.usuarios
+      await fetch(`${supabaseUrl}/rest/v1/usuarios?id=eq.${encodeURIComponent(targetAuthId)}`, {
+        method: "DELETE",
+        headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+      });
+      if (normalizedEmail) {
+        await fetch(`${supabaseUrl}/rest/v1/usuarios?email=eq.${encodeURIComponent(normalizedEmail)}`, {
+          method: "DELETE",
+          headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+        });
+      }
+
+      return res.json({ success: true, deleted: true });
+    } catch (err: any) {
+      console.error("[Server Supabase Admin Delete User] Exceção:", err);
+      return res.status(500).json({ success: false, error: err.message || String(err) });
+    }
+  });
+
   // API para criação/provisionamento de usuário no Supabase Auth
   app.post("/api/supabase/create-user", async (req, res) => {
     const { email, password, nome, cargo, permissao } = req.body;

@@ -20,6 +20,7 @@ import {
   Forum, 
   Etiqueta, 
   TipoEnvolvimento, 
+  Envolvido,
   Calendario, 
   Lead, 
   LeadStatus, 
@@ -139,16 +140,26 @@ export const fetchAllDataFromSupabase = async (coreOnly = false): Promise<Partia
   const allSettings = (setRes.data || []).map(mapSettingsFromDb);
   const activeSettings = allSettings[0] || ({} as AppSettings);
 
+  let authUsers: Usuario[] = [];
+  try {
+    const authResp = await fetch('/api/supabase/admin/users').then(r => r.json()).catch(() => null);
+    if (authResp && authResp.success && Array.isArray(authResp.users) && authResp.users.length > 0) {
+      authUsers = authResp.users;
+    }
+  } catch (err) {
+    console.warn('[Supabase] Falha ao consultar auth.users via admin, usando public.usuarios:', err);
+  }
+
   console.log('[Supabase] Dados carregados com sucesso:', {
     processos: procRes.data?.length || 0,
     contatos: contRes.data?.length || 0,
     tarefas: tarRes.data?.length || 0,
-    usuarios: usuRes.data?.length || 0
+    usuarios: authUsers.length > 0 ? authUsers.length : (usuRes.data?.length || 0)
   });
 
   return {
     escritorios: (escRes.data || []).map(mapEscritorioFromDb),
-    usuarios: (usuRes.data || []).map(mapUsuarioFromDb),
+    usuarios: authUsers.length > 0 ? authUsers : (usuRes.data || []).map(mapUsuarioFromDb),
     processos: (procRes.data || []).map(mapProcessoFromDb),
     contatos: (contRes.data || []).map(mapContatoFromDb),
     tarefas: (tarRes.data || []).map(mapTarefaFromDb),

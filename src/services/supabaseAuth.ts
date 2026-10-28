@@ -302,3 +302,103 @@ export const registerUserInSupabaseAuth = async (
   }
 };
 
+/**
+ * Consulta a lista de usuários diretamente da tabela auth.users (via backend admin)
+ */
+export const fetchAuthUsersAdmin = async (): Promise<Usuario[]> => {
+  try {
+    const resp = await fetch('/api/supabase/admin/users');
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      console.warn('[Supabase Auth Admin] Falha ao consultar auth.users:', err);
+      return [];
+    }
+    const data = await resp.json();
+    return data.users || [];
+  } catch (err) {
+    console.error('[Supabase Auth Admin] Erro de rede ao buscar auth.users:', err);
+    return [];
+  }
+};
+
+/**
+ * Cria um usuário diretamente em auth.users e sincroniza em public.usuarios
+ */
+export const createAuthUserAdmin = async (user: Partial<Usuario>): Promise<{ success: boolean; user?: Usuario; error?: string }> => {
+  try {
+    const resp = await fetch('/api/supabase/admin/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: user.email,
+        password: user.senha || 'Mudar123!',
+        nome: user.nome,
+        cargo: user.cargo,
+        permissao: user.permissao,
+        escritoriosIds: user.escritoriosIds,
+        oab: user.oab,
+        cpf: user.cpf,
+        contato: user.contato,
+        status: user.status || 'Ativo'
+      })
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      return { success: false, error: data.error || 'Erro ao criar usuário em auth.users' };
+    }
+    return { success: true, user: data.user };
+  } catch (err: any) {
+    return { success: false, error: err.message || String(err) };
+  }
+};
+
+/**
+ * Atualiza um usuário e/ou sua senha diretamente em auth.users e em public.usuarios
+ */
+export const updateAuthUserAdmin = async (id: string, user: Partial<Usuario>): Promise<{ success: boolean; error?: string }> => {
+  try {
+    const resp = await fetch(`/api/supabase/admin/users/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: user.email,
+        password: user.senha,
+        nome: user.nome,
+        cargo: user.cargo,
+        permissao: user.permissao,
+        escritoriosIds: user.escritoriosIds,
+        oab: user.oab,
+        cpf: user.cpf,
+        contato: user.contato,
+        status: user.status
+      })
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      return { success: false, error: data.error || 'Erro ao atualizar usuário em auth.users' };
+    }
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || String(err) };
+  }
+};
+
+/**
+ * Exclui um usuário diretamente de auth.users e de public.usuarios
+ */
+export const deleteAuthUserAdmin = async (id: string, email?: string): Promise<{ success: boolean; error?: string }> => {
+  try {
+    const url = `/api/supabase/admin/users/${encodeURIComponent(id)}${email ? `?email=${encodeURIComponent(email)}` : ''}`;
+    const resp = await fetch(url, {
+      method: 'DELETE'
+    });
+    const data = await resp.json();
+    if (!resp.ok) {
+      return { success: false, error: data.error || 'Erro ao excluir usuário em auth.users' };
+    }
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message || String(err) };
+  }
+};
+

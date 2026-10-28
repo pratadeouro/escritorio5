@@ -34,7 +34,11 @@ import {
   signOutSupabase, 
   getSupabaseSession, 
   resetSupabasePassword,
-  registerUserInSupabaseAuth
+  registerUserInSupabaseAuth,
+  fetchAuthUsersAdmin,
+  createAuthUserAdmin,
+  updateAuthUserAdmin,
+  deleteAuthUserAdmin
 } from './services/supabaseAuth';
 
 const safeAlert = (message: string) => {
@@ -202,6 +206,7 @@ interface AppContextType {
   setViewParams: (params: any) => void;
   dataSource: 'supabase' | 'sheets';
   setDataSource: (source: 'supabase' | 'sheets') => void;
+  refreshAuthUsers: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -263,10 +268,25 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const [dataSource, setDataSourceState] = useState<'supabase' | 'sheets'>(getActiveDataSource);
 
+  const refreshAuthUsers = useCallback(async () => {
+    try {
+      const authUsers = await fetchAuthUsersAdmin();
+      if (authUsers && authUsers.length > 0) {
+        setState(s => ({ ...s, usuarios: authUsers }));
+        console.log('[Supabase Auth Admin] Lista de usuários consultada de auth.users com sucesso:', authUsers.length);
+      }
+    } catch (err) {
+      console.warn('[Supabase Auth Admin] Falha ao consultar auth.users:', err);
+    }
+  }, []);
+
   const setDataSource = useCallback((source: 'supabase' | 'sheets') => {
     setActiveDataSource(source);
     setDataSourceState(source);
-  }, []);
+    if (source === 'supabase') {
+      refreshAuthUsers();
+    }
+  }, [refreshAuthUsers]);
 
   const [escritorioAtivoId, setEscritorioAtivoIdState] = useState<string | null>(() => {
     const stored = localStorage.getItem('advocacia_escritorio_ativo');
@@ -437,7 +457,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             user = mapUsuarioFromDb(dbUser);
           } else {
             user = {
-              id: hybridRes.user?.id || generateId('user'),
+              id: hybridRes.user?.id || generateId('usuario'),
               nome: hybridRes.user?.user_metadata?.nome || normalizedEmail.split('@')[0],
               email: normalizedEmail,
               cargo: hybridRes.user?.user_metadata?.cargo || '',
@@ -527,7 +547,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       if (getActiveDataSource() === 'supabase' && isSupabaseConfigured()) {
         const newLog: LogRegistro = {
-          id: generateId('log'),
+          id: generateId('default'),
           data: new Date().toLocaleString('pt-BR'),
           ...loginLogData
         };
@@ -607,7 +627,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
       if (getActiveDataSource() === 'supabase' && isSupabaseConfigured()) {
         const newLog: LogRegistro = {
-          id: generateId('log'),
+          id: generateId('default'),
           data: new Date().toLocaleString('pt-BR'),
           ...googleLoginLogData
         };
@@ -687,7 +707,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (getActiveDataSource() === 'supabase' && isSupabaseConfigured()) {
       try {
         await saveLogSupabase({
-          id: generateId('log'),
+          id: generateId('default'),
           data: new Date().toISOString(),
           ...logoutLogData
         });
@@ -833,21 +853,38 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             });
           } else if (acao === 'DELETE_LEAD') {
             await deleteItemGenericSupabase('leads', record?.id || record);
-          } else if (acao === 'ADD_USUARIO' || acao === 'UPDATE_USUARIO') {
-            await upsertUsuarioSupabase(record);
-            if (record.email && record.senha) {
-              try {
-                await registerUserInSupabaseAuth(record.email, record.senha, {
-                  nome: record.nome,
-                  cargo: record.cargo,
-                  permissao: record.permissao
-                });
-              } catch (authErr) {
-                console.warn('[Supabase Auth] Aviso ao provisionar credencial no Auth:', authErr);
+          } else if (acao === 'ADD_USUARIO') {
+            try {
+              const res = await createAuthUserAdmin(record);
+              if (res.success && res.user?.id) {
+                const realId = res.user.id;
+                setState(s => ({
+                  ...s,
+                  usuarios: s.usuarios.map(u => 
+                    u.email.toLowerCase() === (record.email || '').toLowerCase() 
+                      ? { ...u, id: realId, senha: record.senha } 
+                      : u
+                  )
+                }));
               }
+            } catch (authErr) {
+              console.warn('[Supabase Auth Admin] Falha ao adicionar em auth.users:', authErr);
+              await upsertUsuarioSupabase(record);
+            }
+          } else if (acao === 'UPDATE_USUARIO') {
+            try {
+              await updateAuthUserAdmin(record.id, record);
+            } catch (authErr) {
+              console.warn('[Supabase Auth Admin] Falha ao atualizar em auth.users:', authErr);
+              await upsertUsuarioSupabase(record);
             }
           } else if (acao === 'DELETE_USUARIO') {
-            await deleteUsuarioSupabase(record?.id || record);
+            try {
+              await deleteAuthUserAdmin(record?.id || record, record?.email);
+            } catch (authErr) {
+              console.warn('[Supabase Auth Admin] Falha ao excluir de auth.users:', authErr);
+              await deleteUsuarioSupabase(record?.id || record);
+            }
           } else if (acao === 'ADD_ESCRITORIO' || acao === 'UPDATE_ESCRITORIO') {
             await upsertEscritorioSupabase(record);
           } else if (acao === 'DELETE_ESCRITORIO') {
@@ -1432,7 +1469,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     );
 
     // No modo Supabase as alterações são persistidas imediatamente no banco; não aciona script de planilha
-    if (dataSource === 'supabase' || !state.settings.scriptUrl || !state.hasLoaded || state.hasFullLoaded === false || !currentUser || isIntegrityCompromised || document.visibilityState === 'hidden') {
+    if (!state.settings.scriptUrl || !state.hasLoaded || state.hasFullLoaded === false || !currentUser || isIntegrityCompromised || document.visibilityState === 'hidden') {
       if (document.visibilityState === 'hidden') {
         // Ignora auto-save com aba suspensa/tela de celular bloqueada
         return;
@@ -1780,7 +1817,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               const p = s.permissions;
               return (Array.isArray(p) && p.length > 0) || (typeof p === 'string' && p.startsWith('[') && p.length > 2);
             });
-            const chosen = officeSettings || importedData.settings || {};
+            const chosen: any = officeSettings || importedData.settings || {};
             const hasPerms = (() => {
               const p = chosen.permissions;
               if (!p) return false;
@@ -1873,7 +1910,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const addContato = useCallback((contato: Contato) => {
     setState(s => {
-      const generatedId = generateId('contato');
+      const generatedId = generateId('default');
       const finalContato = {
         ...contato,
         id: (contato.id || generatedId).toString().trim().toUpperCase(),
@@ -3146,6 +3183,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setViewParams,
     dataSource,
     setDataSource,
+    refreshAuthUsers,
     lastSyncTime: state.lastSyncTime,
     syncLogs: state.syncLogs,
   }), [
@@ -3237,6 +3275,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setViewParams,
     dataSource,
     setDataSource,
+    refreshAuthUsers,
     resetPassword,
   ]);
 

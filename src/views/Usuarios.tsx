@@ -1,18 +1,34 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAppContext } from '../context';
-import { Users, Plus, Search, Edit2, Trash2, Mail, Phone, ShieldCheck, ChevronRight, Copy, Check, ListOrdered, KeyRound } from 'lucide-react';
+import { Users, Plus, Search, Edit2, Trash2, Mail, Phone, ShieldCheck, ChevronRight, Copy, Check, ListOrdered, KeyRound, RefreshCw, CheckCircle2 } from 'lucide-react';
 import Modal from '../components/Modal';
 import { Usuario, RolePermission, View } from '../types';
 import { SupabaseAuthImportModule } from '../components/SupabaseAuthImportModule';
 
 export default function Usuarios() {
-  const { state, addUsuario, updateUsuario, deleteUsuario, hasPermission, getPermissions, currentUser, escritorioAtivoId, isAdmin, updateSettings } = useAppContext();
+  const { 
+    state, 
+    addUsuario, 
+    updateUsuario, 
+    deleteUsuario, 
+    hasPermission, 
+    getPermissions, 
+    currentUser, 
+    escritorioAtivoId, 
+    isAdmin, 
+    updateSettings,
+    dataSource,
+    refreshAuthUsers
+  } = useAppContext();
+
   const canWrite = hasPermission('usuarios', 'write');
   const canDelete = hasPermission('usuarios', 'delete');
   const [activeTab, setActiveTab] = useState<'usuarios' | 'permissions' | 'import_auth'>('usuarios');
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingUsuario, setEditingUsuario] = useState<Usuario | null>(null);
+  const [isRefreshingAuth, setIsRefreshingAuth] = useState(false);
+
   const [formData, setFormData] = useState({
     nome: '',
     cargo: '',
@@ -24,6 +40,22 @@ export default function Usuarios() {
     permissao: '',
     escritoriosIds: [] as string[]
   });
+
+  // No modo Supabase, consulta diretamente a tabela auth.users ao abrir a aba de Usuários
+  useEffect(() => {
+    if (dataSource === 'supabase' && activeTab === 'usuarios') {
+      refreshAuthUsers();
+    }
+  }, [dataSource, activeTab, refreshAuthUsers]);
+
+  const handleManualRefreshAuth = async () => {
+    setIsRefreshingAuth(true);
+    try {
+      await refreshAuthUsers();
+    } finally {
+      setIsRefreshingAuth(false);
+    }
+  };
 
   const filteredUsuarios = state.usuarios.filter(u => {
     // Se houver um escritório ativo selecionado, filtrar por ele (para todos, incluindo Admin)
@@ -60,7 +92,7 @@ export default function Usuarios() {
         email: usuario.email,
         contato: usuario.contato,
         cpf: usuario.cpf,
-        senha: usuario.senha || '',
+        senha: '', // Em branco para não expor a senha existente e permitir alteração voluntária
         oab: usuario.oab || '',
         permissao: usuario.permissao,
         escritoriosIds: usuario.escritoriosIds || []
@@ -91,8 +123,15 @@ export default function Usuarios() {
       return;
     }
 
-    if (formData.senha && formData.senha.trim().length < 6) {
-      alert('A senha deve possuir no mínimo 6 caracteres para criação no Supabase Auth.');
+    // Para novo usuário, senha é obrigatória (min 6 caracteres)
+    if (!editingUsuario && (!formData.senha || formData.senha.trim().length < 6)) {
+      alert('Para cadastrar um novo usuário no Supabase Auth, a senha é obrigatória e deve possuir no mínimo 6 caracteres.');
+      return;
+    }
+
+    // Para edição, se informou nova senha, deve ter min 6 caracteres
+    if (editingUsuario && formData.senha && formData.senha.trim().length < 6) {
+      alert('A nova senha deve possuir no mínimo 6 caracteres para atualização no Supabase Auth.');
       return;
     }
 
@@ -114,6 +153,8 @@ export default function Usuarios() {
       updateUsuario({
         ...editingUsuario,
         ...formData,
+        // Se a senha estiver vazia, preserva a senha anterior no objeto local
+        senha: formData.senha ? formData.senha.trim() : editingUsuario.senha,
         escritoriosIds: finalEscritoriosIds
       });
     } else {
@@ -139,7 +180,12 @@ export default function Usuarios() {
   };
 
   const handleDelete = (id: string) => {
-    if (window.confirm('Tem certeza que deseja excluir este usuário?')) {
+    const userToDelete = state.usuarios.find(u => u.id === id);
+    const confirmMsg = dataSource === 'supabase'
+      ? `Tem certeza que deseja excluir o usuário "${userToDelete?.nome || id}"? Esta ação removerá a conta permanentemente da tabela auth.users e do banco de dados.`
+      : 'Tem certeza que deseja excluir este usuário?';
+
+    if (window.confirm(confirmMsg)) {
       deleteUsuario(id);
     }
   };
@@ -522,19 +568,45 @@ export default function Usuarios() {
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <h1 className="text-2xl font-bold text-app-text flex items-center">
-          <Users className="mr-3 text-primary" />
-          Gestão de Usuários
-        </h1>
-        {activeTab === 'usuarios' && hasPermission('usuarios', 'write') && (
-          <button 
-            onClick={() => handleOpenModal()}
-            className="bg-primary hover:bg-primary/90 text-white px-4 py-2 rounded-lg flex items-center transition-colors shadow-sm"
-          >
-            <Plus size={20} className="mr-2" />
-            Novo Usuário
-          </button>
-        )}
+        <div>
+          <h1 className="text-2xl font-bold text-app-text flex items-center">
+            <Users className="mr-3 text-primary" />
+            Gestão de Usuários
+          </h1>
+          {dataSource === 'supabase' && (
+            <p className="text-xs text-primary font-medium mt-1 flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+              Conectado diretamente à tabela <strong>auth.users</strong> do Supabase
+            </p>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          {dataSource === 'supabase' && (
+            <button
+              onClick={async () => {
+                try {
+                  await refreshAuthUsers();
+                } catch {
+                  // handled
+                }
+              }}
+              title="Recarregar usuários da tabela auth.users"
+              className="px-3 py-2 border border-app-border rounded-lg text-sm font-medium text-app-text hover:bg-app-secondary/50 flex items-center gap-1.5 transition-colors shadow-sm"
+            >
+              <RefreshCw size={16} className="text-primary" />
+              <span>Sincronizar auth.users</span>
+            </button>
+          )}
+          {activeTab === 'usuarios' && hasPermission('usuarios', 'write') && (
+            <button 
+              onClick={() => handleOpenModal()}
+              className="bg-primary hover:bg-primary/90 text-white px-4 py-2 rounded-lg flex items-center transition-colors shadow-sm text-sm font-medium"
+            >
+              <Plus size={18} className="mr-1.5" />
+              Novo Usuário
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="flex border-b border-app-border mb-6">
@@ -585,6 +657,20 @@ export default function Usuarios() {
           </button>
         )}
       </div>
+ 
+      {dataSource === 'supabase' && (
+        <div className="bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/40 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs sm:text-sm text-emerald-800 dark:text-emerald-300 shadow-sm">
+          <div className="flex items-center gap-2.5">
+            <CheckCircle2 size={18} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
+            <span>
+              <strong>Modo Supabase Ativo:</strong> Consultas, cadastros, exclusões e alterações de senha operam diretamente sobre o Supabase Auth (<strong>auth.users</strong>).
+            </span>
+          </div>
+          <span className="text-xs font-semibold px-2.5 py-1 rounded bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 shrink-0 self-start sm:self-auto">
+            {state.usuarios.length} usuários sincronizados
+          </span>
+        </div>
+      )}
 
       {activeTab === 'usuarios' && (
         <div className="bg-app-surface rounded-xl shadow-sm border border-app-border overflow-hidden">
@@ -1048,13 +1134,15 @@ export default function Usuarios() {
             </div>
             <div className="space-y-1">
               <label className="text-sm font-medium text-app-text flex items-center justify-between">
-                <span>Senha de Acesso</span>
-                <span className="text-xs text-primary font-normal">Mínimo 6 dígitos (Supabase Auth)</span>
+                <span>{editingUsuario ? "Alterar Senha (Opcional)" : "Senha de Acesso *"}</span>
+                <span className="text-xs text-primary font-normal">
+                  {editingUsuario ? "Preencha para alterar no auth.users" : "Mínimo 6 caracteres (auth.users)"}
+                </span>
               </label>
               <input 
                 type="password" 
                 className="w-full px-3 py-2 border border-app-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary bg-app-surface text-app-text"
-                placeholder="Mínimo 6 caracteres para o login"
+                placeholder={editingUsuario ? "Deixe vazio para manter a senha atual" : "Mínimo 6 caracteres para o login"}
                 value={formData.senha}
                 onChange={e => setFormData({...formData, senha: e.target.value})}
               />
