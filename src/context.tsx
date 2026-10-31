@@ -1266,9 +1266,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
       // Admins podem permanecer em null (Todos os Escritórios)
     } else {
-      // Verifica se o escritório ainda existe ou se o usuário ainda tem acesso
-      const officeExists = state.escritorios.some(e => e.id === escritorioAtivoId);
-      const hasAccess = isAdmin() || (currentUser?.escritoriosIds || []).includes(escritorioAtivoId);
+      // Verifica se o escritório ainda existe ou se o usuário ainda tem acesso (só valida se state.escritorios já tiver carregado)
+      const officeExists = state.escritorios.length === 0 || state.escritorios.some(e => (e.id || '').toString().trim().toUpperCase() === (escritorioAtivoId || '').toString().trim().toUpperCase());
+      const hasAccess = isAdmin() || (currentUser?.escritoriosIds || []).some(id => (id || '').toString().trim().toUpperCase() === (escritorioAtivoId || '').toString().trim().toUpperCase());
       
       if (!officeExists || !hasAccess) {
         if (isAdmin()) {
@@ -1725,7 +1725,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           documentos: importedData.documentos !== undefined ? importedData.documentos : prevState.documentos,
           varas: importedData.varas !== undefined ? importedData.varas : prevState.varas,
           tarefas: importedData.tarefas !== undefined ? importedData.tarefas : prevState.tarefas,
-          escritorios: (importedData.escritorios !== undefined && (importedData.escritorios.length > 0 || !prevState.hasLoaded)) ? importedData.escritorios : prevState.escritorios,
+          escritorios: (importedData.escritorios && importedData.escritorios.length > 0) ? importedData.escritorios : (prevState.escritorios.length > 0 ? prevState.escritorios : (importedData.escritorios || [])),
           usuarios: (importedData.usuarios !== undefined && (importedData.usuarios.length > 0 || !prevState.hasLoaded)) ? importedData.usuarios : prevState.usuarios,
           pendencias: importedData.pendencias !== undefined ? importedData.pendencias : prevState.pendencias,
           modelos: importedData.modelos !== undefined ? importedData.modelos : prevState.modelos,

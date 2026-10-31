@@ -41,6 +41,19 @@ import { CURRENT_APP_VERSION } from '../services/versionService';
 import { useAppContext } from '../context';
 import { motion, AnimatePresence } from 'motion/react';
 
+const knownOfficeNames: Record<string, string> = {
+  '1': 'Escritório Walber Mendonça',
+  '2': 'Escritório Ozeias Oliveira',
+  '3': 'Escritório João Ernesto',
+  'A8R4DY0V': 'Escritório Laura Brasil',
+  'BAELXMG7': 'Escritório Daniel Muniz',
+  'B3KSZYQS': 'Escritório Gabriel Serrao',
+  'C6YZ6C21K': 'Escritório Juliana Cascais',
+  'WZGA9ID8': 'Escritório Hallice Moreira',
+  '0DWW10EI': 'Escritório Anna Victoria',
+  'LMLOAZ2P': 'Escritório Jurídico Ranna Souza'
+};
+
 interface LayoutProps {
   children: React.ReactNode;
   currentView: View;
@@ -63,9 +76,38 @@ export default function Layout({ children, currentView, onNavigate }: LayoutProp
   const activeOffice = state.escritorios.find(e => e.id === escritorioAtivoId);
   const officeName = activeOfficeName;
 
-  // Get user's offices
-  const userOffices = isAdmin() ? state.escritorios.map(e => e.id) : (currentUser?.escritoriosIds || []);
-  const hasMultipleOffices = isAdmin() ? state.escritorios.length > 1 : userOffices.length > 1;
+  // Lista de escritórios disponíveis para o usuário
+  const userOffices = React.useMemo(() => {
+    const ids = new Set<string>();
+    if (isAdmin()) {
+      // Para admin, inclui todos os escritórios cadastrados no sistema
+      state.escritorios.forEach(e => {
+        if (e.id) ids.add(e.id.toString().trim());
+      });
+      (currentUser?.escritoriosIds || []).forEach(id => {
+        if (id) ids.add(id.toString().trim());
+      });
+      (state.usuarios || []).forEach(u => {
+        (u.escritoriosIds || []).forEach(id => {
+          if (id) ids.add(id.toString().trim());
+        });
+      });
+      // Fallback para os escritórios conhecidos caso a lista esteja vazia
+      if (ids.size === 0) {
+        Object.keys(knownOfficeNames).forEach(k => ids.add(k));
+      }
+      return Array.from(ids);
+    }
+
+    (currentUser?.escritoriosIds || []).forEach(id => {
+      if (id) ids.add(id.toString().trim());
+    });
+    return Array.from(ids);
+  }, [isAdmin, state.escritorios, state.usuarios, currentUser]);
+
+  // Para o Admin, a lista suspensa deve ser SEMPRE exibida (permite alternar entre "Todos os Escritórios" e escritórios específicos)
+  // Para outros usuários, exibe se possuir mais de 1 escritório atribuído
+  const showOfficeSelector = isAdmin() || userOffices.length > 1;
 
   useEffect(() => {
     const fetchPublicacoesHoje = async () => {
@@ -403,20 +445,21 @@ export default function Layout({ children, currentView, onNavigate }: LayoutProp
           </div>
 
           <div className="flex items-center space-x-4">
-            {hasMultipleOffices && (
-              <div className="flex items-center mr-2">
-                <Building2 size={16} className="text-app-text-muted mr-2" />
+            {showOfficeSelector && (
+              <div className="flex items-center mr-1 sm:mr-2">
+                <Building2 size={16} className="text-app-text-muted mr-1.5 hidden sm:block shrink-0" />
                 <select
                   value={escritorioAtivoId || ''}
                   onChange={(e) => setEscritorioAtivoId(e.target.value)}
-                  className="bg-app-surface border border-app-border text-app-text text-sm rounded-lg focus:ring-primary focus:border-primary block p-2"
+                  className="bg-app-surface border border-app-border text-app-text text-xs sm:text-sm font-medium rounded-lg focus:ring-primary focus:border-primary block py-1.5 px-2 sm:p-2 max-w-[130px] sm:max-w-[220px] truncate shadow-sm cursor-pointer"
+                  title="Selecionar Escritório Ativo"
                 >
                   {isAdmin() && <option value="">Todos os Escritórios</option>}
                   {userOffices.map(id => {
-                    const esc = state.escritorios.find(e => e.id === id);
+                    const esc = state.escritorios.find(e => (e.id || '').toString().trim().toUpperCase() === id.toString().trim().toUpperCase());
                     return (
                       <option key={id} value={id}>
-                        {esc ? esc.nome : `Escritório ${id}`}
+                        {esc ? esc.nome : (knownOfficeNames[id] || `Escritório ${id}`)}
                       </option>
                     );
                   })}
@@ -477,15 +520,37 @@ export default function Layout({ children, currentView, onNavigate }: LayoutProp
                       <div className="p-2">
                         <div className="px-3 py-2">
                           <p className="text-[10px] font-bold text-app-text-muted uppercase tracking-wider mb-1">Escritório Atual</p>
-                          <div className="flex items-center text-sm text-app-text">
-                            <Building2 size={14} className="mr-2 text-primary" />
-                            <span className="truncate font-medium">
-                              {escritorioAtivoId 
-                                ? (state.escritorios.find(e => e.id === escritorioAtivoId)?.nome || 'Escritório não encontrado')
-                                : (isAdmin() ? 'Todos os Escritórios' : 'Nenhum escritório selecionado')
-                              }
-                            </span>
-                          </div>
+                          {showOfficeSelector ? (
+                            <div className="mt-1">
+                              <select
+                                value={escritorioAtivoId || ''}
+                                onChange={(e) => {
+                                  setEscritorioAtivoId(e.target.value);
+                                }}
+                                className="w-full bg-app-bg border border-app-border text-app-text text-xs rounded-lg focus:ring-primary focus:border-primary block p-2 font-medium cursor-pointer"
+                              >
+                                {isAdmin() && <option value="">Todos os Escritórios</option>}
+                                {userOffices.map(id => {
+                                  const esc = state.escritorios.find(e => (e.id || '').toString().trim().toUpperCase() === id.toString().trim().toUpperCase());
+                                  return (
+                                    <option key={id} value={id}>
+                                      {esc ? esc.nome : (knownOfficeNames[id] || `Escritório ${id}`)}
+                                    </option>
+                                  );
+                                })}
+                              </select>
+                            </div>
+                          ) : (
+                            <div className="flex items-center text-sm text-app-text">
+                              <Building2 size={14} className="mr-2 text-primary" />
+                              <span className="truncate font-medium">
+                                {escritorioAtivoId 
+                                  ? (state.escritorios.find(e => (e.id || '').toString().trim().toUpperCase() === (escritorioAtivoId || '').toString().trim().toUpperCase())?.nome || (knownOfficeNames[escritorioAtivoId] || 'Escritório não encontrado'))
+                                  : (isAdmin() ? 'Todos os Escritórios' : 'Nenhum escritório selecionado')
+                                }
+                              </span>
+                            </div>
+                          )}
                         </div>
 
                         <div className="h-px bg-app-border my-1" />

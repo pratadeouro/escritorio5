@@ -568,6 +568,64 @@ async function startServer() {
     }
   });
 
+  // API para listar escritórios com bypass de RLS via servidor
+  app.get("/api/supabase/escritorios", async (req, res) => {
+    const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca')) ? process.env.SUPABASE_URL : 'https://qhxdujbsipgwthrgvncl.supabase.co';
+    const supabaseKey = (process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi')) ? process.env.SUPABASE_SECRET_KEY : (process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL');
+
+    try {
+      const resp = await fetch(`${supabaseUrl}/rest/v1/escritorios?select=*`, {
+        headers: {
+          "apikey": supabaseKey,
+          "Authorization": `Bearer ${supabaseKey}`
+        }
+      });
+
+      let dbEscritorios: any[] = [];
+      if (resp.ok) {
+        dbEscritorios = await resp.json().catch(() => []);
+      }
+
+      // Se o banco estiver vazio, busca da planilha e alimenta o Supabase
+      if (!Array.isArray(dbEscritorios) || dbEscritorios.length === 0) {
+        try {
+          const sheetData = await fetchSheetData('Escritorios');
+          if (Array.isArray(sheetData) && sheetData.length > 0) {
+            const mapped = sheetData.map((row: any, idx: number) => ({
+              id: (row.ID_ESCRITORIO || row.id || `ESC_${idx + 1}`).toString().trim(),
+              nome: row.Escritorio_nome || row.nome || `Escritório ${idx + 1}`,
+              endereco: row.escritorio_end || row.endereco || '',
+              responsavel: row.RESPONSAVEL || '',
+            })).filter((e: any) => e.id && e.nome);
+
+            if (mapped.length > 0) {
+              dbEscritorios = mapped;
+              for (const esc of mapped) {
+                fetch(`${supabaseUrl}/rest/v1/escritorios`, {
+                  method: "POST",
+                  headers: {
+                    "apikey": supabaseKey,
+                    "Authorization": `Bearer ${supabaseKey}`,
+                    "Content-Type": "application/json",
+                    "Prefer": "resolution=merge-duplicates,on_conflict=id"
+                  },
+                  body: JSON.stringify(esc)
+                }).catch(() => {});
+              }
+            }
+          }
+        } catch (sheetErr) {
+          console.warn("[Server Supabase Escritorios] Erro ao sincronizar da planilha:", sheetErr);
+        }
+      }
+
+      return res.json({ success: true, escritorios: dbEscritorios });
+    } catch (err: any) {
+      console.error("[Server Supabase Escritorios] Exceção:", err);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
   // ============================================================================
   // GESTÃO COMPLETA DE USUÁRIOS BASEADA EM AUTH.USERS
   // ============================================================================

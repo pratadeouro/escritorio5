@@ -98,8 +98,18 @@ export const fetchAllDataFromSupabase = async (coreOnly = false): Promise<Partia
 
   if (coreOnly) {
     const [escRes, setRes] = await Promise.all(coreQueries);
+    let escritoriosList: Escritorio[] = (escRes.data || []).map(mapEscritorioFromDb);
+    try {
+      const escResp = await fetch('/api/supabase/escritorios').then(r => r.json()).catch(() => null);
+      if (escResp && escResp.success && Array.isArray(escResp.escritorios) && escResp.escritorios.length > 0) {
+        escritoriosList = escResp.escritorios.map(mapEscritorioFromDb);
+      }
+    } catch (err) {
+      console.warn('[Supabase] Falha ao consultar /api/supabase/escritorios (coreOnly):', err);
+    }
+
     return {
-      escritorios: (escRes.data || []).map(mapEscritorioFromDb),
+      escritorios: escritoriosList,
       usuarios: [], // SEGURANÇA: Usuários NUNCA são expostos antes da autenticação
       allSettings: (setRes.data || []).map(mapSettingsFromDb),
     };
@@ -150,7 +160,18 @@ export const fetchAllDataFromSupabase = async (coreOnly = false): Promise<Partia
     console.warn('[Supabase] Falha ao consultar auth.users via admin, usando public.usuarios:', err);
   }
 
+  let escritoriosList: Escritorio[] = (escRes.data || []).map(mapEscritorioFromDb);
+  try {
+    const escResp = await fetch('/api/supabase/escritorios').then(r => r.json()).catch(() => null);
+    if (escResp && escResp.success && Array.isArray(escResp.escritorios) && escResp.escritorios.length > 0) {
+      escritoriosList = escResp.escritorios.map(mapEscritorioFromDb);
+    }
+  } catch (err) {
+    console.warn('[Supabase] Falha ao consultar /api/supabase/escritorios:', err);
+  }
+
   console.log('[Supabase] Dados carregados com sucesso:', {
+    escritorios: escritoriosList.length,
     processos: procRes.data?.length || 0,
     contatos: contRes.data?.length || 0,
     tarefas: tarRes.data?.length || 0,
@@ -158,7 +179,7 @@ export const fetchAllDataFromSupabase = async (coreOnly = false): Promise<Partia
   });
 
   return {
-    escritorios: (escRes.data || []).map(mapEscritorioFromDb),
+    escritorios: escritoriosList,
     usuarios: authUsers.length > 0 ? authUsers : (usuRes.data || []).map(mapUsuarioFromDb),
     processos: (procRes.data || []).map(mapProcessoFromDb),
     contatos: (contRes.data || []).map(mapContatoFromDb),
