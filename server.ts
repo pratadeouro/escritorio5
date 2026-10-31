@@ -663,6 +663,23 @@ async function startServer() {
         const meta = au.user_metadata || {};
         const nome = meta.display_name || meta.nome || meta.full_name || meta.name || pu.nome || email;
 
+        // Normalizar escritoriosIds para garantir que seja sempre array de strings
+        let rawEscritorios = meta.escritorios_ids || pu.escritorios_ids || meta.escritoriosIds || pu.escritoriosIds || [];
+        if (typeof rawEscritorios === 'string') {
+          try {
+            rawEscritorios = JSON.parse(rawEscritorios);
+          } catch {
+            rawEscritorios = rawEscritorios.split(',').map((s: string) => s.trim()).filter(Boolean);
+          }
+        }
+        const safeEscritoriosIds = Array.isArray(rawEscritorios)
+          ? rawEscritorios.map((id: any) => String(id || '').trim().toUpperCase()).filter(Boolean)
+          : [];
+
+        // pratadeouro@gmail.com é sempre Admin do sistema
+        const rawPerm = meta.permissao || pu.permissao || (email === 'pratadeouro@gmail.com' ? 'Admin' : 'user');
+        const permissao = email === 'pratadeouro@gmail.com' ? 'Admin' : rawPerm;
+
         return {
           id: au.id,
           authId: au.id,
@@ -673,8 +690,8 @@ async function startServer() {
           cpf: pu.cpf || meta.cpf || '',
           senha: pu.senha || '',
           oab: pu.oab || meta.oab || '',
-          permissao: meta.permissao || pu.permissao || 'user',
-          escritoriosIds: meta.escritorios_ids || pu.escritorios_ids || [],
+          permissao,
+          escritoriosIds: safeEscritoriosIds,
           status: meta.status || pu.status || (au.banned_until ? 'Inativo' : 'Ativo'),
           fotoUrl: meta.avatar_url || pu.foto_url,
           theme: pu.theme,

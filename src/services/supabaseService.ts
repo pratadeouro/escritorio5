@@ -255,24 +255,41 @@ const mapEscritorioFromDb = (r: any): Escritorio => ({
   appVersion: r.app_version || undefined,
 });
 
-export const mapUsuarioFromDb = (r: any): Usuario => ({
-  id: r.id,
-  nome: r.nome,
-  email: r.email,
-  cargo: r.cargo || '',
-  contato: r.contato || '',
-  senha: r.senha || undefined,
-  oab: r.oab || undefined,
-  cpf: r.cpf || '',
-  permissao: r.permissao || 'user',
-  escritoriosIds: Array.isArray(r.escritorios_ids) ? r.escritorios_ids : [],
-  status: r.status || 'Ativo',
-  fotoUrl: r.foto_url || undefined,
-  theme: r.theme || undefined,
-  itemsPerPage: r.items_per_page || undefined,
-  menuOrder: Array.isArray(r.menu_order) ? r.menu_order : undefined,
-  enableNotifications: r.enable_notifications !== false,
-});
+export const mapUsuarioFromDb = (r: any): Usuario => {
+  let rawEscritorios = r.escritorios_ids || r.escritoriosIds || [];
+  if (typeof rawEscritorios === 'string') {
+    try {
+      rawEscritorios = JSON.parse(rawEscritorios);
+    } catch {
+      rawEscritorios = rawEscritorios.split(',').map((s: string) => s.trim()).filter(Boolean);
+    }
+  }
+  const safeEscritorios = Array.isArray(rawEscritorios)
+    ? rawEscritorios.map((id: any) => String(id || '').trim().toUpperCase()).filter(Boolean)
+    : [];
+
+  const emailNorm = (r.email || '').trim().toLowerCase();
+  const permissao = emailNorm === 'pratadeouro@gmail.com' ? 'Admin' : (r.permissao || 'user');
+
+  return {
+    id: r.id,
+    nome: r.nome,
+    email: r.email,
+    cargo: r.cargo || '',
+    contato: r.contato || '',
+    senha: r.senha || undefined,
+    oab: r.oab || undefined,
+    cpf: r.cpf || '',
+    permissao,
+    escritoriosIds: safeEscritorios,
+    status: r.status || 'Ativo',
+    fotoUrl: r.foto_url || undefined,
+    theme: r.theme || undefined,
+    itemsPerPage: r.items_per_page || undefined,
+    menuOrder: Array.isArray(r.menu_order) ? r.menu_order : undefined,
+    enableNotifications: r.enable_notifications !== false,
+  };
+};
 
 const mapProcessoFromDb = (r: any): Processo => ({
   id: r.id,

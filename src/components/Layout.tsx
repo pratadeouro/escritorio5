@@ -76,38 +76,40 @@ export default function Layout({ children, currentView, onNavigate }: LayoutProp
   const activeOffice = state.escritorios.find(e => e.id === escritorioAtivoId);
   const officeName = activeOfficeName;
 
+  const isUserAdmin = isAdmin() || (currentUser?.email || '').trim().toLowerCase() === 'pratadeouro@gmail.com';
+
   // Lista de escritórios disponíveis para o usuário
   const userOffices = React.useMemo(() => {
     const ids = new Set<string>();
-    if (isAdmin()) {
+    if (isUserAdmin) {
       // Para admin, inclui todos os escritórios cadastrados no sistema
       state.escritorios.forEach(e => {
-        if (e.id) ids.add(e.id.toString().trim());
+        if (e.id) ids.add(e.id.toString().trim().toUpperCase());
       });
       (currentUser?.escritoriosIds || []).forEach(id => {
-        if (id) ids.add(id.toString().trim());
+        if (id) ids.add(id.toString().trim().toUpperCase());
       });
       (state.usuarios || []).forEach(u => {
         (u.escritoriosIds || []).forEach(id => {
-          if (id) ids.add(id.toString().trim());
+          if (id) ids.add(id.toString().trim().toUpperCase());
         });
       });
       // Fallback para os escritórios conhecidos caso a lista esteja vazia
       if (ids.size === 0) {
-        Object.keys(knownOfficeNames).forEach(k => ids.add(k));
+        Object.keys(knownOfficeNames).forEach(k => ids.add(k.toUpperCase()));
       }
       return Array.from(ids);
     }
 
     (currentUser?.escritoriosIds || []).forEach(id => {
-      if (id) ids.add(id.toString().trim());
+      if (id) ids.add(id.toString().trim().toUpperCase());
     });
     return Array.from(ids);
-  }, [isAdmin, state.escritorios, state.usuarios, currentUser]);
+  }, [isUserAdmin, state.escritorios, state.usuarios, currentUser]);
 
   // Para o Admin, a lista suspensa deve ser SEMPRE exibida (permite alternar entre "Todos os Escritórios" e escritórios específicos)
   // Para outros usuários, exibe se possuir mais de 1 escritório atribuído
-  const showOfficeSelector = isAdmin() || userOffices.length > 1;
+  const showOfficeSelector = isUserAdmin || userOffices.length > 1;
 
   useEffect(() => {
     const fetchPublicacoesHoje = async () => {
@@ -278,6 +280,31 @@ export default function Layout({ children, currentView, onNavigate }: LayoutProp
           </button>
         </div>
 
+        {showOfficeSelector && (
+          <div className="px-4 py-2.5 border-b border-app-border bg-app-bg/50 flex-shrink-0">
+            <div className="flex items-center gap-1.5 mb-1 text-[11px] font-semibold text-app-text-muted uppercase tracking-wider">
+              <Building2 size={13} className="text-primary" />
+              <span>Escritório Ativo</span>
+            </div>
+            <select
+              value={escritorioAtivoId || ''}
+              onChange={(e) => setEscritorioAtivoId(e.target.value)}
+              className="w-full bg-app-surface border border-app-border text-app-text text-xs font-medium rounded-lg p-2 focus:ring-primary focus:border-primary truncate shadow-sm cursor-pointer"
+            >
+              {isUserAdmin && <option value="">Todos os Escritórios</option>}
+              {userOffices.map(id => {
+                const normId = id.toString().trim().toUpperCase();
+                const esc = state.escritorios.find(e => (e.id || '').toString().trim().toUpperCase() === normId);
+                return (
+                  <option key={id} value={id}>
+                    {esc?.nome || knownOfficeNames[normId] || knownOfficeNames[id] || `Escritório ${id}`}
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+        )}
+
         <div className="flex-1 overflow-y-auto py-4 scrollbar-thin scrollbar-thumb-app-border scrollbar-track-transparent">
           <nav className="px-3 space-y-1">
             {navItems.filter(item => canViewMenu(item.id)).map((item) => (
@@ -447,19 +474,20 @@ export default function Layout({ children, currentView, onNavigate }: LayoutProp
           <div className="flex items-center space-x-4">
             {showOfficeSelector && (
               <div className="flex items-center mr-1 sm:mr-2">
-                <Building2 size={16} className="text-app-text-muted mr-1.5 hidden sm:block shrink-0" />
+                <Building2 size={16} className="text-primary mr-1.5 hidden sm:block shrink-0" />
                 <select
                   value={escritorioAtivoId || ''}
                   onChange={(e) => setEscritorioAtivoId(e.target.value)}
-                  className="bg-app-surface border border-app-border text-app-text text-xs sm:text-sm font-medium rounded-lg focus:ring-primary focus:border-primary block py-1.5 px-2 sm:p-2 max-w-[130px] sm:max-w-[220px] truncate shadow-sm cursor-pointer"
+                  className="bg-app-surface border border-app-border text-app-text text-xs sm:text-sm font-medium rounded-lg focus:ring-primary focus:border-primary block py-1.5 px-2 sm:p-2 max-w-[140px] sm:max-w-[220px] truncate shadow-sm cursor-pointer hover:border-primary transition-colors"
                   title="Selecionar Escritório Ativo"
                 >
-                  {isAdmin() && <option value="">Todos os Escritórios</option>}
+                  {isUserAdmin && <option value="">Todos os Escritórios</option>}
                   {userOffices.map(id => {
-                    const esc = state.escritorios.find(e => (e.id || '').toString().trim().toUpperCase() === id.toString().trim().toUpperCase());
+                    const normId = id.toString().trim().toUpperCase();
+                    const esc = state.escritorios.find(e => (e.id || '').toString().trim().toUpperCase() === normId);
                     return (
                       <option key={id} value={id}>
-                        {esc ? esc.nome : (knownOfficeNames[id] || `Escritório ${id}`)}
+                        {esc ? esc.nome : (knownOfficeNames[normId] || knownOfficeNames[id] || `Escritório ${id}`)}
                       </option>
                     );
                   })}

@@ -1,9 +1,22 @@
 import React, { useState, useEffect } from 'react';
 import { useAppContext } from '../context';
-import { Users, Plus, Search, Edit2, Trash2, Mail, Phone, ShieldCheck, ChevronRight, Copy, Check, ListOrdered, KeyRound, RefreshCw, CheckCircle2 } from 'lucide-react';
+import { Users, Plus, Search, Edit2, Trash2, Mail, Phone, ShieldCheck, ChevronRight, Copy, Check, ListOrdered, KeyRound, RefreshCw, CheckCircle2, Building2 } from 'lucide-react';
 import Modal from '../components/Modal';
 import { Usuario, RolePermission, View } from '../types';
 import { SupabaseAuthImportModule } from '../components/SupabaseAuthImportModule';
+
+const knownOfficeNames: Record<string, string> = {
+  '1': 'Escritório Walber Mendonça',
+  '2': 'Escritório Ozeias Oliveira',
+  '3': 'Escritório João Ernesto',
+  'A8R4DY0V': 'Escritório Laura Brasil',
+  'BAELXMG7': 'Escritório Daniel Muniz',
+  'B3KSZYQS': 'Escritório Gabriel Serrao',
+  'C6YZ6C21K': 'Escritório Juliana Cascais',
+  'WZGA9ID8': 'Escritório Hallice Moreira',
+  '0DWW10EI': 'Escritório Anna Victoria',
+  'LMLOAZ2P': 'Escritório Jurídico Ranna Souza'
+};
 
 export default function Usuarios() {
   const { 
@@ -21,10 +34,12 @@ export default function Usuarios() {
     refreshAuthUsers
   } = useAppContext();
 
-  const canWrite = hasPermission('usuarios', 'write');
-  const canDelete = hasPermission('usuarios', 'delete');
+  const isUserAdmin = isAdmin() || (currentUser?.email || '').trim().toLowerCase() === 'pratadeouro@gmail.com';
+  const canWrite = hasPermission('usuarios', 'write') || isUserAdmin;
+  const canDelete = hasPermission('usuarios', 'delete') || isUserAdmin;
   const [activeTab, setActiveTab] = useState<'usuarios' | 'permissions' | 'import_auth'>('usuarios');
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedOfficeFilter, setSelectedOfficeFilter] = useState<string>('all');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingUsuario, setEditingUsuario] = useState<Usuario | null>(null);
   const [isRefreshingAuth, setIsRefreshingAuth] = useState(false);
@@ -58,27 +73,40 @@ export default function Usuarios() {
   };
 
   const filteredUsuarios = state.usuarios.filter(u => {
-    // Se houver um escritório ativo selecionado, filtrar por ele (para todos, incluindo Admin)
-    if (escritorioAtivoId && !u.escritoriosIds?.includes(escritorioAtivoId)) {
-      return false;
+    // 1. Filtro por termo de busca
+    const search = searchTerm.trim().toLowerCase();
+    if (search) {
+      const matchNome = (u.nome || '').toLowerCase().includes(search);
+      const matchEmail = (u.email || '').toLowerCase().includes(search);
+      const matchCargo = (u.cargo || '').toLowerCase().includes(search);
+      const matchCpf = (u.cpf || '').toLowerCase().includes(search);
+      const matchOab = (u.oab || '').toLowerCase().includes(search);
+      if (!matchNome && !matchEmail && !matchCargo && !matchCpf && !matchOab) {
+        return false;
+      }
     }
 
-    // Admin vê todos
-    if (isAdmin()) {
-      return u.nome.toLowerCase().includes(searchTerm.toLowerCase()) || 
-             u.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-             u.cargo.toLowerCase().includes(searchTerm.toLowerCase());
+    const uOfficeIds = Array.isArray(u.escritoriosIds)
+      ? u.escritoriosIds.map(id => String(id).trim().toUpperCase())
+      : [];
+
+    // 2. Filtro específico de escritório da tela de Usuários
+    if (selectedOfficeFilter && selectedOfficeFilter !== 'all') {
+      const targetFilter = selectedOfficeFilter.trim().toUpperCase();
+      if (!uOfficeIds.includes(targetFilter)) {
+        return false;
+      }
     }
 
-    // Não admin: ver apenas usuários associados aos seus escritórios
-    const userOffices = currentUser?.escritoriosIds || [];
-    const isAssociated = u.escritoriosIds?.some(id => userOffices.includes(id));
-    
-    if (!isAssociated) return false;
+    // Se for Admin: se o filtro da tela estiver em 'all', vê todos os usuários do sistema!
+    if (isUserAdmin) {
+      return true;
+    }
 
-    return u.nome.toLowerCase().includes(searchTerm.toLowerCase()) || 
-           u.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
-           u.cargo.toLowerCase().includes(searchTerm.toLowerCase());
+    // Não admin: ver apenas usuários associados aos escritórios do usuário atual
+    const userOffices = (currentUser?.escritoriosIds || []).map(id => String(id).trim().toUpperCase());
+    const isAssociated = uOfficeIds.some(id => userOffices.includes(id));
+    return isAssociated;
   });
 
   const handleOpenModal = (usuario?: Usuario) => {
@@ -674,16 +702,53 @@ export default function Usuarios() {
 
       {activeTab === 'usuarios' && (
         <div className="bg-app-surface rounded-xl shadow-sm border border-app-border overflow-hidden">
-          <div className="p-4 border-b border-app-border flex items-center">
+          <div className="p-4 border-b border-app-border flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
             <div className="relative flex-1 max-w-md">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-app-text-muted" size={20} />
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-app-text-muted" size={18} />
               <input 
                 type="text" 
                 placeholder="Buscar por nome, e-mail ou cargo..." 
-                className="w-full pl-10 pr-4 py-2 border border-app-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent bg-app-surface text-app-text"
+                className="w-full pl-9 pr-4 py-2 border border-app-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent bg-app-surface text-app-text text-sm"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
+            </div>
+
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1.5 bg-app-bg px-2.5 py-1.5 rounded-lg border border-app-border">
+                <Building2 size={16} className="text-app-text-muted shrink-0" />
+                <select
+                  value={selectedOfficeFilter}
+                  onChange={(e) => setSelectedOfficeFilter(e.target.value)}
+                  className="bg-transparent border-none text-app-text text-xs sm:text-sm font-medium focus:ring-0 focus:outline-none cursor-pointer pr-2"
+                  title="Filtrar por Escritório"
+                >
+                  <option value="all">Todos os Escritórios ({state.usuarios.length} usuários)</option>
+                  {state.escritorios.map(esc => {
+                    const count = state.usuarios.filter(u => 
+                      (u.escritoriosIds || []).map(id => String(id).trim().toUpperCase()).includes(String(esc.id).trim().toUpperCase())
+                    ).length;
+                    return (
+                      <option key={esc.id} value={esc.id}>
+                        {esc.nome} ({count})
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+
+              {dataSource === 'supabase' && (
+                <button
+                  type="button"
+                  onClick={handleManualRefreshAuth}
+                  disabled={isRefreshingAuth}
+                  className="flex items-center gap-1.5 px-3 py-2 border border-app-border rounded-lg text-xs font-medium text-app-text-muted hover:text-primary hover:border-primary transition-colors disabled:opacity-50 shrink-0"
+                  title="Atualizar lista diretamente de auth.users"
+                >
+                  <RefreshCw size={14} className={isRefreshingAuth ? 'animate-spin' : ''} />
+                  <span className="hidden sm:inline">Atualizar</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -713,10 +778,25 @@ export default function Usuarios() {
                       </span>
                     </td>
                     <td className="p-4 text-app-text-muted">
-                      {usuario.escritoriosIds?.map((id, index) => {
-                        const esc = state.escritorios.find(e => e.id === id);
-                        return esc ? <span key={`${id}-${index}`}>{index > 0 ? ', ' : ''}{esc.nome}</span> : null;
-                      }).filter(Boolean) || '-'}
+                      <div className="flex flex-wrap gap-1 max-w-xs">
+                        {Array.isArray(usuario.escritoriosIds) && usuario.escritoriosIds.length > 0 ? (
+                          usuario.escritoriosIds.map((id, index) => {
+                            const normId = String(id).trim().toUpperCase();
+                            const esc = state.escritorios.find(e => (e.id || '').toString().trim().toUpperCase() === normId);
+                            const label = esc?.nome || knownOfficeNames[normId] || `Escritório ${id}`;
+                            return (
+                              <span 
+                                key={`${id}-${index}`}
+                                className="inline-flex items-center px-2 py-0.5 rounded text-xs bg-app-secondary text-app-text border border-app-border/40 font-medium"
+                              >
+                                {label}
+                              </span>
+                            );
+                          })
+                        ) : (
+                          <span className="text-xs text-app-text-muted italic">Nenhum</span>
+                        )}
+                      </div>
                     </td>
                     <td className="p-4 text-app-text-muted">{usuario.oab || '-'}</td>
                     <td className="p-4 text-app-text-muted">

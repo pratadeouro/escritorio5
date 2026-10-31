@@ -405,11 +405,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [state.usuarios, authenticatedUserEmail, state.escritorios]);
 
   const isAdmin = useCallback((): boolean => {
+    const authEmail = (authenticatedUserEmail || '').trim().toLowerCase();
+    if (authEmail === 'pratadeouro@gmail.com') return true;
     if (!currentUser) return false;
-    const email = currentUser.email.toLowerCase();
+    const email = (currentUser.email || '').trim().toLowerCase();
     return normalizeString(currentUser.permissao) === 'admin' || 
            email === 'pratadeouro@gmail.com';
-  }, [currentUser]);
+  }, [currentUser, authenticatedUserEmail]);
 
   const activeOfficeName = useMemo(() => {
     if (escritorioAtivoId === "" || escritorioAtivoId === null) {
