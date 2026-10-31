@@ -763,7 +763,11 @@ async function startServer() {
 
       const adminData = await adminResp.json();
       if (!adminResp.ok) {
-        const errorMsg = adminData.msg || adminData.message || JSON.stringify(adminData);
+        const rawMsg = adminData.msg || adminData.message || JSON.stringify(adminData);
+        let errorMsg = rawMsg;
+        if (rawMsg.toLowerCase().includes('already been registered') || rawMsg.toLowerCase().includes('already registered')) {
+          errorMsg = 'Já existe um usuário cadastrado com este e-mail no Supabase Auth.';
+        }
         return res.status(adminResp.status).json({ success: false, error: errorMsg });
       }
 

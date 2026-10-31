@@ -155,9 +155,9 @@ interface AppContextType {
   addUPJ: (upj: UPJ) => void;
   updateUPJ: (upj: UPJ) => void;
   deleteUPJ: (id: string) => void;
-  addUsuario: (usuario: Usuario) => void;
-  updateUsuario: (usuario: Usuario) => void;
-  deleteUsuario: (id: string) => void;
+  addUsuario: (usuario: Usuario) => Promise<{ success: boolean; user?: Usuario; error?: string }>;
+  updateUsuario: (usuario: Usuario) => Promise<{ success: boolean; user?: Usuario; error?: string }>;
+  deleteUsuario: (id: string) => Promise<{ success: boolean; error?: string }>;
   addModelo: (modelo: Modelo) => void;
   updateModelo: (modelo: Modelo) => void;
   deleteModelo: (id: string) => void;
@@ -749,7 +749,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Helper for centralized logging of actions with record details and error handling
   const saveAndLog = useCallback(async (newState: AppState, acao: string, detalhes: string, record?: any) => {
-    if (!newState.settings.scriptUrl || !newState.hasLoaded) return;
+    if (!newState.hasLoaded) return;
+    const isSupabase = isSupabaseConfigured() && getActiveDataSource() === 'supabase';
+    if (!isSupabase && !newState.settings.scriptUrl) return;
 
     // Mask sensitive fields for logging
     const sanitize = (val: any) => {
@@ -2560,46 +2562,141 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
   }, [saveAndLog]);
 
-  const addUsuario = useCallback((usuario: Usuario) => {
-    setState(s => {
-      const newUsuario = { 
+  const addUsuario = useCallback(async (usuario: Usuario): Promise<{ success: boolean; user?: Usuario; error?: string }> => {
+    const isSupabase = getActiveDataSource() === 'supabase' && isSupabaseConfigured();
+
+    if (isSupabase) {
+      try {
+        const res = await createAuthUserAdmin(usuario);
+        if (!res.success) {
+          return { success: false, error: res.error || 'Erro ao criar usuário no Supabase Auth' };
+        }
+
+        const createdUser: Usuario = {
+          ...usuario,
+          id: res.user?.id || (usuario.id || generateId('usuario')).toString().trim().toUpperCase(),
+          escritoriosIds: (usuario.escritoriosIds || []).map(id => id.toString().trim().toUpperCase())
+        };
+
+        setState(s => {
+          const filtered = s.usuarios.filter(u => u.email.toLowerCase() !== createdUser.email.toLowerCase() && u.id !== createdUser.id);
+          const newState = { ...s, usuarios: [...filtered, createdUser] };
+          saveAndLog(newState, 'ADD_USUARIO', `Novo usuário adicionado: ${createdUser.nome}`, createdUser);
+          return newState;
+        });
+
+        setTimeout(() => {
+          refreshAuthUsers().catch(() => {});
+        }, 300);
+
+        return { success: true, user: createdUser };
+      } catch (err: any) {
+        console.error('Erro ao adicionar usuário:', err);
+        return { success: false, error: err.message || 'Erro inesperado ao criar usuário' };
+      }
+    } else {
+      const newUsuario: Usuario = { 
         ...usuario, 
         id: (usuario.id || generateId('usuario')).toString().trim().toUpperCase(),
         escritoriosIds: (usuario.escritoriosIds || []).map(id => id.toString().trim().toUpperCase())
       };
-      const newState = { ...s, usuarios: [...s.usuarios, newUsuario] };
-      saveAndLog(newState, 'ADD_USUARIO', `Novo usuário adicionado: ${newUsuario.nome}`, newUsuario);
-      return newState;
-    });
-  }, [saveAndLog]);
+      setState(s => {
+        const newState = { ...s, usuarios: [...s.usuarios, newUsuario] };
+        saveAndLog(newState, 'ADD_USUARIO', `Novo usuário adicionado: ${newUsuario.nome}`, newUsuario);
+        return newState;
+      });
+      return { success: true, user: newUsuario };
+    }
+  }, [saveAndLog, refreshAuthUsers]);
   
-  const updateUsuario = useCallback((usuario: Usuario) => {
-    setState(s => {
-      const normalizedUsuario = {
-        ...usuario,
-        id: (usuario.id || '').toString().trim().toUpperCase(),
-        escritoriosIds: (usuario.escritoriosIds || []).map(id => id.toString().trim().toUpperCase())
-      };
-      const newState = {
-        ...s,
-        usuarios: s.usuarios.map(u => u.id === normalizedUsuario.id ? normalizedUsuario : u)
-      };
-      saveAndLog(newState, 'UPDATE_USUARIO', `Usuário atualizado: ${normalizedUsuario.nome}`, normalizedUsuario);
-      return newState;
-    });
-  }, [saveAndLog]);
+  const updateUsuario = useCallback(async (usuario: Usuario): Promise<{ success: boolean; user?: Usuario; error?: string }> => {
+    const isSupabase = getActiveDataSource() === 'supabase' && isSupabaseConfigured();
 
-  const deleteUsuario = useCallback((id: string) => {
-    setState(s => {
-      const itemToDelete = s.usuarios.find(u => u.id === id);
-      const newState = {
-        ...s,
-        usuarios: s.usuarios.filter(u => u.id !== id)
-      };
-      saveAndLog(newState, 'DELETE_USUARIO', `Usuário excluído: ${itemToDelete?.nome || id}`, itemToDelete);
-      return newState;
-    });
-  }, [saveAndLog]);
+    const normalizedUsuario: Usuario = {
+      ...usuario,
+      id: (usuario.id || '').toString().trim(),
+      escritoriosIds: (usuario.escritoriosIds || []).map(id => id.toString().trim().toUpperCase())
+    };
+
+    if (isSupabase) {
+      try {
+        const res = await updateAuthUserAdmin(normalizedUsuario.id, normalizedUsuario);
+        if (!res.success) {
+          return { success: false, error: res.error || 'Erro ao atualizar usuário no Supabase Auth' };
+        }
+
+        setState(s => {
+          const newState = {
+            ...s,
+            usuarios: s.usuarios.map(u => (u.id === normalizedUsuario.id || u.email.toLowerCase() === normalizedUsuario.email.toLowerCase()) ? normalizedUsuario : u)
+          };
+          saveAndLog(newState, 'UPDATE_USUARIO', `Usuário atualizado: ${normalizedUsuario.nome}`, normalizedUsuario);
+          return newState;
+        });
+
+        setTimeout(() => {
+          refreshAuthUsers().catch(() => {});
+        }, 300);
+
+        return { success: true, user: normalizedUsuario };
+      } catch (err: any) {
+        console.error('Erro ao atualizar usuário:', err);
+        return { success: false, error: err.message || 'Erro inesperado ao atualizar usuário' };
+      }
+    } else {
+      setState(s => {
+        const newState = {
+          ...s,
+          usuarios: s.usuarios.map(u => u.id === normalizedUsuario.id ? normalizedUsuario : u)
+        };
+        saveAndLog(newState, 'UPDATE_USUARIO', `Usuário atualizado: ${normalizedUsuario.nome}`, normalizedUsuario);
+        return newState;
+      });
+      return { success: true, user: normalizedUsuario };
+    }
+  }, [saveAndLog, refreshAuthUsers]);
+
+  const deleteUsuario = useCallback(async (id: string): Promise<{ success: boolean; error?: string }> => {
+    const isSupabase = getActiveDataSource() === 'supabase' && isSupabaseConfigured();
+    const itemToDelete = stateRef.current.usuarios.find(u => u.id === id);
+
+    if (isSupabase) {
+      try {
+        const res = await deleteAuthUserAdmin(id, itemToDelete?.email);
+        if (!res.success) {
+          return { success: false, error: res.error || 'Erro ao excluir usuário no Supabase' };
+        }
+
+        setState(s => {
+          const newState = {
+            ...s,
+            usuarios: s.usuarios.filter(u => u.id !== id)
+          };
+          saveAndLog(newState, 'DELETE_USUARIO', `Usuário excluído: ${itemToDelete?.nome || id}`, itemToDelete);
+          return newState;
+        });
+
+        setTimeout(() => {
+          refreshAuthUsers().catch(() => {});
+        }, 300);
+
+        return { success: true };
+      } catch (err: any) {
+        console.error('Erro ao excluir usuário:', err);
+        return { success: false, error: err.message || 'Erro inesperado ao excluir usuário' };
+      }
+    } else {
+      setState(s => {
+        const newState = {
+          ...s,
+          usuarios: s.usuarios.filter(u => u.id !== id)
+        };
+        saveAndLog(newState, 'DELETE_USUARIO', `Usuário excluído: ${itemToDelete?.nome || id}`, itemToDelete);
+        return newState;
+      });
+      return { success: true };
+    }
+  }, [saveAndLog, refreshAuthUsers]);
 
   const addModelo = useCallback((modelo: Modelo) => {
     setState(s => {

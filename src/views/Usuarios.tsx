@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAppContext } from '../context';
-import { Users, Plus, Search, Edit2, Trash2, Mail, Phone, ShieldCheck, ChevronRight, Copy, Check, ListOrdered, KeyRound, RefreshCw, CheckCircle2, Building2 } from 'lucide-react';
+import { Users, Plus, Search, Edit2, Trash2, Mail, Phone, ShieldCheck, ChevronRight, Copy, Check, ListOrdered, KeyRound, RefreshCw, CheckCircle2, Building2, Loader2 } from 'lucide-react';
 import Modal from '../components/Modal';
 import { Usuario, RolePermission, View } from '../types';
 import { SupabaseAuthImportModule } from '../components/SupabaseAuthImportModule';
@@ -146,11 +146,16 @@ export default function Usuarios() {
     setIsModalOpen(true);
   };
 
-  const handleSave = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!formData.nome) return;
+  const [isSaving, setIsSaving] = useState(false);
 
-    if (!formData.email) {
+  const handleSave = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!formData.nome || !formData.nome.trim()) {
+      alert('Por favor, informe o nome completo do usuário.');
+      return;
+    }
+
+    if (!formData.email || !formData.email.trim()) {
       alert('Por favor, informe o e-mail do usuário.');
       return;
     }
@@ -167,58 +172,88 @@ export default function Usuarios() {
       return;
     }
 
+    if (!formData.permissao) {
+      alert('Por favor, selecione uma categoria de permissão para o usuário.');
+      return;
+    }
+
     if (!formData.escritoriosIds || formData.escritoriosIds.length === 0) {
       alert('Por favor, selecione ao menos um escritório de atuação para o usuário.');
       return;
     }
     
-    if (editingUsuario) {
-      let finalEscritoriosIds = formData.escritoriosIds;
-      
-      // Se não for admin, preservar os IDs de escritórios que o usuário atual não tem acesso
-      if (!isAdmin()) {
-        const userOffices = currentUser?.escritoriosIds || [];
-        const hiddenOffices = (editingUsuario.escritoriosIds || []).filter(id => !userOffices.includes(id));
-        finalEscritoriosIds = [...new Set([...formData.escritoriosIds, ...hiddenOffices])];
-      }
+    setIsSaving(true);
+    try {
+      if (editingUsuario) {
+        let finalEscritoriosIds = formData.escritoriosIds;
+        
+        // Se não for admin, preservar os IDs de escritórios que o usuário atual não tem acesso
+        if (!isAdmin()) {
+          const userOffices = currentUser?.escritoriosIds || [];
+          const hiddenOffices = (editingUsuario.escritoriosIds || []).filter(id => !userOffices.includes(id));
+          finalEscritoriosIds = [...new Set([...formData.escritoriosIds, ...hiddenOffices])];
+        }
 
-      updateUsuario({
-        ...editingUsuario,
-        ...formData,
-        // Se a senha estiver vazia, preserva a senha anterior no objeto local
-        senha: formData.senha ? formData.senha.trim() : editingUsuario.senha,
-        escritoriosIds: finalEscritoriosIds
+        const res = await updateUsuario({
+          ...editingUsuario,
+          ...formData,
+          // Se a senha estiver vazia, preserva a senha anterior no objeto local
+          senha: formData.senha ? formData.senha.trim() : editingUsuario.senha,
+          escritoriosIds: finalEscritoriosIds
+        });
+
+        if (res && !res.success) {
+          alert(`Erro ao atualizar usuário: ${res.error || 'Falha ao salvar no servidor'}`);
+          return;
+        }
+      } else {
+        const res = await addUsuario({
+          id: Math.random().toString(36).substr(2, 9),
+          ...formData
+        });
+
+        if (res && !res.success) {
+          alert(`Erro ao cadastrar usuário: ${res.error || 'Falha ao criar usuário no Supabase Auth'}`);
+          return;
+        }
+      }
+      
+      setIsModalOpen(false);
+      setEditingUsuario(null);
+      setFormData({
+        nome: '',
+        cargo: '',
+        email: '',
+        contato: '',
+        cpf: '',
+        senha: '',
+        oab: '',
+        permissao: '',
+        escritoriosIds: []
       });
-    } else {
-      addUsuario({
-        id: Math.random().toString(36).substr(2, 9),
-        ...formData
-      });
+    } catch (err: any) {
+      console.error('Erro ao salvar usuário:', err);
+      alert(`Erro inesperado ao salvar: ${err.message || String(err)}`);
+    } finally {
+      setIsSaving(false);
     }
-    
-    setIsModalOpen(false);
-    setEditingUsuario(null);
-    setFormData({
-      nome: '',
-      cargo: '',
-      email: '',
-      contato: '',
-      cpf: '',
-      senha: '',
-      oab: '',
-      permissao: '',
-      escritoriosIds: []
-    });
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     const userToDelete = state.usuarios.find(u => u.id === id);
     const confirmMsg = dataSource === 'supabase'
       ? `Tem certeza que deseja excluir o usuário "${userToDelete?.nome || id}"? Esta ação removerá a conta permanentemente da tabela auth.users e do banco de dados.`
       : 'Tem certeza que deseja excluir este usuário?';
 
     if (window.confirm(confirmMsg)) {
-      deleteUsuario(id);
+      try {
+        const res = await deleteUsuario(id);
+        if (res && !res.success) {
+          alert(`Erro ao excluir usuário: ${res.error || 'Falha ao remover'}`);
+        }
+      } catch (err: any) {
+        alert(`Erro ao excluir usuário: ${err.message || String(err)}`);
+      }
     }
   };
 
@@ -1163,24 +1198,34 @@ export default function Usuarios() {
               <label className="text-sm font-medium text-app-text">Escritórios de Atuação *</label>
               <div className="max-h-32 overflow-y-auto border border-app-border rounded-lg p-2 space-y-2 bg-app-surface">
                 {state.escritorios
-                  .filter(esc => isAdmin() || (currentUser?.escritoriosIds || []).includes(esc.id))
-                  .map((esc, index) => (
-                  <label key={`${esc.id}-${index}`} className="flex items-center space-x-2 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      className="rounded border-app-border text-primary focus:ring-primary"
-                      checked={formData.escritoriosIds.includes(esc.id)}
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          setFormData({ ...formData, escritoriosIds: [...formData.escritoriosIds, esc.id] });
-                        } else {
-                          setFormData({ ...formData, escritoriosIds: formData.escritoriosIds.filter(id => id !== esc.id) });
-                        }
-                      }}
-                    />
-                    <span className="text-sm text-app-text">{esc.nome}</span>
-                  </label>
-                ))}
+                  .filter(esc => isAdmin() || (currentUser?.escritoriosIds || []).some(id => String(id).trim().toUpperCase() === String(esc.id).trim().toUpperCase()))
+                  .map((esc, index) => {
+                    const normEscId = String(esc.id).trim().toUpperCase();
+                    const isChecked = formData.escritoriosIds.some(id => String(id).trim().toUpperCase() === normEscId);
+                    return (
+                      <label key={`${esc.id}-${index}`} className="flex items-center space-x-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          className="rounded border-app-border text-primary focus:ring-primary"
+                          checked={isChecked}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setFormData(prev => ({
+                                ...prev,
+                                escritoriosIds: [...prev.escritoriosIds.filter(id => String(id).trim().toUpperCase() !== normEscId), esc.id]
+                              }));
+                            } else {
+                              setFormData(prev => ({
+                                ...prev,
+                                escritoriosIds: prev.escritoriosIds.filter(id => String(id).trim().toUpperCase() !== normEscId)
+                              }));
+                            }
+                          }}
+                        />
+                        <span className="text-sm text-app-text">{esc.nome}</span>
+                      </label>
+                    );
+                  })}
               </div>
             </div>
             <div className="space-y-1">
@@ -1219,8 +1264,9 @@ export default function Usuarios() {
               />
             </div>
             <div className="space-y-1">
-              <label className="text-sm font-medium text-app-text">Permissão</label>
+              <label className="text-sm font-medium text-app-text">Permissão *</label>
               <select 
+                required
                 className="w-full px-3 py-2 border border-app-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary bg-app-surface text-app-text"
                 value={formData.permissao}
                 onChange={e => setFormData({...formData, permissao: e.target.value})}
@@ -1238,19 +1284,24 @@ export default function Usuarios() {
           <div className="pt-4 flex justify-end space-x-3 border-t border-app-border">
             <button 
               type="button"
+              disabled={isSaving}
               onClick={() => {
                 setIsModalOpen(false);
                 setEditingUsuario(null);
               }}
-              className="px-4 py-2 text-app-text bg-app-surface border border-app-border rounded-lg hover:bg-app-secondary/50 transition-colors"
+              className="px-4 py-2 text-app-text bg-app-surface border border-app-border rounded-lg hover:bg-app-secondary/50 transition-colors disabled:opacity-50"
             >
               Cancelar
             </button>
             <button 
               type="submit"
-              className="px-4 py-2 text-white bg-primary rounded-lg hover:bg-primary/90 transition-colors shadow-sm"
+              disabled={isSaving}
+              className="px-4 py-2 text-white bg-primary rounded-lg hover:bg-primary/90 transition-colors shadow-sm disabled:opacity-50 flex items-center gap-2"
             >
-              {editingUsuario ? "Atualizar Usuário" : "Salvar Usuário"}
+              {isSaving && <Loader2 size={16} className="animate-spin" />}
+              {isSaving 
+                ? (editingUsuario ? 'Atualizando...' : 'Criando no auth.users...') 
+                : (editingUsuario ? 'Atualizar Usuário' : 'Salvar Usuário')}
             </button>
           </div>
         </form>
