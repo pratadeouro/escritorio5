@@ -39,10 +39,13 @@ export default function Usuarios() {
   const canDelete = hasPermission('usuarios', 'delete') || isUserAdmin;
   const [activeTab, setActiveTab] = useState<'usuarios' | 'permissions' | 'import_auth'>('usuarios');
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedOfficeFilter, setSelectedOfficeFilter] = useState<string>('all');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingUsuario, setEditingUsuario] = useState<Usuario | null>(null);
   const [isRefreshingAuth, setIsRefreshingAuth] = useState(false);
+
+  const activeEscritorio = state.escritorios.find(
+    e => (e.id || '').toString().trim().toUpperCase() === (escritorioAtivoId || '').trim().toUpperCase()
+  );
 
   const [formData, setFormData] = useState({
     nome: '',
@@ -90,23 +93,24 @@ export default function Usuarios() {
       ? u.escritoriosIds.map(id => String(id).trim().toUpperCase())
       : [];
 
-    // 2. Filtro específico de escritório da tela de Usuários
-    if (selectedOfficeFilter && selectedOfficeFilter !== 'all') {
-      const targetFilter = selectedOfficeFilter.trim().toUpperCase();
-      if (!uOfficeIds.includes(targetFilter)) {
+    // 2. Filtro do escritório selecionado no cabeçalho
+    // Mesmo com usuário admin, exibe APENAS os usuários que pertençam ao escritório selecionado:
+    const activeOffice = (escritorioAtivoId || '').trim().toUpperCase();
+    if (activeOffice) {
+      if (!uOfficeIds.includes(activeOffice)) {
+        return false;
+      }
+    } else if (!isUserAdmin) {
+      // Se nenhum escritório estiver selecionado (ex: "Todos os Escritórios") e não for admin,
+      // limitar aos escritórios aos quais o usuário atual tem acesso
+      const userOffices = (currentUser?.escritoriosIds || []).map(id => String(id).trim().toUpperCase());
+      const isAssociated = uOfficeIds.some(id => userOffices.includes(id));
+      if (!isAssociated) {
         return false;
       }
     }
 
-    // Se for Admin: se o filtro da tela estiver em 'all', vê todos os usuários do sistema!
-    if (isUserAdmin) {
-      return true;
-    }
-
-    // Não admin: ver apenas usuários associados aos escritórios do usuário atual
-    const userOffices = (currentUser?.escritoriosIds || []).map(id => String(id).trim().toUpperCase());
-    const isAssociated = uOfficeIds.some(id => userOffices.includes(id));
-    return isAssociated;
+    return true;
   });
 
   const handleOpenModal = (usuario?: Usuario) => {
@@ -715,27 +719,12 @@ export default function Usuarios() {
             </div>
 
             <div className="flex items-center gap-2">
-              <div className="flex items-center gap-1.5 bg-app-bg px-2.5 py-1.5 rounded-lg border border-app-border">
-                <Building2 size={16} className="text-app-text-muted shrink-0" />
-                <select
-                  value={selectedOfficeFilter}
-                  onChange={(e) => setSelectedOfficeFilter(e.target.value)}
-                  className="bg-transparent border-none text-app-text text-xs sm:text-sm font-medium focus:ring-0 focus:outline-none cursor-pointer pr-2"
-                  title="Filtrar por Escritório"
-                >
-                  <option value="all">Todos os Escritórios ({state.usuarios.length} usuários)</option>
-                  {state.escritorios.map(esc => {
-                    const count = state.usuarios.filter(u => 
-                      (u.escritoriosIds || []).map(id => String(id).trim().toUpperCase()).includes(String(esc.id).trim().toUpperCase())
-                    ).length;
-                    return (
-                      <option key={esc.id} value={esc.id}>
-                        {esc.nome} ({count})
-                      </option>
-                    );
-                  })}
-                </select>
-              </div>
+              {activeEscritorio && (
+                <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-app-bg border border-app-border text-xs text-app-text-muted">
+                  <Building2 size={14} className="text-primary shrink-0" />
+                  <span>Escritório: <strong className="text-app-text">{activeEscritorio.nome}</strong></span>
+                </div>
+              )}
 
               {dataSource === 'supabase' && (
                 <button
@@ -845,7 +834,9 @@ export default function Usuarios() {
                 {filteredUsuarios.length === 0 && (
                   <tr>
                     <td colSpan={7} className="p-8 text-center text-app-text-muted">
-                      Nenhum usuário encontrado.
+                      {activeEscritorio 
+                        ? `Nenhum usuário encontrado para o escritório "${activeEscritorio.nome}".`
+                        : 'Nenhum usuário encontrado.'}
                     </td>
                   </tr>
                 )}

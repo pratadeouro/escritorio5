@@ -280,30 +280,7 @@ export default function Layout({ children, currentView, onNavigate }: LayoutProp
           </button>
         </div>
 
-        {showOfficeSelector && (
-          <div className="px-4 py-2.5 border-b border-app-border bg-app-bg/50 flex-shrink-0">
-            <div className="flex items-center gap-1.5 mb-1 text-[11px] font-semibold text-app-text-muted uppercase tracking-wider">
-              <Building2 size={13} className="text-primary" />
-              <span>Escritório Ativo</span>
-            </div>
-            <select
-              value={escritorioAtivoId || ''}
-              onChange={(e) => setEscritorioAtivoId(e.target.value)}
-              className="w-full bg-app-surface border border-app-border text-app-text text-xs font-medium rounded-lg p-2 focus:ring-primary focus:border-primary truncate shadow-sm cursor-pointer"
-            >
-              {isUserAdmin && <option value="">Todos os Escritórios</option>}
-              {userOffices.map(id => {
-                const normId = id.toString().trim().toUpperCase();
-                const esc = state.escritorios.find(e => (e.id || '').toString().trim().toUpperCase() === normId);
-                return (
-                  <option key={id} value={id}>
-                    {esc?.nome || knownOfficeNames[normId] || knownOfficeNames[id] || `Escritório ${id}`}
-                  </option>
-                );
-              })}
-            </select>
-          </div>
-        )}
+
 
         <div className="flex-1 overflow-y-auto py-4 scrollbar-thin scrollbar-thumb-app-border scrollbar-track-transparent">
           <nav className="px-3 space-y-1">
