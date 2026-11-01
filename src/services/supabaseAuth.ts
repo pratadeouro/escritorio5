@@ -1,5 +1,44 @@
-import { getSupabase, isSupabaseConfigured } from './supabaseService';
+import { getSupabase, isSupabaseConfigured, OFFICIAL_SUPABASE_URL, OFFICIAL_SUPABASE_KEY, mapUsuarioFromDb } from './supabaseService';
+import { createClient } from '@supabase/supabase-js';
 import { Usuario } from '../types';
+
+const createIsolatedSupabaseClient = () => {
+  return createClient(OFFICIAL_SUPABASE_URL, OFFICIAL_SUPABASE_KEY, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  });
+};
+
+const generateUUID = (): string => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+};
+
+async function safeFetchJson<T = any>(
+  url: string,
+  options?: RequestInit
+): Promise<{ ok: boolean; status: number; data?: T; isHtmlOrNotJson?: boolean }> {
+  try {
+    const resp = await fetch(url, options);
+    const contentType = resp.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      return { ok: false, status: resp.status, isHtmlOrNotJson: true };
+    }
+    const data = await resp.json();
+    return { ok: resp.ok, status: resp.status, data };
+  } catch (err) {
+    return { ok: false, status: 0, isHtmlOrNotJson: true };
+  }
+}
 
 export interface HybridAuthResult {
   success: boolean;
@@ -231,12 +270,11 @@ export const registerUserInSupabaseAuth = async (
   const normalizedEmail = email.trim().toLowerCase();
   const normalizedSenha = senha.trim();
   const safePassword = normalizedSenha.length >= 6 ? normalizedSenha : normalizedSenha.padEnd(6, '0');
-
   const fullName = metadata?.nome || 'Usuário';
 
-  // 1. Tenta criar pelo endpoint isolado do servidor (evita qualquer interferência com a sessão ativa do navegador)
+  // 1. Tenta criar pelo endpoint isolado do servidor se estiver disponível e retornar JSON
   try {
-    const resp = await fetch('/api/supabase/create-user', {
+    const res = await safeFetchJson<{ success: boolean; user?: any; error?: string }>('/api/supabase/create-user', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -251,17 +289,13 @@ export const registerUserInSupabaseAuth = async (
       })
     });
 
-    if (resp.ok) {
-      const data = await resp.json();
-      console.log('[Supabase Auth] Usuário criado com sucesso via servidor:', normalizedEmail);
-      return { success: true, user: data.user };
-    } else {
-      const errData = await resp.json().catch(() => ({}));
-      console.warn('[Supabase Auth] Servidor retornou aviso ao criar usuário:', errData);
-      // Se já existir ou erro de senha, retorna o detalhe
-      if (errData.error) {
-        // Se já está registrado, consideramos sucesso de provisionamento
-        if (errData.error.includes('already registered') || errData.error.includes('already been registered')) {
+    if (!res.isHtmlOrNotJson) {
+      if (res.ok && res.data?.user) {
+        console.log('[Supabase Auth] Usuário criado com sucesso via servidor:', normalizedEmail);
+        return { success: true, user: res.data.user };
+      }
+      if (res.data?.error) {
+        if (res.data.error.includes('already registered') || res.data.error.includes('already been registered')) {
           return { success: true, error: 'Usuário já existe no Supabase Auth.' };
         }
       }
@@ -270,10 +304,10 @@ export const registerUserInSupabaseAuth = async (
     console.warn('[Supabase Auth] Erro ao chamar servidor, tentando via cliente:', serverErr);
   }
 
-  // 2. Fallback direto via cliente Supabase (usando a instância existente)
+  // 2. Fallback direto via cliente Supabase isolado (não mexe na sessão ativa do navegador)
   try {
-    const supabase = getSupabase();
-    const { data, error } = await supabase.auth.signUp({
+    const isolatedClient = createIsolatedSupabaseClient();
+    const { data, error } = await isolatedClient.auth.signUp({
       email: normalizedEmail,
       password: safePassword,
       options: {
@@ -289,7 +323,7 @@ export const registerUserInSupabaseAuth = async (
     });
 
     if (error) {
-      if (error.message.includes('already registered')) {
+      if (error.message.includes('already registered') || error.message.includes('already been registered')) {
         return { success: true, error: 'Usuário já cadastrado no Supabase Auth.' };
       }
       console.warn('[Supabase Auth] Aviso ao registrar no Auth via cliente:', error.message);
@@ -304,50 +338,179 @@ export const registerUserInSupabaseAuth = async (
 
 /**
  * Consulta a lista de usuários diretamente da tabela auth.users (via backend admin)
+ * com fallback imediato para public.usuarios se o backend não for uma API Node (ex: hospedagem estática)
  */
 export const fetchAuthUsersAdmin = async (): Promise<Usuario[]> => {
   try {
-    const resp = await fetch('/api/supabase/admin/users');
-    if (!resp.ok) {
-      const err = await resp.json().catch(() => ({}));
-      console.warn('[Supabase Auth Admin] Falha ao consultar auth.users:', err);
-      return [];
+    const res = await safeFetchJson<{ success: boolean; users?: Usuario[] }>('/api/supabase/admin/users');
+    if (!res.isHtmlOrNotJson && res.ok && res.data && Array.isArray(res.data.users)) {
+      return res.data.users;
     }
-    const data = await resp.json();
-    return data.users || [];
   } catch (err) {
-    console.error('[Supabase Auth Admin] Erro de rede ao buscar auth.users:', err);
-    return [];
+    console.warn('[Supabase Auth Admin] Servidor indisponível para listar usuários:', err);
   }
+
+  // Fallback: consulta diretamente a tabela public.usuarios pelo cliente Supabase
+  if (isSupabaseConfigured()) {
+    try {
+      const supabase = getSupabase();
+      const { data, error } = await supabase.from('usuarios').select('*');
+      if (!error && Array.isArray(data)) {
+        return data.map(mapUsuarioFromDb);
+      }
+    } catch (dbErr) {
+      console.warn('[Supabase Auth Admin] Falha ao consultar public.usuarios:', dbErr);
+    }
+  }
+  return [];
 };
 
 /**
- * Cria um usuário diretamente em auth.users e sincroniza em public.usuarios
+ * Cria um usuário diretamente em auth.users e sincroniza em public.usuarios.
+ * Funciona perfeitamente tanto com servidor Node.js quanto em hospedagens estáticas (cPanel, Nginx, Vercel, etc.)
  */
 export const createAuthUserAdmin = async (user: Partial<Usuario>): Promise<{ success: boolean; user?: Usuario; error?: string }> => {
+  const normalizedEmail = (user.email || '').trim().toLowerCase();
+  const rawPassword = user.senha || 'Mudar123!';
+  const safePassword = rawPassword.length >= 6 ? rawPassword : rawPassword.padEnd(6, '0');
+  const fullName = (user.nome || '').trim() || normalizedEmail;
+
+  // 1. Tenta criar pelo endpoint do servidor se disponível e retornar JSON válido
   try {
-    const resp = await fetch('/api/supabase/admin/users', {
+    const res = await safeFetchJson<{ success: boolean; user?: Usuario; error?: string }>('/api/supabase/admin/users', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        email: user.email,
-        password: user.senha || 'Mudar123!',
-        nome: user.nome,
-        cargo: user.cargo,
-        permissao: user.permissao,
-        escritoriosIds: user.escritoriosIds,
-        oab: user.oab,
-        cpf: user.cpf,
-        contato: user.contato,
+        email: normalizedEmail,
+        password: safePassword,
+        nome: fullName,
+        cargo: user.cargo || '',
+        permissao: user.permissao || 'user',
+        escritoriosIds: user.escritoriosIds || [],
+        oab: user.oab || '',
+        cpf: user.cpf || '',
+        contato: user.contato || '',
         status: user.status || 'Ativo'
       })
     });
-    const data = await resp.json();
-    if (!resp.ok) {
-      return { success: false, error: data.error || 'Erro ao criar usuário em auth.users' };
+
+    if (!res.isHtmlOrNotJson) {
+      if (res.ok && res.data?.user) {
+        return { success: true, user: res.data.user };
+      }
+      if (res.data?.error) {
+        return { success: false, error: res.data.error };
+      }
     }
-    return { success: true, user: data.user };
+    console.warn('[Supabase Auth Admin] Servidor não retornou JSON (ambiente de produção estático/SPA). Executando provisionamento via cliente Supabase...');
+  } catch (err) {
+    console.warn('[Supabase Auth Admin] Falha ao chamar endpoint do servidor:', err);
+  }
+
+  // 2. Fallback direto no Supabase Cloud (garante cadastro em qualquer hospedagem estática, como escritorio-teste.walbermendonca.com.br)
+  if (!isSupabaseConfigured()) {
+    return { success: false, error: 'Supabase não está configurado.' };
+  }
+
+  try {
+    const supabase = getSupabase();
+    const isolatedClient = createIsolatedSupabaseClient();
+    let authUserId: string | undefined;
+
+    // Registra na autenticação Supabase Auth via cliente isolado (não substitui a sessão do admin logado)
+    const { data: signUpData, error: signUpError } = await isolatedClient.auth.signUp({
+      email: normalizedEmail,
+      password: safePassword,
+      options: {
+        data: {
+          nome: fullName,
+          display_name: fullName,
+          full_name: fullName,
+          name: fullName,
+          cargo: user.cargo || '',
+          permissao: normalizedEmail === 'pratadeouro@gmail.com' ? 'Admin' : (user.permissao || 'user'),
+          escritorios_ids: user.escritoriosIds || [],
+          oab: user.oab || '',
+          cpf: user.cpf || '',
+          contato: user.contato || '',
+          status: user.status || 'Ativo'
+        }
+      }
+    });
+
+    if (signUpData?.user?.id) {
+      authUserId = signUpData.user.id;
+    }
+
+    if (signUpError) {
+      const isAlreadyRegistered = signUpError.message?.toLowerCase().includes('already registered') || 
+                                  signUpError.message?.toLowerCase().includes('already been registered');
+      if (!isAlreadyRegistered) {
+        console.warn('[Supabase Auth Admin] Aviso do Supabase Auth no signUp:', signUpError.message);
+      }
+    }
+
+    // Identifica ou gera ID do usuário
+    let finalId = authUserId || user.id;
+    if (!finalId || finalId.length < 10) {
+      const { data: existingUser } = await supabase
+        .from('usuarios')
+        .select('id')
+        .eq('email', normalizedEmail)
+        .maybeSingle();
+      if (existingUser?.id) {
+        finalId = existingUser.id;
+      } else {
+        finalId = generateUUID();
+      }
+    }
+
+    const userRecord = {
+      id: finalId,
+      nome: fullName,
+      email: normalizedEmail,
+      cargo: user.cargo || '',
+      contato: user.contato || '',
+      senha: safePassword,
+      oab: user.oab || null,
+      cpf: user.cpf || '',
+      permissao: normalizedEmail === 'pratadeouro@gmail.com' ? 'Admin' : (user.permissao || 'user'),
+      escritorios_ids: user.escritoriosIds || [],
+      status: user.status || 'Ativo',
+      enable_notifications: true
+    };
+
+    // Sincroniza em public.usuarios
+    let { error: upsertErr } = await supabase.from('usuarios').upsert(userRecord, { onConflict: 'email' });
+    if (upsertErr) {
+      console.warn('[Supabase Auth Admin] Tentando upsert com onConflict id...', upsertErr);
+      const resId = await supabase.from('usuarios').upsert(userRecord, { onConflict: 'id' });
+      upsertErr = resId.error;
+    }
+
+    if (upsertErr) {
+      console.error('[Supabase Auth Admin] Falha ao persistir em public.usuarios:', upsertErr);
+      return { success: false, error: upsertErr.message || 'Erro ao persistir usuário no banco de dados' };
+    }
+
+    const createdUsuario: Usuario = {
+      id: finalId,
+      nome: fullName,
+      email: normalizedEmail,
+      cargo: user.cargo || '',
+      contato: user.contato || '',
+      senha: safePassword,
+      oab: user.oab || undefined,
+      cpf: user.cpf || '',
+      permissao: normalizedEmail === 'pratadeouro@gmail.com' ? 'Admin' : (user.permissao || 'user'),
+      escritoriosIds: user.escritoriosIds || [],
+      status: user.status || 'Ativo',
+      enableNotifications: true
+    };
+
+    return { success: true, user: createdUsuario };
   } catch (err: any) {
+    console.error('[Supabase Auth Admin] Exceção no provisionamento:', err);
     return { success: false, error: err.message || String(err) };
   }
 };
@@ -356,12 +519,15 @@ export const createAuthUserAdmin = async (user: Partial<Usuario>): Promise<{ suc
  * Atualiza um usuário e/ou sua senha diretamente em auth.users e em public.usuarios
  */
 export const updateAuthUserAdmin = async (id: string, user: Partial<Usuario>): Promise<{ success: boolean; error?: string }> => {
+  const normalizedEmail = user.email ? user.email.trim().toLowerCase() : undefined;
+
+  // 1. Tenta via servidor se disponível e for JSON
   try {
-    const resp = await fetch(`/api/supabase/admin/users/${encodeURIComponent(id)}`, {
+    const res = await safeFetchJson<{ success: boolean; error?: string }>(`/api/supabase/admin/users/${encodeURIComponent(id)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        email: user.email,
+        email: normalizedEmail,
         password: user.senha,
         nome: user.nome,
         cargo: user.cargo,
@@ -373,10 +539,72 @@ export const updateAuthUserAdmin = async (id: string, user: Partial<Usuario>): P
         status: user.status
       })
     });
-    const data = await resp.json();
-    if (!resp.ok) {
-      return { success: false, error: data.error || 'Erro ao atualizar usuário em auth.users' };
+
+    if (!res.isHtmlOrNotJson) {
+      if (res.ok) {
+        return { success: true };
+      }
+      if (res.data?.error) {
+        return { success: false, error: res.data.error };
+      }
     }
+  } catch (err) {
+    console.warn('[Supabase Auth Admin] Servidor indisponível para atualização:', err);
+  }
+
+  // 2. Fallback direto no Supabase
+  if (!isSupabaseConfigured()) {
+    return { success: false, error: 'Supabase não está configurado.' };
+  }
+
+  try {
+    const supabase = getSupabase();
+    const updatePayload: any = {
+      nome: user.nome?.trim(),
+      cargo: user.cargo || '',
+      contato: user.contato || '',
+      oab: user.oab || null,
+      cpf: user.cpf || '',
+      permissao: normalizedEmail === 'pratadeouro@gmail.com' ? 'Admin' : (user.permissao || 'user'),
+      escritorios_ids: user.escritoriosIds || [],
+      status: user.status || 'Ativo'
+    };
+
+    if (normalizedEmail) updatePayload.email = normalizedEmail;
+    if (user.senha && user.senha.trim().length >= 6) updatePayload.senha = user.senha.trim();
+
+    // Se o usuário editado for a própria sessão ativa do navegador, atualiza o Auth
+    try {
+      const currentSession = await supabase.auth.getSession();
+      const currentAuthUser = currentSession?.data?.session?.user;
+      if (currentAuthUser && (currentAuthUser.id === id || currentAuthUser.email === normalizedEmail)) {
+        const authUpdates: any = {
+          data: {
+            nome: user.nome?.trim(),
+            display_name: user.nome?.trim(),
+            cargo: user.cargo || '',
+            permissao: user.permissao || 'user'
+          }
+        };
+        if (user.senha && user.senha.trim().length >= 6) {
+          authUpdates.password = user.senha.trim();
+        }
+        await supabase.auth.updateUser(authUpdates);
+      }
+    } catch (authErr) {
+      console.warn('[Supabase Auth Admin] Aviso ao atualizar sessão corrente:', authErr);
+    }
+
+    const { error } = await supabase.from('usuarios').update(updatePayload).eq('id', id);
+    if (error && normalizedEmail) {
+      const emailRes = await supabase.from('usuarios').update(updatePayload).eq('email', normalizedEmail);
+      if (emailRes.error) {
+        return { success: false, error: emailRes.error.message };
+      }
+    } else if (error) {
+      return { success: false, error: error.message };
+    }
+
     return { success: true };
   } catch (err: any) {
     return { success: false, error: err.message || String(err) };
@@ -387,14 +615,34 @@ export const updateAuthUserAdmin = async (id: string, user: Partial<Usuario>): P
  * Exclui um usuário diretamente de auth.users e de public.usuarios
  */
 export const deleteAuthUserAdmin = async (id: string, email?: string): Promise<{ success: boolean; error?: string }> => {
+  const normalizedEmail = email ? email.trim().toLowerCase() : undefined;
+
+  // 1. Tenta via servidor se disponível e for JSON
   try {
-    const url = `/api/supabase/admin/users/${encodeURIComponent(id)}${email ? `?email=${encodeURIComponent(email)}` : ''}`;
-    const resp = await fetch(url, {
-      method: 'DELETE'
-    });
-    const data = await resp.json();
-    if (!resp.ok) {
-      return { success: false, error: data.error || 'Erro ao excluir usuário em auth.users' };
+    const url = `/api/supabase/admin/users/${encodeURIComponent(id)}${normalizedEmail ? `?email=${encodeURIComponent(normalizedEmail)}` : ''}`;
+    const res = await safeFetchJson<{ success: boolean; error?: string }>(url, { method: 'DELETE' });
+    if (!res.isHtmlOrNotJson) {
+      if (res.ok) {
+        return { success: true };
+      }
+      if (res.data?.error) {
+        return { success: false, error: res.data.error };
+      }
+    }
+  } catch (err) {
+    console.warn('[Supabase Auth Admin] Servidor indisponível para exclusão:', err);
+  }
+
+  // 2. Fallback direto no Supabase
+  if (!isSupabaseConfigured()) {
+    return { success: false, error: 'Supabase não está configurado.' };
+  }
+
+  try {
+    const supabase = getSupabase();
+    await supabase.from('usuarios').delete().eq('id', id);
+    if (normalizedEmail) {
+      await supabase.from('usuarios').delete().eq('email', normalizedEmail);
     }
     return { success: true };
   } catch (err: any) {

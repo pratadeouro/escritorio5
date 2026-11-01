@@ -100,7 +100,12 @@ export const fetchAllDataFromSupabase = async (coreOnly = false): Promise<Partia
     const [escRes, setRes] = await Promise.all(coreQueries);
     let escritoriosList: Escritorio[] = (escRes.data || []).map(mapEscritorioFromDb);
     try {
-      const escResp = await fetch('/api/supabase/escritorios').then(r => r.json()).catch(() => null);
+      const escResp = await fetch('/api/supabase/escritorios').then(r => {
+        if (r.ok && r.headers.get('content-type')?.includes('application/json')) {
+          return r.json();
+        }
+        return null;
+      }).catch(() => null);
       if (escResp && escResp.success && Array.isArray(escResp.escritorios) && escResp.escritorios.length > 0) {
         escritoriosList = escResp.escritorios.map(mapEscritorioFromDb);
       }
@@ -152,7 +157,12 @@ export const fetchAllDataFromSupabase = async (coreOnly = false): Promise<Partia
 
   let authUsers: Usuario[] = [];
   try {
-    const authResp = await fetch('/api/supabase/admin/users').then(r => r.json()).catch(() => null);
+    const authResp = await fetch('/api/supabase/admin/users').then(r => {
+      if (r.ok && r.headers.get('content-type')?.includes('application/json')) {
+        return r.json();
+      }
+      return null;
+    }).catch(() => null);
     if (authResp && authResp.success && Array.isArray(authResp.users) && authResp.users.length > 0) {
       authUsers = authResp.users;
     }
@@ -162,7 +172,12 @@ export const fetchAllDataFromSupabase = async (coreOnly = false): Promise<Partia
 
   let escritoriosList: Escritorio[] = (escRes.data || []).map(mapEscritorioFromDb);
   try {
-    const escResp = await fetch('/api/supabase/escritorios').then(r => r.json()).catch(() => null);
+    const escResp = await fetch('/api/supabase/escritorios').then(r => {
+      if (r.ok && r.headers.get('content-type')?.includes('application/json')) {
+        return r.json();
+      }
+      return null;
+    }).catch(() => null);
     if (escResp && escResp.success && Array.isArray(escResp.escritorios) && escResp.escritorios.length > 0) {
       escritoriosList = escResp.escritorios.map(mapEscritorioFromDb);
     }
@@ -632,7 +647,7 @@ const executeUpsert = async (table: string, data: any, conflictCol: string = 'id
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ table, record: data, conflictColumn: conflictCol })
     });
-    if (resp.ok) {
+    if (resp.ok && resp.headers.get('content-type')?.includes('application/json')) {
       console.log(`[Supabase] Gravação em ${table} persistida com sucesso via servidor.`);
       return true;
     }
@@ -656,7 +671,7 @@ const executeDelete = async (table: string, id: string, column: string = 'id'): 
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ table, id, column })
     });
-    if (resp.ok) {
+    if (resp.ok && resp.headers.get('content-type')?.includes('application/json')) {
       console.log(`[Supabase] Exclusão em ${table} realizada com sucesso via servidor.`);
       return true;
     }
