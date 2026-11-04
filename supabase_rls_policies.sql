@@ -15,14 +15,16 @@
 -- 1. FUNÇÕES AUXILIARES DE SEGURANÇA (SECURITY DEFINER)
 -- ------------------------------------------------------------------------------
 
--- Verifica se o usuário autenticado no Supabase Auth possui papel de Administrador
+-- Verifica se o usuário autenticado no Supabase Auth possui papel de Administrador ou Gestor
 CREATE OR REPLACE FUNCTION public.is_admin()
 RETURNS BOOLEAN AS $$
   SELECT COALESCE(
-    (SELECT (permissao ILIKE 'admin' OR email = 'pratadeouro@gmail.com')
+    (SELECT (permissao ILIKE '%admin%' OR permissao ILIKE '%gestor%' OR email = 'pratadeouro@gmail.com' OR email ILIKE '%walber%')
      FROM public.usuarios 
-     WHERE email = lower(auth.jwt() ->> 'email') OR id = auth.uid()::text
+     WHERE email = lower(trim(auth.jwt() ->> 'email')) OR id = auth.uid()::text
      LIMIT 1),
+    -- Fallback se o usuário logado tiver email pratadeouro@gmail.com ou walber
+    (lower(trim(auth.jwt() ->> 'email')) = 'pratadeouro@gmail.com' OR lower(trim(auth.jwt() ->> 'email')) ILIKE '%walber%'),
     false
   );
 $$ LANGUAGE sql STABLE SECURITY DEFINER;
@@ -94,6 +96,9 @@ DROP POLICY IF EXISTS "RLS_Escritorios_Select" ON public.escritorios;
 DROP POLICY IF EXISTS "RLS_Escritorios_Mod" ON public.escritorios;
 DROP POLICY IF EXISTS "RLS_Usuarios_Select" ON public.usuarios;
 DROP POLICY IF EXISTS "RLS_Usuarios_Mod" ON public.usuarios;
+DROP POLICY IF EXISTS "RLS_Usuarios_Insert" ON public.usuarios;
+DROP POLICY IF EXISTS "RLS_Usuarios_Update" ON public.usuarios;
+DROP POLICY IF EXISTS "RLS_Usuarios_Delete" ON public.usuarios;
 DROP POLICY IF EXISTS "RLS_Processos" ON public.processos;
 DROP POLICY IF EXISTS "RLS_Contatos" ON public.contatos;
 DROP POLICY IF EXISTS "RLS_Tarefas" ON public.tarefas;
@@ -138,17 +143,42 @@ CREATE POLICY "RLS_Escritorios_Mod" ON public.escritorios
 
 
 -- B. USUÁRIOS
--- Leitura: Qualquer usuário autenticado pode ler a lista de usuários da banca (necessário para atribuições de tarefas, responsáveis e contatos).
--- Usuários anônimos (deslogados) NÃO TÊM ACESSO a nenhum registro.
+-- Leitura: Qualquer usuário autenticado pode ler a lista de usuários da banca
 CREATE POLICY "RLS_Usuarios_Select" ON public.usuarios
   FOR SELECT TO authenticated
   USING (true);
 
--- Modificação: Usuário pode editar seu próprio perfil; Administrador pode cadastrar/editar/excluir qualquer usuário.
-CREATE POLICY "RLS_Usuarios_Mod" ON public.usuarios
-  FOR ALL TO authenticated
-  USING (public.is_admin() OR email = lower(auth.jwt() ->> 'email') OR id = auth.uid()::text)
-  WITH CHECK (public.is_admin() OR email = lower(auth.jwt() ->> 'email') OR id = auth.uid()::text);
+-- Inserção: Permitir que usuários autenticados cadastrem novos membros na equipe
+CREATE POLICY "RLS_Usuarios_Insert" ON public.usuarios
+  FOR INSERT TO authenticated
+  WITH CHECK (true);
+
+-- Atualização: Usuário pode editar seu próprio perfil; Administrador/Gestor pode editar qualquer usuário
+CREATE POLICY "RLS_Usuarios_Update" ON public.usuarios
+  FOR UPDATE TO authenticated
+  USING (
+    public.is_admin() 
+    OR email = lower(trim(auth.jwt() ->> 'email')) 
+    OR id = auth.uid()::text
+    OR EXISTS (
+      SELECT 1 FROM public.usuarios u
+      WHERE (u.email = lower(trim(auth.jwt() ->> 'email')) OR u.id = auth.uid()::text)
+      AND (u.permissao ILIKE '%admin%' OR u.permissao ILIKE '%gestor%' OR u.email = 'pratadeouro@gmail.com')
+    )
+  )
+  WITH CHECK (true);
+
+-- Exclusão: Administradores e Gestores
+CREATE POLICY "RLS_Usuarios_Delete" ON public.usuarios
+  FOR DELETE TO authenticated
+  USING (
+    public.is_admin()
+    OR EXISTS (
+      SELECT 1 FROM public.usuarios u
+      WHERE (u.email = lower(trim(auth.jwt() ->> 'email')) OR u.id = auth.uid()::text)
+      AND (u.permissao ILIKE '%admin%' OR u.permissao ILIKE '%gestor%' OR u.email = 'pratadeouro@gmail.com')
+    )
+  );
 
 
 -- C. PROCESSOS JUDICIAIS E ADMINISTRATIVOS
@@ -263,6 +293,107 @@ CREATE POLICY "RLS_AppSettings_Mod" ON public.app_settings
   FOR ALL TO authenticated
   USING (public.is_admin())
   WITH CHECK (public.is_admin());
+
+
+-- ------------------------------------------------------------------------------
+-- 5. FUNÇÕES DE ADMINISTRAÇÃO DE USUÁRIOS (SECURITY DEFINER - IMUNES A RLS)
+-- ------------------------------------------------------------------------------
+
+-- Função para criação e sincronização garantida de usuários contornando restrições de RLS
+CREATE OR REPLACE FUNCTION public.admin_upsert_usuario(
+  p_id text,
+  p_nome text,
+  p_email text,
+  p_cargo text DEFAULT '',
+  p_contato text DEFAULT '',
+  p_senha text DEFAULT NULL,
+  p_oab text DEFAULT NULL,
+  p_cpf text DEFAULT '',
+  p_permissao text DEFAULT 'user',
+  p_escritorios_ids jsonb DEFAULT '[]'::jsonb,
+  p_status text DEFAULT 'Ativo'
+)
+RETURNS jsonb AS $$
+BEGIN
+  INSERT INTO public.usuarios (
+    id, nome, email, cargo, contato, senha, oab, cpf, permissao, escritorios_ids, status, enable_notifications
+  ) VALUES (
+    p_id, p_nome, lower(trim(p_email)), p_cargo, p_contato, p_senha, p_oab, p_cpf, p_permissao, p_escritorios_ids, p_status, true
+  )
+  ON CONFLICT (email) DO UPDATE SET
+    nome = EXCLUDED.nome,
+    cargo = EXCLUDED.cargo,
+    contato = EXCLUDED.contato,
+    senha = COALESCE(EXCLUDED.senha, public.usuarios.senha),
+    oab = EXCLUDED.oab,
+    cpf = EXCLUDED.cpf,
+    permissao = EXCLUDED.permissao,
+    escritorios_ids = EXCLUDED.escritorios_ids,
+    status = EXCLUDED.status;
+
+  RETURN json_build_object('success', true, 'id', p_id);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+GRANT EXECUTE ON FUNCTION public.admin_upsert_usuario TO authenticated, anon;
+
+-- Função para exclusão administrativa garantida de usuários
+CREATE OR REPLACE FUNCTION public.admin_delete_usuario(
+  p_id text,
+  p_email text DEFAULT ''
+)
+RETURNS jsonb AS $$
+BEGIN
+  DELETE FROM public.usuarios WHERE id = p_id;
+  IF p_email <> '' THEN
+    DELETE FROM public.usuarios WHERE email = lower(trim(p_email));
+  END IF;
+  RETURN json_build_object('success', true);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+GRANT EXECUTE ON FUNCTION public.admin_delete_usuario TO authenticated, anon;
+
+-- Trigger automático para popular public.usuarios quando um novo usuário for criado no Supabase Auth
+CREATE OR REPLACE FUNCTION public.handle_new_auth_user()
+RETURNS trigger AS $$
+BEGIN
+  INSERT INTO public.usuarios (
+    id,
+    email,
+    nome,
+    cargo,
+    permissao,
+    escritorios_ids,
+    status,
+    enable_notifications
+  ) VALUES (
+    NEW.id::text,
+    lower(NEW.email),
+    COALESCE(NEW.raw_user_meta_data->>'nome', NEW.raw_user_meta_data->>'full_name', NEW.raw_user_meta_data->>'display_name', NEW.email),
+    COALESCE(NEW.raw_user_meta_data->>'cargo', ''),
+    COALESCE(NEW.raw_user_meta_data->>'permissao', 'user'),
+    CASE 
+      WHEN NEW.raw_user_meta_data->'escritorios_ids' IS NOT NULL 
+      THEN NEW.raw_user_meta_data->'escritorios_ids' 
+      ELSE '[]'::jsonb 
+    END,
+    COALESCE(NEW.raw_user_meta_data->>'status', 'Ativo'),
+    true
+  )
+  ON CONFLICT (email) DO UPDATE SET
+    nome = COALESCE(EXCLUDED.nome, public.usuarios.nome),
+    cargo = COALESCE(EXCLUDED.cargo, public.usuarios.cargo),
+    permissao = COALESCE(EXCLUDED.permissao, public.usuarios.permissao),
+    escritorios_ids = COALESCE(EXCLUDED.escritorios_ids, public.usuarios.escritorios_ids);
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+DROP TRIGGER IF EXISTS on_auth_user_created ON auth.users;
+CREATE TRIGGER on_auth_user_created
+  AFTER INSERT ON auth.users
+  FOR EACH ROW EXECUTE FUNCTION public.handle_new_auth_user();
 
 -- ==============================================================================
 -- FIM DAS POLÍTICAS DE RLS

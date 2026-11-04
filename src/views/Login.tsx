@@ -10,7 +10,7 @@ declare global {
 }
 
 export default function Login() {
-  const { state, login, loginWithGoogleEmail, forceLoad, isImporting, activeOfficeName, escritorioAtivoId, resetPassword } = useAppContext();
+  const { state, login, loginWithGoogleEmail, forceLoad, isImporting, activeOfficeName, escritorioAtivoId, resetPassword, updatePassword } = useAppContext();
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
   const [error, setError] = useState('');
@@ -19,11 +19,24 @@ export default function Login() {
   const [cachedOfficeName, setCachedOfficeName] = useState('');
   const googleBtnRef = useRef<HTMLDivElement>(null);
 
-  // Estados para Recuperação de Senha (Supabase Auth)
+  // Estados para Solicitação de Redefinição de Senha (Supabase Auth)
   const [isResetOpen, setIsResetOpen] = useState(false);
   const [resetEmail, setResetEmail] = useState('');
   const [isResetting, setIsResetting] = useState(false);
   const [resetStatus, setResetStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // Estados para Definição de Nova Senha (Link de Recuperação Supabase Auth)
+  const [isSettingNewPassword, setIsSettingNewPassword] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [newPasswordStatus, setNewPasswordStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [isSavingNewPassword, setIsSavingNewPassword] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.location.hash.includes('type=recovery')) {
+      setIsSettingNewPassword(true);
+    }
+  }, []);
 
   // Client ID do Google configurado no escritório ou nas configurações gerais
   const activeOffice = state.escritorios.find(e => e.id === escritorioAtivoId);
@@ -161,6 +174,40 @@ export default function Login() {
     }
   };
 
+  const handleSaveNewPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (newPassword.length < 6) {
+      setNewPasswordStatus({ type: 'error', message: 'A nova senha deve ter no mínimo 6 caracteres.' });
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setNewPasswordStatus({ type: 'error', message: 'As senhas digitadas não coincidem.' });
+      return;
+    }
+
+    setIsSavingNewPassword(true);
+    setNewPasswordStatus(null);
+    try {
+      const res = await updatePassword(newPassword);
+      if (res.success) {
+        setNewPasswordStatus({ type: 'success', message: 'Senha atualizada com sucesso no Supabase Auth! Redirecionando...' });
+        if (typeof window !== 'undefined' && window.history && window.history.replaceState) {
+          window.history.replaceState(null, '', window.location.pathname);
+        }
+        setTimeout(() => {
+          setIsSettingNewPassword(false);
+          window.location.reload();
+        }, 1200);
+      } else {
+        setNewPasswordStatus({ type: 'error', message: res.message || 'Erro ao redefinir senha no Supabase.' });
+      }
+    } catch (err: any) {
+      setNewPasswordStatus({ type: 'error', message: err.message || 'Erro inesperado ao salvar nova senha.' });
+    } finally {
+      setIsSavingNewPassword(false);
+    }
+  };
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-app-bg p-4 transition-colors duration-700 relative overflow-hidden">
       {/* Background Decorative Elements */}
@@ -185,7 +232,7 @@ export default function Login() {
             <Scale className="h-12 w-12 text-primary" />
           </div>
           <h2 className="text-4xl font-black text-app-text tracking-tighter leading-tight mb-2">
-            {officeName || 'LexGestão'}
+            {officeName && officeName !== 'Todos os Escritórios' && officeName !== 'LexGestão' ? officeName : 'Meu Escritório Jurídico'}
           </h2>
           <p className="text-sm text-app-text-muted font-medium">
             Escritório Jurídico
@@ -270,7 +317,7 @@ export default function Login() {
 
         <div className="text-center pt-6 border-t border-app-border space-y-1">
           <p className="text-[10px] items-center justify-center font-bold text-app-text-muted uppercase tracking-[0.2em]">
-            &copy; {new Date().getFullYear()} {officeName || 'Meu Escritório'}
+            &copy; {new Date().getFullYear()} {officeName && officeName !== 'Todos os Escritórios' && officeName !== 'LexGestão' ? officeName : 'Meu Escritório Jurídico'}
           </p>
           <p className="text-[10px] font-medium text-app-text-muted/70 tracking-wider font-mono">
             Versão {CURRENT_APP_VERSION}
@@ -347,6 +394,85 @@ export default function Login() {
                 >
                   {isResetting ? <Loader2 size={14} className="animate-spin" /> : <Mail size={14} />}
                   {isResetting ? 'Enviando...' : 'Enviar Link de Redefinição'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Definição de Nova Senha (Acesso via link de recuperação do Supabase) */}
+      {isSettingNewPassword && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fadeIn">
+          <div className="bg-app-surface border border-app-border max-w-md w-full rounded-3xl p-6 shadow-2xl relative space-y-4">
+            <div className="flex items-center justify-between border-b border-app-border pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-primary/10 text-primary rounded-xl">
+                  <KeyRound size={20} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-app-text text-base">Definir Nova Senha</h3>
+                  <p className="text-xs text-app-text-muted">Supabase Auth Security</p>
+                </div>
+              </div>
+            </div>
+
+            <form onSubmit={handleSaveNewPassword} className="space-y-4">
+              <p className="text-xs text-app-text-muted leading-relaxed">
+                Você acessou o link de redefinição de senha com sucesso. Digite sua nova senha de acesso abaixo.
+              </p>
+
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-app-text-muted uppercase">Nova Senha (mínimo 6 caracteres)</label>
+                <div className="relative">
+                  <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 text-app-text-muted" size={16} />
+                  <input
+                    type="password"
+                    required
+                    minLength={6}
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full pl-10 pr-3.5 py-2.5 rounded-xl border border-app-border bg-app-bg text-sm text-app-text focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-app-text-muted uppercase">Confirmar Nova Senha</label>
+                <div className="relative">
+                  <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 text-app-text-muted" size={16} />
+                  <input
+                    type="password"
+                    required
+                    minLength={6}
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full pl-10 pr-3.5 py-2.5 rounded-xl border border-app-border bg-app-bg text-sm text-app-text focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                  />
+                </div>
+              </div>
+
+              {newPasswordStatus && (
+                <div className={`p-3 rounded-xl text-xs flex items-center gap-2 ${
+                  newPasswordStatus.type === 'success'
+                    ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
+                    : 'bg-red-500/10 text-red-600 border border-red-500/20'
+                }`}>
+                  {newPasswordStatus.type === 'success' ? <CheckCircle2 size={16} className="shrink-0" /> : <AlertCircle size={16} className="shrink-0" />}
+                  <span>{newPasswordStatus.message}</span>
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="submit"
+                  disabled={isSavingNewPassword || !newPassword || !confirmPassword}
+                  className="flex items-center gap-2 px-5 py-2.5 bg-primary hover:bg-primary/90 text-white text-xs font-bold rounded-xl shadow-md transition-all disabled:opacity-50"
+                >
+                  {isSavingNewPassword ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                  {isSavingNewPassword ? 'Salvando...' : 'Salvar Nova Senha'}
                 </button>
               </div>
             </form>

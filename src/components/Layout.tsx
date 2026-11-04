@@ -393,7 +393,7 @@ export default function Layout({ children, currentView, onNavigate }: LayoutProp
           {!desktopSidebarCollapsed && (
             <div className="mt-3 pt-2 border-t border-app-border/40 text-center">
               <p className="text-[10px] text-app-text-muted font-medium">
-                &copy; {new Date().getFullYear()} {activeOfficeName || 'LexGestão'}
+                &copy; {new Date().getFullYear()} {activeOfficeName && activeOfficeName !== 'Todos os Escritórios' && activeOfficeName !== 'LexGestão' ? activeOfficeName : 'Meu Escritório Jurídico'}
               </p>
               <p className="text-[10px] text-app-text-muted/70 font-mono mt-0.5">
                 Versão {CURRENT_APP_VERSION}
@@ -589,7 +589,7 @@ export default function Layout({ children, currentView, onNavigate }: LayoutProp
 
                         <div className="pt-2 mt-1 border-t border-app-border/60 text-center">
                           <p className="text-[10px] text-app-text-muted">
-                            &copy; {new Date().getFullYear()} {activeOfficeName || 'LexGestão'}
+                            &copy; {new Date().getFullYear()} {activeOfficeName && activeOfficeName !== 'Todos os Escritórios' && activeOfficeName !== 'LexGestão' ? activeOfficeName : 'Meu Escritório Jurídico'}
                           </p>
                           <p className="text-[9px] text-app-text-muted/70 font-mono mt-0.5">
                             Versão {CURRENT_APP_VERSION}

@@ -34,6 +34,7 @@ import {
   signOutSupabase, 
   getSupabaseSession, 
   resetSupabasePassword,
+  updateSupabasePassword,
   registerUserInSupabaseAuth,
   fetchAuthUsersAdmin,
   createAuthUserAdmin,
@@ -180,6 +181,7 @@ interface AppContextType {
   loginWithGoogleEmail: (email: string) => Promise<boolean>;
   logout: () => void;
   resetPassword: (email: string) => Promise<{ success: boolean; message: string }>;
+  updatePassword: (newPassword: string) => Promise<{ success: boolean; message: string }>;
   isImporting: boolean;
   lastSyncTime: string | null;
   syncLogs: Array<{timestamp: string, action: string, status: 'success' | 'error', details?: string}>;
@@ -264,6 +266,52 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
       });
     } catch {}
+  }, []);
+
+  // Monitoramento de Sessão e Eventos do Supabase Auth
+  useEffect(() => {
+    if (!isSupabaseConfigured()) return;
+
+    const supabase = getSupabase();
+
+    // 1. Verifica sessão ativa persistida no Supabase Auth no carregamento inicial
+    supabase.auth.getSession().then(({ data }) => {
+      if (data?.session?.user?.email) {
+        const sessionEmail = data.session.user.email.toLowerCase();
+        setAuthenticatedUserEmail(prev => prev || sessionEmail);
+        localStorage.setItem('advocacia_user_email', sessionEmail);
+      }
+    }).catch(err => {
+      console.warn('[Supabase Auth] Aviso ao verificar sessão persistida:', err);
+    });
+
+    // 2. Escuta mudanças de estado do Supabase Auth em tempo real
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log(`[Supabase Auth Event] Evento: ${event}, Sessão:`, session?.user?.email);
+
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
+        if (session?.user?.email) {
+          const sessionEmail = session.user.email.toLowerCase();
+          setAuthenticatedUserEmail(sessionEmail);
+          localStorage.setItem('advocacia_user_email', sessionEmail);
+        }
+      } else if (event === 'SIGNED_OUT') {
+        if (getActiveDataSource() === 'supabase') {
+          setAuthenticatedUserEmail(null);
+          localStorage.removeItem('advocacia_user_email');
+        }
+      } else if (event === 'PASSWORD_RECOVERY') {
+        if (session?.user?.email) {
+          const sessionEmail = session.user.email.toLowerCase();
+          setAuthenticatedUserEmail(sessionEmail);
+          localStorage.setItem('advocacia_user_email', sessionEmail);
+        }
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
   }, []);
 
   const [dataSource, setDataSourceState] = useState<'supabase' | 'sheets'>(getActiveDataSource);
@@ -425,12 +473,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (cached) {
       try {
         const { officeName } = JSON.parse(cached);
-        if (officeName) return officeName;
+        if (officeName && officeName !== 'LexGestão') return officeName;
       } catch (e) {}
     }
     
     if (state.escritorios.length > 0) return state.escritorios[0].nome;
-    return 'LexGestão';
+    return 'Meu Escritório Jurídico';
   }, [state.escritorios, escritorioAtivoId, isAdmin]);
 
   const login = useCallback(async (email: string, senha: string): Promise<boolean> => {
@@ -858,22 +906,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           } else if (acao === 'DELETE_LEAD') {
             await deleteItemGenericSupabase('leads', record?.id || record);
           } else if (acao === 'ADD_USUARIO') {
+            // O usuário já foi provisionado de forma assíncrona por addUsuario.
+            // Aqui apenas garantimos que não ocorram chamadas redundantes conflitantes.
             try {
-              const res = await createAuthUserAdmin(record);
-              if (res.success && res.user?.id) {
-                const realId = res.user.id;
-                setState(s => ({
-                  ...s,
-                  usuarios: s.usuarios.map(u => 
-                    u.email.toLowerCase() === (record.email || '').toLowerCase() 
-                      ? { ...u, id: realId, senha: record.senha } 
-                      : u
-                  )
-                }));
+              if (!record.id || record.id.length < 10) {
+                await createAuthUserAdmin(record);
               }
             } catch (authErr) {
-              console.warn('[Supabase Auth Admin] Falha ao adicionar em auth.users:', authErr);
-              await upsertUsuarioSupabase(record);
+              console.warn('[Supabase Auth Admin] Aviso ao sincronizar usuário no log:', authErr);
             }
           } else if (acao === 'UPDATE_USUARIO') {
             try {
@@ -3186,6 +3226,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return resetSupabasePassword(email);
   }, []);
 
+  const updatePassword = useCallback(async (newPassword: string) => {
+    return updateSupabasePassword(newPassword);
+  }, []);
+
   const contextValue = React.useMemo(() => ({ 
     state, 
     addContato, 
@@ -3258,6 +3302,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     loginWithGoogleEmail,
     logout,
     resetPassword,
+    updatePassword,
     isAdmin,
     isImporting,
     currentUser,
@@ -3376,6 +3421,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     setDataSource,
     refreshAuthUsers,
     resetPassword,
+    updatePassword,
   ]);
 
   return (
