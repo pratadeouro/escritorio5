@@ -24,6 +24,7 @@ export default function Login() {
   const [resetEmail, setResetEmail] = useState('');
   const [isResetting, setIsResetting] = useState(false);
   const [resetStatus, setResetStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [showGoogleHelp, setShowGoogleHelp] = useState(false);
 
   // Estados para Definição de Nova Senha (Link de Recuperação Supabase Auth)
   const [isSettingNewPassword, setIsSettingNewPassword] = useState(false);
@@ -38,9 +39,34 @@ export default function Login() {
     }
   }, []);
 
-  // Client ID do Google configurado no escritório ou nas configurações gerais
+  // Client ID do Google configurado globalmente, no escritório, ou no cache local
   const activeOffice = state.escritorios.find(e => e.id === escritorioAtivoId);
-  const googleClientId = activeOffice?.googleClientId || state.settings.googleClientId || '';
+  const googleClientId =
+    state.settings.googleClientId ||
+    activeOffice?.googleClientId ||
+    (typeof window !== 'undefined' ? (localStorage.getItem('advocacia_google_client_id') || '') : '') ||
+    ((import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || '') ||
+    '';
+
+  const handleGoogleBtnClick = () => {
+    if (!googleClientId) {
+      setShowGoogleHelp(true);
+      return;
+    }
+    if (window.google?.accounts?.id) {
+      try {
+        window.google.accounts.id.prompt((notification: any) => {
+          if (notification?.isNotDisplayed?.() || notification?.isSkippedMoment?.()) {
+            console.log('Google prompt status:', notification.getNotDisplayedReason?.() || 'skipped');
+          }
+        });
+      } catch (e) {
+        console.error('Erro ao acionar prompt do Google:', e);
+      }
+    } else {
+      setError('Biblioteca do Google Identity Services não carregou. Verifique sua conexão à internet.');
+    }
+  };
 
   useEffect(() => {
     const cached = localStorage.getItem('advocacia_theme_cache');
@@ -313,6 +339,53 @@ export default function Login() {
               'Acessar Sistema'
             )}
           </button>
+
+          {/* Divisor Visual */}
+          <div className="relative flex py-1 items-center">
+            <div className="flex-grow border-t border-app-border"></div>
+            <span className="flex-shrink mx-3 text-xs uppercase font-semibold text-app-text-muted tracking-wider">
+              ou
+            </span>
+            <div className="flex-grow border-t border-app-border"></div>
+          </div>
+
+          {/* Botão de Login com o Google */}
+          <div className="space-y-2">
+            {/* O container para o botão nativo do Google GSI (quando inicializado) */}
+            <div ref={googleBtnRef} className="w-full flex justify-center empty:hidden min-h-[44px]" />
+
+            {/* Botão com design premium e logotipo SVG oficial do Google */}
+            <button
+              type="button"
+              onClick={handleGoogleBtnClick}
+              disabled={isLoading || isGoogleLoading || isImporting}
+              className="w-full flex items-center justify-center gap-3 py-3.5 px-4 rounded-xl border border-app-border bg-app-surface/90 hover:bg-app-bg text-app-text font-semibold text-sm transition-all shadow-sm hover:shadow hover:border-gray-400 dark:hover:border-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isGoogleLoading ? (
+                <Loader2 className="w-5 h-5 animate-spin text-primary" />
+              ) : (
+                <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
+                  <path
+                    fill="#4285F4"
+                    d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.65v3.03h3.88c2.27-2.09 3.665-5.17 3.665-9.12z"
+                  />
+                  <path
+                    fill="#34A853"
+                    d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.03c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.27v3.13C3.25 21.35 7.33 24 12 24z"
+                  />
+                  <path
+                    fill="#FBBC05"
+                    d="M5.28 14.29c-.25-.72-.38-1.49-.38-2.29s.14-1.57.38-2.29V6.57H1.27C.46 8.2 0 10.04 0 12s.46 3.8 1.27 5.43l4.01-3.14z"
+                  />
+                  <path
+                    fill="#EA4335"
+                    d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.25 2.65 1.27 6.57l4.01 3.14c.95-2.83 3.6-4.96 6.72-4.96z"
+                  />
+                </svg>
+              )}
+              <span>{isGoogleLoading ? 'Autenticando com Google...' : 'Entrar com o Google'}</span>
+            </button>
+          </div>
         </form>
 
         <div className="text-center pt-6 border-t border-app-border space-y-1">
@@ -476,6 +549,60 @@ export default function Login() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Informativo sobre Google Client ID */}
+      {showGoogleHelp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fadeIn">
+          <div className="bg-app-surface border border-app-border max-w-md w-full rounded-3xl p-6 shadow-2xl relative space-y-4">
+            <div className="flex items-center justify-between border-b border-app-border pb-3">
+              <div className="flex items-center gap-2">
+                <div className="p-2 bg-blue-500/10 text-blue-600 rounded-xl">
+                  <Info size={20} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-app-text text-base">Google Client ID</h3>
+                  <p className="text-xs text-app-text-muted">Autenticação com a Conta Google</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowGoogleHelp(false)}
+                className="text-app-text-muted hover:text-app-text p-1 rounded-lg"
+              >
+                <CloseIcon size={18} />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs text-app-text-muted leading-relaxed">
+              <p>
+                O <strong className="text-app-text">Google Client ID</strong> ainda não foi informado nas configurações globais deste sistema.
+              </p>
+              <div className="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3.5 text-amber-700 dark:text-amber-400 space-y-2">
+                <p className="font-semibold text-xs">Instruções para o Administrador:</p>
+                <ol className="list-decimal list-inside space-y-1 text-[11px]">
+                  <li>Faça login com sua conta de administrador por e-mail e senha.</li>
+                  <li>No menu lateral, acesse <strong className="font-bold">Configurações Globais</strong>.</li>
+                  <li>Na aba <strong className="font-bold">Google OAuth & Login</strong>, informe o seu <code className="bg-amber-500/20 px-1 py-0.5 rounded font-mono text-[10px]">Client ID</code>.</li>
+                  <li>Salve as alterações. O botão de login do Google passará a validar as contas autorizadas diretamente.</li>
+                </ol>
+              </div>
+              <p className="text-[11px]">
+                Você também pode acessar utilizando seu e-mail e senha cadastrados no formulário de login.
+              </p>
+            </div>
+
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={() => setShowGoogleHelp(false)}
+                className="w-full py-3 px-4 bg-primary text-white font-semibold rounded-xl text-xs hover:bg-primary/90 transition shadow-md"
+              >
+                Entendido
+              </button>
+            </div>
           </div>
         </div>
       )}

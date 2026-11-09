@@ -29,7 +29,8 @@ export type View =
   | 'profile'
   | 'formularioClientes'
   | 'logs'
-  | 'settings';
+  | 'settings'
+  | 'configuracoesGlobais';
 
 export interface Calendario {
   id: string;
@@ -121,6 +122,9 @@ export interface AppSettings {
   appVersion?: string;
   // UI Theme state
   theme?: 'light' | 'dark' | 'system';
+  siteName?: string;
+  siteSubtitle?: string;
+  primaryColor?: string;
 }
 
 export interface Contato {

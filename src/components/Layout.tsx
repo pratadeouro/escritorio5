@@ -32,7 +32,8 @@ import {
   TrendingUp,
   User,
   ExternalLink,
-  History
+  History,
+  Globe
 } from 'lucide-react';
 import Modal from './Modal';
 import SyncIndicator from './SyncIndicator';
@@ -193,6 +194,7 @@ export default function Layout({ children, currentView, onNavigate }: LayoutProp
     { id: 'recursos' as View, label: 'Recursos', icon: <FileText size={20} /> },
     { id: 'processosGeral' as View, label: 'Processos Geral', icon: <Scale size={20} /> },
     { id: 'settings' as View, label: 'Configurações', icon: <Settings size={20} /> },
+    ...(isAdmin() ? [{ id: 'configuracoesGlobais' as View, label: 'Configurações Globais', icon: <Globe size={20} className="text-amber-500" /> }] : []),
     { id: 'logs' as View, label: 'Logs do Sistema', icon: <History size={20} /> },
     { id: 'varas' as View, label: 'Varas', icon: <Building2 size={20} /> },
     { id: 'forum' as View, label: 'Fóruns', icon: <Landmark size={20} /> },

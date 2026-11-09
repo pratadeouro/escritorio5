@@ -26,6 +26,7 @@ import {
   upsertItemGenericSupabase,
   deleteItemGenericSupabase,
   saveLogSupabase,
+  upsertSettingsSupabase,
   getSupabase,
   mapUsuarioFromDb
 } from './services/supabaseService';
@@ -962,6 +963,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             });
           } else if (acao === 'DELETE_VARA') {
             await deleteItemGenericSupabase('varas', record?.id || record);
+          } else if (acao === 'UPDATE_SETTINGS') {
+            await upsertSettingsSupabase(record);
           }
           await saveLogSupabase(newLog);
         } catch (sbErr) {
@@ -1275,6 +1278,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const canViewMenu = useCallback((view: View): boolean => {
     if (!currentUser) return false;
+
+    // Menu "Configurações Globais" é estritamente restrito ao administrador do sistema
+    if (view === 'configuracoesGlobais') {
+      return isAdmin();
+    }
     
     const permissions = getPermissions();
     const userRoleNormalized = normalizeString(currentUser.permissao || '');

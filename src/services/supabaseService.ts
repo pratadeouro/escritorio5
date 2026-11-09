@@ -906,3 +906,32 @@ export const saveLogSupabase = async (log: Partial<LogRegistro>): Promise<void> 
     detalhes: log.detalhes || '',
   }, 'id');
 };
+
+export const upsertSettingsSupabase = async (s: AppSettings): Promise<boolean> => {
+  return executeUpsert('app_settings', {
+    id_escritorio: s.idEscritorio || 'GLOBAL',
+    timezone: s.timezone || 'America/Sao_Paulo',
+    items_per_page: s.itemsPerPage || 10,
+    permissions: typeof s.permissions === 'string' ? s.permissions : JSON.stringify(s.permissions || []),
+    email_user: s.emailUser || null,
+    email_pass: s.emailPass || null,
+    use_external_smtp: !!s.useExternalSmtp,
+    smtp_host: s.smtpHost || null,
+    smtp_port: s.smtpPort || 465,
+    smtp_secure: s.smtpSecure !== false,
+    enable_email_notifications: !!s.enableEmailNotifications,
+    email_weekly_report: !!s.emailWeeklyReport,
+    email_daily_report: !!s.emailDailyReport,
+    email_new_notifications: !!s.emailNewNotifications,
+    template_weekly_report: s.templateWeeklyReport || null,
+    template_daily_report: s.templateDailyReport || null,
+    template_new_notifications: s.templateNewNotifications || null,
+    show_movimentos: s.showMovimentos !== false,
+    dias_morosidade: s.diasMorosidade || 30,
+    menu_order: s.menuOrder || [],
+    email_dispatch_time: s.emailDispatchTime || '08:00',
+    google_client_id: s.googleClientId || null,
+    app_version: s.appVersion || null,
+    theme: s.theme || 'light',
+  }, 'id_escritorio');
+};

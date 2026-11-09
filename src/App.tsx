@@ -37,6 +37,7 @@ import Settings from './views/Settings';
 import Profile from './views/Profile';
 import PendenciasView from './views/PendenciasView';
 import Logs from './views/Logs';
+import ConfiguracoesGlobais from './views/ConfiguracoesGlobais';
 
 function PlaceholderView({ title }: { title: string }) {
   return (
@@ -156,6 +157,7 @@ function AppContent() {
       case 'profile': return <Profile />;
       case 'logs': return <Logs />;
       case 'settings': return <Settings />;
+      case 'configuracoesGlobais': return <ConfiguracoesGlobais />;
       default: return <Dashboard />;
     }
   };
