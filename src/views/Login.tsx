@@ -1,7 +1,23 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useAppContext } from '../context';
-import { Lock, Mail, Loader2, Scale, AlertCircle, Info, ShieldCheck, KeyRound, X as CloseIcon, CheckCircle2 } from 'lucide-react';
+import { 
+  Lock, 
+  Mail, 
+  Loader2, 
+  Scale, 
+  AlertCircle, 
+  Info, 
+  ShieldCheck, 
+  KeyRound, 
+  X as CloseIcon, 
+  CheckCircle2, 
+  UserPlus, 
+  User, 
+  Phone 
+} from 'lucide-react';
 import { CURRENT_APP_VERSION } from '../services/versionService';
+import { Usuario } from '../types';
+import { createAuthUserAdmin } from '../services/supabaseAuth';
 
 declare global {
   interface Window {
@@ -25,6 +41,7 @@ export default function Login() {
   const [isResetting, setIsResetting] = useState(false);
   const [resetStatus, setResetStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [showGoogleHelp, setShowGoogleHelp] = useState(false);
+  const [serverGoogleClientId, setServerGoogleClientId] = useState('');
 
   // Estados para Definição de Nova Senha (Link de Recuperação Supabase Auth)
   const [isSettingNewPassword, setIsSettingNewPassword] = useState(false);
@@ -33,19 +50,122 @@ export default function Login() {
   const [newPasswordStatus, setNewPasswordStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [isSavingNewPassword, setIsSavingNewPassword] = useState(false);
 
+  // Estados para Cadastro de Novo Usuário na Tela Inicial
+  const [isRegisterOpen, setIsRegisterOpen] = useState(false);
+  const [registerNome, setRegisterNome] = useState('');
+  const [registerEmail, setRegisterEmail] = useState('');
+  const [registerOab, setRegisterOab] = useState('');
+  const [registerContato, setRegisterContato] = useState('');
+  const [registerSenha, setRegisterSenha] = useState('');
+  const [registerConfirmSenha, setRegisterConfirmSenha] = useState('');
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [registerStatus, setRegisterStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  const handleRegisterSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRegisterStatus(null);
+
+    const cleanEmail = registerEmail.trim().toLowerCase();
+    const cleanNome = registerNome.trim();
+    if (!cleanNome) {
+      setRegisterStatus({ type: 'error', message: 'Por favor, informe seu nome completo.' });
+      return;
+    }
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      setRegisterStatus({ type: 'error', message: 'Por favor, informe um e-mail válido.' });
+      return;
+    }
+    if (registerSenha.length < 6) {
+      setRegisterStatus({ type: 'error', message: 'A senha deve possuir no mínimo 6 caracteres.' });
+      return;
+    }
+    if (registerSenha !== registerConfirmSenha) {
+      setRegisterStatus({ type: 'error', message: 'A confirmação de senha não confere.' });
+      return;
+    }
+
+    setIsRegistering(true);
+
+    try {
+      const defaultOfficeId = state.escritorios.length > 0 ? state.escritorios[0].id : (escritorioAtivoId || '1');
+      const newUserPayload: Partial<Usuario> = {
+        nome: cleanNome,
+        email: cleanEmail,
+        senha: registerSenha,
+        cargo: 'Advogado(a)',
+        oab: registerOab.trim() || undefined,
+        contato: registerContato.trim(),
+        permissao: cleanEmail === 'pratadeouro@gmail.com' ? 'Admin' : 'user',
+        escritoriosIds: [defaultOfficeId],
+        status: 'Ativo'
+      };
+
+      const result = await createAuthUserAdmin(newUserPayload);
+
+      if (result.success) {
+        setRegisterStatus({ 
+          type: 'success', 
+          message: 'Cadastro concluído com sucesso! Iniciando sua sessão...' 
+        });
+
+        setTimeout(async () => {
+          try {
+            const loginSuccess = await login(cleanEmail, registerSenha);
+            if (loginSuccess) {
+              setIsRegisterOpen(false);
+            } else {
+              setEmail(cleanEmail);
+              setSenha(registerSenha);
+              setIsRegisterOpen(false);
+            }
+          } catch {
+            setEmail(cleanEmail);
+            setSenha(registerSenha);
+            setIsRegisterOpen(false);
+          }
+        }, 1200);
+      } else {
+        setRegisterStatus({ 
+          type: 'error', 
+          message: result.error || 'Erro ao realizar o cadastro. Verifique os dados informados.' 
+        });
+      }
+    } catch (err: any) {
+      setRegisterStatus({ 
+        type: 'error', 
+        message: err.message || 'Erro inesperado ao cadastrar usuário.' 
+      });
+    } finally {
+      setIsRegistering(false);
+    }
+  };
+
   useEffect(() => {
     if (typeof window !== 'undefined' && window.location.hash.includes('type=recovery')) {
       setIsSettingNewPassword(true);
     }
   }, []);
 
-  // Client ID do Google configurado globalmente, no escritório, ou no cache local
+  // Busca configurações públicas do servidor (.env e banco) mesmo se o cache do navegador estiver limpo
+  useEffect(() => {
+    fetch('/api/public/settings')
+      .then(res => res.json())
+      .then(data => {
+        if (data?.googleClientId) {
+          setServerGoogleClientId(data.googleClientId);
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Client ID do Google configurado no .env do servidor, no estado global, no escritório, ou no cache local
   const activeOffice = state.escritorios.find(e => e.id === escritorioAtivoId);
   const googleClientId =
+    serverGoogleClientId ||
+    ((import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || '') ||
     state.settings.googleClientId ||
     activeOffice?.googleClientId ||
     (typeof window !== 'undefined' ? (localStorage.getItem('advocacia_google_client_id') || '') : '') ||
-    ((import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || '') ||
     '';
 
   const handleGoogleBtnClick = () => {
@@ -386,6 +506,27 @@ export default function Login() {
               <span>{isGoogleLoading ? 'Autenticando com Google...' : 'Entrar com o Google'}</span>
             </button>
           </div>
+
+          {/* Opção para Cadastrar Novo Usuário na Tela Inicial */}
+          <div className="pt-2 text-center">
+            <button
+              type="button"
+              onClick={() => {
+                setRegisterStatus(null);
+                setRegisterNome('');
+                setRegisterEmail('');
+                setRegisterSenha('');
+                setRegisterConfirmSenha('');
+                setRegisterOab('');
+                setRegisterContato('');
+                setIsRegisterOpen(true);
+              }}
+              className="w-full inline-flex items-center justify-center gap-2 py-3 px-4 rounded-xl border border-primary/20 hover:border-primary/40 bg-primary/5 hover:bg-primary/10 text-primary font-bold text-xs transition-all"
+            >
+              <UserPlus size={16} />
+              <span>Não tem uma conta? Cadastre-se</span>
+            </button>
+          </div>
         </form>
 
         <div className="text-center pt-6 border-t border-app-border space-y-1">
@@ -603,6 +744,162 @@ export default function Login() {
                 Entendido
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Cadastro de Novo Usuário na Tela Inicial */}
+      {isRegisterOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fadeIn overflow-y-auto">
+          <div className="bg-app-surface border border-app-border max-w-lg w-full rounded-3xl p-6 shadow-2xl relative space-y-4 my-8 max-h-[90vh] flex flex-col">
+            <div className="flex items-center justify-between border-b border-app-border pb-3 shrink-0">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2.5 bg-primary/10 text-primary rounded-xl">
+                  <UserPlus size={20} />
+                </div>
+                <div>
+                  <h3 className="font-bold text-app-text text-base">Cadastrar Novo Usuário</h3>
+                  <p className="text-xs text-app-text-muted">Crie seu acesso ao escritório jurídico</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsRegisterOpen(false)}
+                className="text-app-text-muted hover:text-app-text p-1.5 rounded-xl hover:bg-app-bg transition-colors"
+              >
+                <CloseIcon size={18} />
+              </button>
+            </div>
+
+            <form onSubmit={handleRegisterSubmit} className="space-y-4 overflow-y-auto pr-1">
+              {registerStatus && (
+                <div className={`p-3.5 rounded-xl text-xs flex items-center gap-2.5 ${
+                  registerStatus.type === 'success'
+                    ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20'
+                    : 'bg-red-500/10 text-red-600 border border-red-500/20'
+                }`}>
+                  {registerStatus.type === 'success' ? <CheckCircle2 size={18} className="shrink-0" /> : <AlertCircle size={18} className="shrink-0" />}
+                  <span>{registerStatus.message}</span>
+                </div>
+              )}
+
+              {/* Nome Completo */}
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-app-text-muted uppercase">Nome Completo *</label>
+                <div className="relative">
+                  <User className="absolute left-3.5 top-1/2 -translate-y-1/2 text-app-text-muted" size={16} />
+                  <input
+                    type="text"
+                    required
+                    value={registerNome}
+                    onChange={(e) => setRegisterNome(e.target.value)}
+                    placeholder="Ex: Dra. Mariana Albuquerque"
+                    className="w-full pl-10 pr-3.5 py-2.5 rounded-xl border border-app-border bg-app-bg text-sm text-app-text focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                  />
+                </div>
+              </div>
+
+              {/* E-mail de Acesso */}
+              <div className="space-y-1">
+                <label className="text-xs font-bold text-app-text-muted uppercase">E-mail Profissional *</label>
+                <div className="relative">
+                  <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 text-app-text-muted" size={16} />
+                  <input
+                    type="email"
+                    required
+                    value={registerEmail}
+                    onChange={(e) => setRegisterEmail(e.target.value)}
+                    placeholder="exemplo@adv.com.br"
+                    className="w-full pl-10 pr-3.5 py-2.5 rounded-xl border border-app-border bg-app-bg text-sm text-app-text focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {/* OAB */}
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-app-text-muted uppercase">Nº da OAB (Opcional)</label>
+                  <div className="relative">
+                    <Scale className="absolute left-3.5 top-1/2 -translate-y-1/2 text-app-text-muted" size={16} />
+                    <input
+                      type="text"
+                      value={registerOab}
+                      onChange={(e) => setRegisterOab(e.target.value)}
+                      placeholder="Ex: 12345/AM"
+                      className="w-full pl-10 pr-3.5 py-2.5 rounded-xl border border-app-border bg-app-bg text-sm text-app-text focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                    />
+                  </div>
+                </div>
+
+                {/* Telefone / WhatsApp */}
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-app-text-muted uppercase">Telefone / WhatsApp (Opcional)</label>
+                  <div className="relative">
+                    <Phone className="absolute left-3.5 top-1/2 -translate-y-1/2 text-app-text-muted" size={16} />
+                    <input
+                      type="text"
+                      value={registerContato}
+                      onChange={(e) => setRegisterContato(e.target.value)}
+                      placeholder="(92) 98765-4321"
+                      className="w-full pl-10 pr-3.5 py-2.5 rounded-xl border border-app-border bg-app-bg text-sm text-app-text focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Senha e Confirmação */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-app-text-muted uppercase">Senha de Acesso *</label>
+                  <div className="relative">
+                    <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 text-app-text-muted" size={16} />
+                    <input
+                      type="password"
+                      required
+                      minLength={6}
+                      value={registerSenha}
+                      onChange={(e) => setRegisterSenha(e.target.value)}
+                      placeholder="Mínimo 6 caracteres"
+                      className="w-full pl-10 pr-3.5 py-2.5 rounded-xl border border-app-border bg-app-bg text-sm text-app-text focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-xs font-bold text-app-text-muted uppercase">Confirmar Senha *</label>
+                  <div className="relative">
+                    <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 text-app-text-muted" size={16} />
+                    <input
+                      type="password"
+                      required
+                      minLength={6}
+                      value={registerConfirmSenha}
+                      onChange={(e) => setRegisterConfirmSenha(e.target.value)}
+                      placeholder="Repita a senha"
+                      className="w-full pl-10 pr-3.5 py-2.5 rounded-xl border border-app-border bg-app-bg text-sm text-app-text focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="pt-3 border-t border-app-border flex items-center justify-between gap-3 shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setIsRegisterOpen(false)}
+                  className="px-4 py-2.5 text-xs font-bold text-app-text-muted hover:text-app-text rounded-xl"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isRegistering}
+                  className="inline-flex items-center gap-2 px-6 py-2.5 bg-primary hover:bg-primary/90 text-white text-xs font-bold rounded-xl shadow-lg hover:shadow-primary/30 transition-all disabled:opacity-50"
+                >
+                  {isRegistering ? <Loader2 size={15} className="animate-spin" /> : <UserPlus size={15} />}
+                  <span>{isRegistering ? 'Cadastrando Usuário...' : 'Concluir Cadastro'}</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

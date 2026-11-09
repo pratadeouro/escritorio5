@@ -2,6 +2,7 @@ import express from "express";
 import "dotenv/config";
 import { createServer as createViteServer } from "vite";
 import path from "path";
+import fs from "fs";
 import { fileURLToPath } from "url";
 import nodemailer from "nodemailer";
 import cron from "node-cron";
@@ -565,6 +566,56 @@ async function startServer() {
     } catch (err: any) {
       console.error(`[Server Supabase Delete] Exceção em ${table}:`, err);
       return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // API pública para carregar configurações essenciais (Google Client ID e Identidade) mesmo antes do login
+  app.get("/api/public/settings", async (_req, res) => {
+    try {
+      const googleClientId = process.env.VITE_GOOGLE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID || '';
+      const siteName = process.env.VITE_SITE_NAME || 'Meu Escritório Jurídico';
+      const siteSubtitle = process.env.VITE_SITE_SUBTITLE || 'Sistema de Gestão Jurídica e Processual';
+      
+      res.json({
+        success: true,
+        googleClientId,
+        siteName,
+        siteSubtitle,
+      });
+    } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // API para o administrador salvar o Google Client ID no .env e no processo em execução
+  app.post("/api/admin/save-google-client-id", async (req, res) => {
+    try {
+      const { googleClientId } = req.body;
+      const cleanId = typeof googleClientId === 'string' ? googleClientId.trim() : '';
+
+      // Atualiza variável em tempo de execução
+      process.env.VITE_GOOGLE_CLIENT_ID = cleanId;
+
+      // Atualiza arquivo .env
+      const envPath = path.resolve(__dirname, ".env");
+      let envContent = "";
+      if (fs.existsSync(envPath)) {
+        envContent = fs.readFileSync(envPath, "utf-8");
+      }
+
+      if (/^VITE_GOOGLE_CLIENT_ID=.*$/m.test(envContent)) {
+        envContent = envContent.replace(/^VITE_GOOGLE_CLIENT_ID=.*$/m, `VITE_GOOGLE_CLIENT_ID=${cleanId}`);
+      } else {
+        envContent += `\nVITE_GOOGLE_CLIENT_ID=${cleanId}\n`;
+      }
+
+      fs.writeFileSync(envPath, envContent, "utf-8");
+      console.log(`[Configuração Global] VITE_GOOGLE_CLIENT_ID gravado no .env com sucesso.`);
+
+      res.json({ success: true, googleClientId: cleanId });
+    } catch (err: any) {
+      console.error("[Configuração Global] Erro ao gravar .env:", err);
+      res.status(500).json({ success: false, error: err.message });
     }
   });
 

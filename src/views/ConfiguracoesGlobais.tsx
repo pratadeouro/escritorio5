@@ -215,7 +215,18 @@ export default function ConfiguracoesGlobais() {
       // 3. Aplica estilos globais
       applyTheme(themeMode, primaryColor, '#ffffff', '#f8fafc', siteName.trim());
 
-      // 4. Salva no banco de dados
+      // 4. Grava diretamente no .env do servidor para persistência total independente de cache
+      try {
+        await fetch('/api/admin/save-google-client-id', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ googleClientId: googleClientId.trim() })
+        });
+      } catch (envErr) {
+        console.warn('Falha ao gravar .env no servidor:', envErr);
+      }
+
+      // 5. Salva no banco de dados Supabase / Sheets
       await forceSave();
 
       setSaveSuccess(true);
@@ -431,9 +442,12 @@ export default function ConfiguracoesGlobais() {
                   )}
                 </div>
               </div>
-              <p className="text-[11px] text-app-text-muted">
-                Este ID é público e seguro para uso no navegador, identificando a sua aplicação junto ao Google Identity Services.
-              </p>
+              <div className="flex items-center gap-2 text-[11px] text-app-text-muted">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-semibold text-[10px]">
+                  <CheckCircle2 size={12} /> Salvo no .env do servidor
+                </span>
+                <span>Configuração global para todos os escritórios, imune à limpeza de cache do navegador.</span>
+              </div>
             </div>
 
             {/* Painel de URLs para Google Cloud Console */}

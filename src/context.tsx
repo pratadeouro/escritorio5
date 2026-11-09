@@ -230,14 +230,23 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             ...parsed,
             // Forçar variáveis de ambiente se existirem, ignorando o localStorage para estes campos
             spreadsheetId: import.meta.env.VITE_SPREADSHEET_ID || parsed.spreadsheetId || initialState.settings.spreadsheetId,
-            scriptUrl: import.meta.env.VITE_SCRIPT_URL || parsed.scriptUrl || initialState.settings.scriptUrl
+            scriptUrl: import.meta.env.VITE_SCRIPT_URL || parsed.scriptUrl || initialState.settings.scriptUrl,
+            googleClientId: (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || parsed.googleClientId || initialState.settings.googleClientId || ''
           } 
         };
       } catch (e) {
         return initialState;
       }
     }
-    return initialState;
+    return {
+      ...initialState,
+      settings: {
+        ...initialState.settings,
+        spreadsheetId: import.meta.env.VITE_SPREADSHEET_ID || initialState.settings.spreadsheetId,
+        scriptUrl: import.meta.env.VITE_SCRIPT_URL || initialState.settings.scriptUrl,
+        googleClientId: (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || initialState.settings.googleClientId || ''
+      }
+    };
   });
   const stateRef = useRef(state);
   const initialUserCountRef = useRef<number | null>(null);
