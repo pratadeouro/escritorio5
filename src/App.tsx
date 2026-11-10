@@ -6,7 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import { AppProvider, useAppContext } from './context';
 import { View } from './types';
-import { Loader2, Save, ShieldAlert } from 'lucide-react';
+import { Loader2, Save } from 'lucide-react';
 import Layout from './components/Layout';
 import Login from './views/Login';
 import Dashboard from './views/Dashboard';
@@ -38,6 +38,7 @@ import Profile from './views/Profile';
 import PendenciasView from './views/PendenciasView';
 import Logs from './views/Logs';
 import ConfiguracoesGlobais from './views/ConfiguracoesGlobais';
+import AguardandoAprovacao from './views/AguardandoAprovacao';
 
 function PlaceholderView({ title }: { title: string }) {
   return (
@@ -75,30 +76,8 @@ function LogoutLoading() {
   );
 }
 
-function NoOfficeError({ onLogout }: { onLogout: () => void }) {
-  return (
-    <div className="min-h-screen bg-app-bg flex flex-col items-center justify-center p-4">
-      <div className="max-w-md w-full bg-app-surface rounded-2xl shadow-xl border border-app-border p-8 text-center animate-in fade-in zoom-in duration-500">
-        <div className="w-20 h-20 bg-amber-50 dark:bg-amber-900/20 rounded-full flex items-center justify-center mx-auto mb-6">
-          <ShieldAlert className="w-10 h-10 text-amber-500" strokeWidth={1.5} />
-        </div>
-        <h2 className="text-2xl font-bold text-app-text mb-4">Acesso Restrito</h2>
-        <p className="text-app-text-muted mb-8 text-lg">
-          Usuário sem vínculo com escritório, contate o administrador.
-        </p>
-        <button
-          onClick={onLogout}
-          className="w-full py-3 bg-primary text-white rounded-xl font-semibold hover:bg-primary-hover transition-all shadow-lg shadow-primary/20 hover:scale-[1.02] active:scale-95"
-        >
-          Sair do Sistema
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function AppContent() {
-  const { currentUser, isLoggingOut, isAdmin, logout } = useAppContext();
+  const { currentUser, isLoggingOut, isAdmin } = useAppContext();
   const [currentView, setCurrentView] = useState<View>('dashboard');
 
   useEffect(() => {
@@ -123,7 +102,7 @@ function AppContent() {
   const hasNoOffice = !isAdmin() && (!currentUser.escritoriosIds || currentUser.escritoriosIds.length === 0);
 
   if (hasNoOffice) {
-    return <NoOfficeError onLogout={logout} />;
+    return <AguardandoAprovacao />;
   }
 
   const renderView = () => {

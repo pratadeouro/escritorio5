@@ -87,7 +87,6 @@ export default function Login() {
     setIsRegistering(true);
 
     try {
-      const defaultOfficeId = state.escritorios.length > 0 ? state.escritorios[0].id : (escritorioAtivoId || '1');
       const newUserPayload: Partial<Usuario> = {
         nome: cleanNome,
         email: cleanEmail,
@@ -96,7 +95,9 @@ export default function Login() {
         oab: registerOab.trim() || undefined,
         contato: registerContato.trim(),
         permissao: cleanEmail === 'pratadeouro@gmail.com' ? 'Admin' : 'user',
-        escritoriosIds: [defaultOfficeId],
+        escritoriosIds: cleanEmail === 'pratadeouro@gmail.com'
+          ? (state.escritorios.length > 0 ? [state.escritorios[0].id] : ['1'])
+          : [],
         status: 'Ativo'
       };
 
@@ -177,7 +178,9 @@ export default function Login() {
       try {
         window.google.accounts.id.prompt((notification: any) => {
           if (notification?.isNotDisplayed?.() || notification?.isSkippedMoment?.()) {
-            console.log('Google prompt status:', notification.getNotDisplayedReason?.() || 'skipped');
+            console.log('Google prompt not displayed/skipped, triggering rendered button click');
+            const btnEl = googleBtnRef.current?.querySelector('div[role="button"]') as HTMLElement;
+            if (btnEl) btnEl.click();
           }
         });
       } catch (e) {
@@ -228,6 +231,8 @@ export default function Login() {
     try {
       window.google.accounts.id.initialize({
         client_id: googleClientId,
+        use_fedcm_for_prompt: false,
+        itp_support: true,
         callback: async (response: any) => {
           if (!response?.credential) return;
           const payload = decodeGoogleCredential(response.credential);

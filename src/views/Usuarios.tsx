@@ -94,10 +94,11 @@ export default function Usuarios() {
       : [];
 
     // 2. Filtro do escritório selecionado no cabeçalho
-    // Mesmo com usuário admin, exibe APENAS os usuários que pertençam ao escritório selecionado:
+    // Mesmo com usuário admin, exibe os usuários do escritório selecionado e também usuários pendentes sem escritório
     const activeOffice = (escritorioAtivoId || '').trim().toUpperCase();
     if (activeOffice) {
-      if (!uOfficeIds.includes(activeOffice)) {
+      const isPendingNoOffice = isUserAdmin && uOfficeIds.length === 0;
+      if (!uOfficeIds.includes(activeOffice) && !isPendingNoOffice) {
         return false;
       }
     } else if (!isUserAdmin) {
@@ -818,7 +819,9 @@ export default function Usuarios() {
                             );
                           })
                         ) : (
-                          <span className="text-xs text-app-text-muted italic">Nenhum</span>
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 font-bold">
+                            Pendente (Sem Escritório)
+                          </span>
                         )}
                       </div>
                     </td>
