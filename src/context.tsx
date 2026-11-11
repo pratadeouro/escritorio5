@@ -587,6 +587,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       // Remove senha em texto da memória para reforçar a segurança
       const safeUser: Usuario = { ...user, senha: '' };
       
+      if (isSupabaseConfigured()) {
+        setActiveDataSource('supabase');
+        setDataSourceState('supabase');
+        localStorage.setItem('advocacia_data_source', 'supabase');
+      }
+
       setAuthenticatedUserEmail(safeUser.email);
       localStorage.setItem('advocacia_user_email', safeUser.email);
       localStorage.removeItem('advocacia_data_backup');
@@ -630,48 +636,77 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const normalizedEmail = googleEmail.trim().toLowerCase();
     if (!normalizedEmail) return false;
 
-    // 1. Procura pontualmente no banco Supabase se configurado
-    let user: Usuario | undefined;
-    if (isSupabaseConfigured()) {
-      try {
-        const supabase = getSupabase();
-        const { data: dbUser } = await supabase
-          .from('usuarios')
-          .select('*')
-          .eq('email', normalizedEmail)
-          .maybeSingle();
+    // FORÇAR FONTE DE DADOS SUPABASE: O login com Google deve sempre autenticar e carregar dados do Supabase
+    setActiveDataSource('supabase');
+    setDataSourceState('supabase');
+    localStorage.setItem('advocacia_data_source', 'supabase');
 
-        if (dbUser) user = mapUsuarioFromDb(dbUser);
-      } catch (e) {
-        console.warn('[Login Google] Erro ao buscar usuário no Supabase:', e);
+    let user: Usuario | undefined;
+
+    // 1. Consulta o usuário diretamente no Supabase via endpoint seguro do servidor (Auth + public.usuarios)
+    try {
+      const resp = await fetch(`/api/supabase/user-by-email?email=${encodeURIComponent(normalizedEmail)}`);
+      if (resp.ok) {
+        const json = await resp.json();
+        if (json.success && json.user) {
+          user = json.user;
+          console.log('[Login Google] Usuário autenticado com sucesso do Supabase:', user?.email, user?.nome);
+        }
+      }
+    } catch (apiErr) {
+      console.warn('[Login Google] Falha ao consultar endpoint /api/supabase/user-by-email:', apiErr);
+    }
+
+    // 2. Se a API pontual falhar, tenta consultar a listagem administrativa de usuários do Supabase
+    if (!user) {
+      try {
+        const adminResp = await fetch('/api/supabase/admin/users');
+        if (adminResp.ok) {
+          const adminJson = await adminResp.json();
+          if (adminJson.success && Array.isArray(adminJson.users)) {
+            user = adminJson.users.find((u: any) => (u.email || '').trim().toLowerCase() === normalizedEmail);
+            if (user) {
+              console.log('[Login Google] Usuário localizado na listagem administrativa do Supabase:', user.email);
+            }
+          }
+        }
+      } catch (adminErr) {
+        console.warn('[Login Google] Falha ao consultar /api/supabase/admin/users:', adminErr);
       }
     }
 
-    // 2. Procura na lista local se já carregada
-    if (!user) {
-      user = state.usuarios.find(u => (u.email || '').trim().toLowerCase() === normalizedEmail);
-    }
-
-    // 3. Fallback de admin principal
-    if (!user && (normalizedEmail === 'pratadeouro@gmail.com' || state.usuarios.length === 0)) {
+    // 3. Fallback de admin principal caso seja pratadeouro@gmail.com
+    if (!user && normalizedEmail === 'pratadeouro@gmail.com') {
       user = {
         id: 'admin-fallback',
-        nome: normalizedEmail.split('@')[0] || 'Administrador',
+        nome: 'Administrador',
         email: normalizedEmail,
         senha: '',
         permissao: 'Admin',
         cargo: 'Administrador',
         contato: '',
         cpf: '',
-        escritoriosIds: state.escritorios.length > 0 ? [state.escritorios[0].id] : []
+        escritoriosIds: state.escritorios.length > 0 ? [state.escritorios[0].id] : ['1']
       };
     }
 
     if (user) {
       const safeUser: Usuario = { ...user, senha: '' };
+
+      // Injeta imediatamente o usuário do Supabase no estado para que currentUser já o resolva
+      setState(s => {
+        const withoutCurrent = (s.usuarios || []).filter(u => (u.email || '').trim().toLowerCase() !== normalizedEmail);
+        return {
+          ...s,
+          usuarios: [safeUser, ...withoutCurrent]
+        };
+      });
+
       setAuthenticatedUserEmail(safeUser.email);
       localStorage.setItem('advocacia_user_email', safeUser.email);
       localStorage.removeItem('advocacia_data_backup');
+
+      // Carrega dados completos do Supabase
       await handleImportRef.current(true);
 
       if (safeUser.escritoriosIds && safeUser.escritoriosIds.length > 0) {
@@ -682,7 +717,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         usuario: safeUser.email,
         acao: 'LOGIN_GMAIL',
         idEscritorio: safeUser.escritoriosIds && safeUser.escritoriosIds.length > 0 ? safeUser.escritoriosIds[0] : '',
-        detalhes: `Usuário ${safeUser.nome} autenticou via Gmail/Google.`
+        detalhes: `Usuário ${safeUser.nome} autenticou via Gmail/Google no Supabase.`
       };
 
       if (getActiveDataSource() === 'supabase' && isSupabaseConfigured()) {
@@ -704,7 +739,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     return false;
-  }, [state.usuarios, state.escritorios, state.settings.scriptUrl, setEscritorioAtivoId]);
+  }, [state.escritorios, state.settings.scriptUrl, setEscritorioAtivoId]);
 
   const logout = useCallback(async () => {
     // 1. MODO SUPABASE: Logout limpo e imediato sem risco de perda de planilha

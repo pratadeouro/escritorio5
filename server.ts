@@ -681,6 +681,82 @@ async function startServer() {
   // GESTÃO COMPLETA DE USUÁRIOS BASEADA EM AUTH.USERS
   // ============================================================================
 
+  // 1.0 CONSULTAR USUÁRIO ESPECÍFICO POR E-MAIL DIRETAMENTE DO SUPABASE (Auth + public.usuarios)
+  app.get("/api/supabase/user-by-email", async (req, res) => {
+    const rawEmail = String(req.query.email || "").trim().toLowerCase();
+    if (!rawEmail) {
+      return res.status(400).json({ success: false, error: "Parâmetro 'email' é obrigatório." });
+    }
+
+    const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca')) ? process.env.SUPABASE_URL : 'https://qhxdujbsipgwthrgvncl.supabase.co';
+    const supabaseKey = (process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi')) ? process.env.SUPABASE_SECRET_KEY : (process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL');
+
+    try {
+      const [authRes, pubRes] = await Promise.all([
+        fetch(`${supabaseUrl}/auth/v1/admin/users?per_page=1000`, {
+          headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+        }).then(r => r.json()).catch(() => ({ users: [] })),
+        fetch(`${supabaseUrl}/rest/v1/usuarios?email=eq.${encodeURIComponent(rawEmail)}`, {
+          headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+        }).then(r => r.json()).catch(() => [])
+      ]);
+
+      const authUsers = authRes?.users || [];
+      const au = authUsers.find((u: any) => (u.email || "").trim().toLowerCase() === rawEmail);
+      const pubUsers = Array.isArray(pubRes) ? pubRes : [];
+      const pu = pubUsers.find((u: any) => (u.email || "").trim().toLowerCase() === rawEmail) || pubUsers[0] || {};
+
+      if (!au && !pu.id && !pu.email) {
+        return res.status(404).json({ success: false, error: "Usuário não encontrado no Supabase." });
+      }
+
+      const meta = au?.user_metadata || {};
+      const nome = meta.display_name || meta.nome || meta.full_name || meta.name || pu.nome || rawEmail.split('@')[0];
+
+      let rawEscritorios = meta.escritorios_ids || pu.escritorios_ids || meta.escritoriosIds || pu.escritoriosIds || [];
+      if (typeof rawEscritorios === 'string') {
+        try {
+          rawEscritorios = JSON.parse(rawEscritorios);
+        } catch {
+          rawEscritorios = rawEscritorios.split(',').map((s: string) => s.trim()).filter(Boolean);
+        }
+      }
+      const safeEscritoriosIds = Array.isArray(rawEscritorios)
+        ? rawEscritorios.map((id: any) => String(id || '').trim().toUpperCase()).filter(Boolean)
+        : [];
+
+      const rawPerm = meta.permissao || pu.permissao || (rawEmail === 'pratadeouro@gmail.com' ? 'Admin' : 'user');
+      const permissao = rawEmail === 'pratadeouro@gmail.com' ? 'Admin' : rawPerm;
+
+      const user = {
+        id: au?.id || pu.id || `user-${Date.now()}`,
+        authId: au?.id,
+        nome,
+        email: au?.email || pu.email || rawEmail,
+        cargo: meta.cargo || pu.cargo || '',
+        contato: pu.contato || meta.contato || '',
+        cpf: pu.cpf || meta.cpf || '',
+        senha: '',
+        oab: pu.oab || meta.oab || '',
+        permissao,
+        escritoriosIds: safeEscritoriosIds,
+        status: meta.status || pu.status || (au?.banned_until ? 'Inativo' : 'Ativo'),
+        fotoUrl: meta.avatar_url || pu.foto_url,
+        theme: pu.theme,
+        itemsPerPage: pu.items_per_page,
+        menuOrder: pu.menu_order,
+        enableNotifications: pu.enable_notifications !== false,
+        createdAt: au?.created_at,
+        lastSignInAt: au?.last_sign_in_at
+      };
+
+      return res.json({ success: true, user });
+    } catch (err: any) {
+      console.error("[Server Supabase User By Email] Erro ao buscar usuário:", err);
+      return res.status(500).json({ success: false, error: err.message || String(err) });
+    }
+  });
+
   // 1. CONSULTAR USUÁRIOS DIRETAMENTE DE AUTH.USERS (com dados mesclados de public.usuarios)
   app.get("/api/supabase/admin/users", async (req, res) => {
     const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca')) ? process.env.SUPABASE_URL : 'https://qhxdujbsipgwthrgvncl.supabase.co';
