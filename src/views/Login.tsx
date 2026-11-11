@@ -474,21 +474,27 @@ export default function Login() {
             <div className="flex-grow border-t border-app-border"></div>
           </div>
 
-          {/* Botão de Login com o Google */}
+          {/* Botão de Login com o Google (Exibe apenas 1 botão oficial da Google) */}
           <div className="space-y-2">
-            {/* O container para o botão nativo do Google GSI (quando inicializado) */}
+            {/* O container para o botão nativo e oficial do Google GSI */}
             <div ref={googleBtnRef} className="w-full flex justify-center empty:hidden min-h-[44px]" />
 
-            {/* Botão com design premium e logotipo SVG oficial do Google */}
-            <button
-              type="button"
-              onClick={handleGoogleBtnClick}
-              disabled={isLoading || isGoogleLoading || isImporting}
-              className="w-full flex items-center justify-center gap-3 py-3.5 px-4 rounded-xl border border-app-border bg-app-surface/90 hover:bg-app-bg text-app-text font-semibold text-sm transition-all shadow-sm hover:shadow hover:border-gray-400 dark:hover:border-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isGoogleLoading ? (
-                <Loader2 className="w-5 h-5 animate-spin text-primary" />
-              ) : (
+            {/* Indicador de carregamento enquanto autentica no Supabase */}
+            {isGoogleLoading && (
+              <div className="flex items-center justify-center gap-2 py-2 text-xs text-primary font-medium">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span>Autenticando com o Google e carregando dados...</span>
+              </div>
+            )}
+
+            {/* Exibido APENAS se o Google Client ID não estiver configurado para orientar o administrador */}
+            {!googleClientId && (
+              <button
+                type="button"
+                onClick={handleGoogleBtnClick}
+                disabled={isLoading || isGoogleLoading || isImporting}
+                className="w-full flex items-center justify-center gap-3 py-3.5 px-4 rounded-xl border border-app-border bg-app-surface/90 hover:bg-app-bg text-app-text font-semibold text-sm transition-all shadow-sm hover:shadow hover:border-gray-400 dark:hover:border-gray-600 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+              >
                 <svg className="w-5 h-5 shrink-0" viewBox="0 0 24 24">
                   <path
                     fill="#4285F4"
@@ -507,9 +513,9 @@ export default function Login() {
                     d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.25 2.65 1.27 6.57l4.01 3.14c.95-2.83 3.6-4.96 6.72-4.96z"
                   />
                 </svg>
-              )}
-              <span>{isGoogleLoading ? 'Autenticando com Google...' : 'Entrar com o Google'}</span>
-            </button>
+                <span>Configurar Google Client ID</span>
+              </button>
+            )}
           </div>
 
           {/* Opção para Cadastrar Novo Usuário na Tela Inicial */}
