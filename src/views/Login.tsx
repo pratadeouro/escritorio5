@@ -440,7 +440,25 @@ export default function Login() {
                   onChange={(e) => setSenha(e.target.value)}
                 />
               </div>
-              <div className="flex justify-end pt-1">
+              <div className="flex items-center justify-between pt-1.5 text-xs">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setRegisterStatus(null);
+                    setRegisterNome('');
+                    setRegisterEmail('');
+                    setRegisterSenha('');
+                    setRegisterConfirmSenha('');
+                    setRegisterOab('');
+                    setRegisterContato('');
+                    setIsRegisterOpen(true);
+                  }}
+                  className="inline-flex items-center gap-1.5 font-semibold text-primary hover:underline transition-all cursor-pointer"
+                >
+                  <UserPlus size={14} />
+                  <span>Cadastre-se</span>
+                </button>
+
                 <button
                   type="button"
                   onClick={() => {
@@ -448,7 +466,7 @@ export default function Login() {
                     setResetStatus(null);
                     setIsResetOpen(true);
                   }}
-                  className="text-xs font-semibold text-primary hover:underline transition-all"
+                  className="font-semibold text-app-text-muted hover:text-primary hover:underline transition-all cursor-pointer"
                 >
                   Esqueceu a senha?
                 </button>
@@ -525,27 +543,6 @@ export default function Login() {
                 <span>Configurar Google Client ID</span>
               </button>
             )}
-          </div>
-
-          {/* Opção para Cadastrar Novo Usuário na Tela Inicial */}
-          <div className="pt-2 text-center">
-            <button
-              type="button"
-              onClick={() => {
-                setRegisterStatus(null);
-                setRegisterNome('');
-                setRegisterEmail('');
-                setRegisterSenha('');
-                setRegisterConfirmSenha('');
-                setRegisterOab('');
-                setRegisterContato('');
-                setIsRegisterOpen(true);
-              }}
-              className="w-full inline-flex items-center justify-center gap-2 py-3 px-4 rounded-xl border border-primary/20 hover:border-primary/40 bg-primary/5 hover:bg-primary/10 text-primary font-bold text-xs transition-all"
-            >
-              <UserPlus size={16} />
-              <span>Não tem uma conta? Cadastre-se</span>
-            </button>
           </div>
         </form>
 
