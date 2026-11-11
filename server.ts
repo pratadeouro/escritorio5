@@ -7,7 +7,7 @@ import { fileURLToPath } from "url";
 import nodemailer from "nodemailer";
 import cron from "node-cron";
 import Papa from "papaparse";
-import { getWeeklyReportTemplate, getNewNotificationsTemplate, getDailyReportTemplate } from "./emailTemplatesServer";
+import { getWeeklyReportTemplate, getNewNotificationsTemplate, getDailyReportTemplate } from "./emailTemplatesServer.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -311,7 +311,7 @@ async function runAutomatedEmails(type: 'weekly' | 'daily') {
 
 async function startServer() {
   const app = express();
-  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+  const PORT = 3000;
 
   app.use(express.json());
 
@@ -572,10 +572,26 @@ async function startServer() {
   // API pública para carregar configurações essenciais (Google Client ID e Identidade) mesmo antes do login
   app.get("/api/public/settings", async (_req, res) => {
     try {
-      const googleClientId = process.env.VITE_GOOGLE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID || '';
+      let googleClientId = process.env.VITE_GOOGLE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID || '';
       const siteName = process.env.VITE_SITE_NAME || 'Meu Escritório Jurídico';
       const siteSubtitle = process.env.VITE_SITE_SUBTITLE || 'Sistema de Gestão Jurídica e Processual';
       
+      // Fallback: se não estiver no .env, consulta a tabela app_settings no Supabase
+      if (!googleClientId) {
+        try {
+          const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca')) ? process.env.SUPABASE_URL : 'https://qhxdujbsipgwthrgvncl.supabase.co';
+          const supabaseKey = (process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi')) ? process.env.SUPABASE_SECRET_KEY : (process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL');
+          const sbRes = await fetch(`${supabaseUrl}/rest/v1/app_settings?select=google_client_id&limit=1`, {
+            headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+          }).then(r => r.json()).catch(() => []);
+          if (Array.isArray(sbRes) && sbRes.length > 0 && sbRes[0]?.google_client_id) {
+            googleClientId = sbRes[0].google_client_id;
+          }
+        } catch (sbErr) {
+          console.warn("[Public Settings] Erro ao consultar Supabase app_settings:", sbErr);
+        }
+      }
+
       res.json({
         success: true,
         googleClientId,
@@ -587,7 +603,7 @@ async function startServer() {
     }
   });
 
-  // API para o administrador salvar o Google Client ID no .env e no processo em execução
+  // API para o administrador salvar o Google Client ID no .env e sincronizar no Supabase
   app.post("/api/admin/save-google-client-id", async (req, res) => {
     try {
       const { googleClientId } = req.body;
@@ -596,7 +612,7 @@ async function startServer() {
       // Atualiza variável em tempo de execução
       process.env.VITE_GOOGLE_CLIENT_ID = cleanId;
 
-      // Atualiza arquivo .env
+      // 1. Atualiza arquivo .env
       const envPath = path.resolve(__dirname, ".env");
       let envContent = "";
       if (fs.existsSync(envPath)) {
@@ -611,6 +627,24 @@ async function startServer() {
 
       fs.writeFileSync(envPath, envContent, "utf-8");
       console.log(`[Configuração Global] VITE_GOOGLE_CLIENT_ID gravado no .env com sucesso.`);
+
+      // 2. Sincroniza na tabela app_settings do Supabase (para persistência no banco)
+      try {
+        const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca')) ? process.env.SUPABASE_URL : 'https://qhxdujbsipgwthrgvncl.supabase.co';
+        const supabaseKey = (process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi')) ? process.env.SUPABASE_SECRET_KEY : (process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL');
+        await fetch(`${supabaseUrl}/rest/v1/app_settings`, {
+          method: "POST",
+          headers: {
+            apikey: supabaseKey,
+            Authorization: `Bearer ${supabaseKey}`,
+            "Content-Type": "application/json",
+            "Prefer": "resolution=merge-duplicates"
+          },
+          body: JSON.stringify({ id: "global", google_client_id: cleanId })
+        }).catch(() => null);
+      } catch (sbSyncErr) {
+        console.warn("[Configuração Global] Aviso ao sincronizar com app_settings do Supabase:", sbSyncErr);
+      }
 
       res.json({ success: true, googleClientId: cleanId });
     } catch (err: any) {

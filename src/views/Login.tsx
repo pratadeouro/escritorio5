@@ -149,14 +149,23 @@ export default function Login() {
 
   // Busca configurações públicas do servidor (.env e banco) mesmo se o cache do navegador estiver limpo
   useEffect(() => {
-    fetch('/api/public/settings')
-      .then(res => res.json())
-      .then(data => {
-        if (data?.googleClientId) {
+    let isMounted = true;
+    const fetchSettings = async () => {
+      try {
+        const res = await fetch('/api/public/settings');
+        if (!res.ok) return;
+        const text = await res.text();
+        if (!text || !text.startsWith('{')) return;
+        const data = JSON.parse(text);
+        if (isMounted && data?.googleClientId) {
           setServerGoogleClientId(data.googleClientId);
         }
-      })
-      .catch(() => {});
+      } catch {
+        // Fallback garantido por import.meta.env.VITE_GOOGLE_CLIENT_ID
+      }
+    };
+    fetchSettings();
+    return () => { isMounted = false; };
   }, []);
 
   // Client ID do Google configurado no .env do servidor, no estado global, no escritório, ou no cache local
