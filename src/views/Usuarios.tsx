@@ -141,7 +141,7 @@ export default function Usuarios() {
         senha: '',
         oab: '',
         permissao: '',
-        escritoriosIds: escritorioAtivoId ? [escritorioAtivoId] : (availableOffices[0] ? [availableOffices[0].id] : [])
+        escritoriosIds: escritorioAtivoId ? [escritorioAtivoId] : []
       });
     }
     setIsModalOpen(true);
@@ -175,11 +175,6 @@ export default function Usuarios() {
 
     if (!formData.permissao) {
       alert('Por favor, selecione uma categoria de permissão para o usuário.');
-      return;
-    }
-
-    if (!formData.escritoriosIds || formData.escritoriosIds.length === 0) {
-      alert('Por favor, selecione ao menos um escritório de atuação para o usuário.');
       return;
     }
     
@@ -1198,15 +1193,44 @@ export default function Usuarios() {
               />
             </div>
             <div className="space-y-1">
-              <label className="text-sm font-medium text-app-text">Escritórios de Atuação *</label>
-              <div className="max-h-32 overflow-y-auto border border-app-border rounded-lg p-2 space-y-2 bg-app-surface">
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-medium text-app-text">
+                  Escritórios de Atuação <span className="text-xs text-app-text-muted font-normal">(Opcional)</span>
+                </label>
+                <div className="flex items-center space-x-2">
+                  {formData.escritoriosIds.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setFormData(prev => ({ ...prev, escritoriosIds: [] }))}
+                      className="text-xs text-red-500 hover:text-red-700 dark:hover:text-red-400 font-medium hover:underline transition-colors cursor-pointer"
+                    >
+                      Desvincular de todos
+                    </button>
+                  )}
+                  {state.escritorios.length > 0 && formData.escritoriosIds.length < state.escritorios.length && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const available = state.escritorios
+                          .filter(esc => isAdmin() || (currentUser?.escritoriosIds || []).some(id => String(id).trim().toUpperCase() === String(esc.id).trim().toUpperCase()))
+                          .map(esc => esc.id);
+                        setFormData(prev => ({ ...prev, escritoriosIds: available }));
+                      }}
+                      className="text-xs text-primary hover:underline font-medium transition-colors cursor-pointer"
+                    >
+                      Selecionar todos
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="max-h-36 overflow-y-auto border border-app-border rounded-lg p-2 space-y-2 bg-app-surface">
                 {state.escritorios
                   .filter(esc => isAdmin() || (currentUser?.escritoriosIds || []).some(id => String(id).trim().toUpperCase() === String(esc.id).trim().toUpperCase()))
                   .map((esc, index) => {
                     const normEscId = String(esc.id).trim().toUpperCase();
                     const isChecked = formData.escritoriosIds.some(id => String(id).trim().toUpperCase() === normEscId);
                     return (
-                      <label key={`${esc.id}-${index}`} className="flex items-center space-x-2 cursor-pointer">
+                      <label key={`${esc.id}-${index}`} className="flex items-center space-x-2 cursor-pointer hover:bg-app-hover p-1 rounded transition-colors">
                         <input
                           type="checkbox"
                           className="rounded border-app-border text-primary focus:ring-primary"
@@ -1230,6 +1254,15 @@ export default function Usuarios() {
                     );
                   })}
               </div>
+              {formData.escritoriosIds.length === 0 ? (
+                <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1 mt-1 font-medium">
+                  <span>ℹ️</span> Usuário ficará sem nenhum escritório vinculado (Pendente de vinculação/aprovação).
+                </p>
+              ) : (
+                <p className="text-xs text-app-text-muted mt-1">
+                  {formData.escritoriosIds.length} {formData.escritoriosIds.length === 1 ? 'escritório selecionado' : 'escritórios selecionados'}.
+                </p>
+              )}
             </div>
             <div className="space-y-1">
               <label className="text-sm font-medium text-app-text">CPF</label>
