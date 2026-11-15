@@ -227,7 +227,20 @@ export default function Layout({ children, currentView, onNavigate }: LayoutProp
   const lawyerName = currentUser?.nome || activeOffice?.responsavel || 'Walber Mendonça';
   const initials = lawyerName.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase();
 
-  const isFullHeightView = ['processosAtivos', 'processosGeral', 'pendencias', 'ia', 'tarefas'].includes(currentView);
+  const isFullHeightView = [
+    'processosAtivos',
+    'processosGeral',
+    'pendencias',
+    'ia',
+    'tarefas',
+    'varas',
+    'forum',
+    'tribunais',
+    'upj',
+    'julgadores',
+    'servidores',
+    'relacionamento'
+  ].includes(currentView);
 
   return (
     <div className="h-screen h-[100dvh] bg-app-bg flex transition-colors duration-300 overflow-hidden">
