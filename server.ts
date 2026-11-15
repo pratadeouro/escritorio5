@@ -762,9 +762,15 @@ async function startServer() {
       }
 
       const meta = au?.user_metadata || {};
-      const nome = meta.display_name || meta.nome || meta.full_name || meta.name || pu.nome || rawEmail.split('@')[0];
+      const nome = pu.nome || meta.display_name || meta.nome || meta.full_name || meta.name || rawEmail.split('@')[0];
 
-      let rawEscritorios = meta.escritorios_ids || pu.escritorios_ids || meta.escritoriosIds || pu.escritoriosIds || [];
+      let rawEscritorios = (pu.escritorios_ids !== undefined && pu.escritorios_ids !== null)
+        ? pu.escritorios_ids
+        : (pu.escritoriosIds !== undefined && pu.escritoriosIds !== null)
+          ? pu.escritoriosIds
+          : (meta.escritorios_ids !== undefined && meta.escritorios_ids !== null)
+            ? meta.escritorios_ids
+            : (meta.escritoriosIds || []);
       if (typeof rawEscritorios === 'string') {
         try {
           rawEscritorios = JSON.parse(rawEscritorios);
@@ -776,22 +782,22 @@ async function startServer() {
         ? rawEscritorios.map((id: any) => String(id || '').trim().toUpperCase()).filter(Boolean)
         : [];
 
-      const rawPerm = meta.permissao || pu.permissao || (rawEmail === 'pratadeouro@gmail.com' ? 'Admin' : 'user');
+      const rawPerm = pu.permissao || meta.permissao || (rawEmail === 'pratadeouro@gmail.com' ? 'Admin' : 'user');
       const permissao = rawEmail === 'pratadeouro@gmail.com' ? 'Admin' : rawPerm;
 
       const user = {
-        id: au?.id || pu.id || `user-${Date.now()}`,
+        id: pu.id || au?.id || `user-${Date.now()}`,
         authId: au?.id,
         nome,
         email: au?.email || pu.email || rawEmail,
-        cargo: meta.cargo || pu.cargo || '',
+        cargo: pu.cargo || meta.cargo || '',
         contato: pu.contato || meta.contato || '',
         cpf: pu.cpf || meta.cpf || '',
         senha: '',
         oab: pu.oab || meta.oab || '',
         permissao,
         escritoriosIds: safeEscritoriosIds,
-        status: meta.status || pu.status || (au?.banned_until ? 'Inativo' : 'Ativo'),
+        status: pu.status || meta.status || (au?.banned_until ? 'Inativo' : 'Ativo'),
         fotoUrl: meta.avatar_url || pu.foto_url,
         theme: pu.theme,
         itemsPerPage: pu.items_per_page,
@@ -865,10 +871,16 @@ async function startServer() {
         const email = (au.email || "").trim().toLowerCase();
         const pu = pubByEmail.get(email) || {};
         const meta = au.user_metadata || {};
-        const nome = meta.display_name || meta.nome || meta.full_name || meta.name || pu.nome || email;
+        const nome = pu.nome || meta.display_name || meta.nome || meta.full_name || meta.name || email;
 
-        // Normalizar escritoriosIds para garantir que seja sempre array de strings
-        let rawEscritorios = meta.escritorios_ids || pu.escritorios_ids || meta.escritoriosIds || pu.escritoriosIds || [];
+        // Normalizar escritoriosIds para garantir que seja sempre array de strings (priorizando public.usuarios)
+        let rawEscritorios = (pu.escritorios_ids !== undefined && pu.escritorios_ids !== null)
+          ? pu.escritorios_ids
+          : (pu.escritoriosIds !== undefined && pu.escritoriosIds !== null)
+            ? pu.escritoriosIds
+            : (meta.escritorios_ids !== undefined && meta.escritorios_ids !== null)
+              ? meta.escritorios_ids
+              : (meta.escritoriosIds || []);
         if (typeof rawEscritorios === 'string') {
           try {
             rawEscritorios = JSON.parse(rawEscritorios);
@@ -881,22 +893,22 @@ async function startServer() {
           : [];
 
         // pratadeouro@gmail.com é sempre Admin do sistema
-        const rawPerm = meta.permissao || pu.permissao || (email === 'pratadeouro@gmail.com' ? 'Admin' : 'user');
+        const rawPerm = pu.permissao || meta.permissao || (email === 'pratadeouro@gmail.com' ? 'Admin' : 'user');
         const permissao = email === 'pratadeouro@gmail.com' ? 'Admin' : rawPerm;
 
         return {
-          id: au.id,
+          id: pu.id || au.id,
           authId: au.id,
           nome,
           email: au.email,
-          cargo: meta.cargo || pu.cargo || '',
+          cargo: pu.cargo || meta.cargo || '',
           contato: pu.contato || meta.contato || '',
           cpf: pu.cpf || meta.cpf || '',
           senha: pu.senha || '',
           oab: pu.oab || meta.oab || '',
           permissao,
           escritoriosIds: safeEscritoriosIds,
-          status: meta.status || pu.status || (au.banned_until ? 'Inativo' : 'Ativo'),
+          status: pu.status || meta.status || (au.banned_until ? 'Inativo' : 'Ativo'),
           fotoUrl: meta.avatar_url || pu.foto_url,
           theme: pu.theme,
           itemsPerPage: pu.items_per_page,

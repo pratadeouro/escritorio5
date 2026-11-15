@@ -260,6 +260,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const isFirstRender = useRef(true);
   const skipNextSave = useRef(false);
   const lastSavedStateRef = useRef<string>('');
+  const isImportingRef = useRef(false);
+  const isAuthenticatingRef = useRef(false);
   const handleImportRef = useRef<(isFullLoad?: boolean) => Promise<void>>(() => Promise.resolve());
 
   const [authenticatedUserEmail, setAuthenticatedUserEmail] = useState<string | null>(() => {
@@ -496,154 +498,192 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const normalizedSenha = senha.trim();
     if (!normalizedEmail || !normalizedSenha) return false;
 
-    let user: Usuario | undefined;
-    let authSuccess = false;
-
-    // 1. Tenta autenticação direta pelo Supabase Auth (sem baixar lista de usuários)
-    if (isSupabaseConfigured()) {
-      try {
-        const hybridRes = await signInHybrid(normalizedEmail, normalizedSenha);
-        if (hybridRes.success) {
-          authSuccess = true;
-          // Busca pontualmente apenas o perfil deste usuário logado no Supabase
-          const supabase = getSupabase();
-          const { data: dbUser } = await supabase
-            .from('usuarios')
-            .select('*')
-            .eq('email', normalizedEmail)
-            .maybeSingle();
-
-          if (dbUser) {
-            user = mapUsuarioFromDb(dbUser);
-          } else {
-            user = {
-              id: hybridRes.user?.id || generateId('usuario'),
-              nome: hybridRes.user?.user_metadata?.nome || normalizedEmail.split('@')[0],
-              email: normalizedEmail,
-              cargo: hybridRes.user?.user_metadata?.cargo || '',
-              permissao: hybridRes.user?.user_metadata?.permissao || 'user',
-              contato: '',
-              cpf: '',
-              escritoriosIds: state.escritorios.length > 0 ? [state.escritorios[0].id] : []
-            };
-          }
-        } else {
-          // Se não autenticou no Auth, verifica pontualmente na tabela public.usuarios (1º login pós-migração)
-          const supabase = getSupabase();
-          const { data: dbUser } = await supabase
-            .from('usuarios')
-            .select('*')
-            .eq('email', normalizedEmail)
-            .maybeSingle();
-
-          if (dbUser) {
-            const mapped = mapUsuarioFromDb(dbUser);
-            const isMatch = mapped.senha !== undefined && mapped.senha !== null && mapped.senha.toString().trim() === normalizedSenha;
-            if (isMatch) {
-              const retryHybrid = await signInHybrid(normalizedEmail, normalizedSenha, mapped);
-              if (retryHybrid.success) {
-                authSuccess = true;
-                user = mapped;
-              }
-            }
-          }
-        }
-      } catch (authErr) {
-        console.warn('[Login Híbrido] Exceção:', authErr);
-      }
-    }
-
-    // 2. Fallback de administrador principal
-    if (!authSuccess && !user && normalizedEmail === 'pratadeouro@gmail.com' && normalizedSenha === '12345') {
-      user = {
-        id: 'admin-fallback',
-        nome: 'Administrador',
-        email: normalizedEmail,
-        permissao: 'Admin',
-        cargo: 'Administrador',
-        contato: '',
-        cpf: '',
-        escritoriosIds: state.escritorios.length > 0 ? [state.escritorios[0].id] : []
-      };
-      authSuccess = true;
-    }
-
-    // 3. Fallback para lista local em memória (caso já carregada ou modo Sheets)
-    if (!authSuccess && !user && state.usuarios.length > 0) {
-      const localMatch = state.usuarios.find(u => {
-        const matchEmail = (u.email || '').trim().toLowerCase() === normalizedEmail;
-        const matchSenha = (u.senha !== undefined && u.senha !== null) 
-          ? u.senha.toString().trim() === normalizedSenha
-          : false;
-        return matchEmail && matchSenha;
-      });
-      if (localMatch) {
-        user = localMatch;
-        authSuccess = true;
-      }
-    }
-
-    if (authSuccess && user) {
-      // Remove senha em texto da memória para reforçar a segurança
-      const safeUser: Usuario = { ...user, senha: '' };
-      
+    isAuthenticatingRef.current = true;
+    try {
+      // Garante que a fonte de dados já esteja alinhada para Supabase ANTES de signInHybrid disparar SIGNED_IN
       if (isSupabaseConfigured()) {
         setActiveDataSource('supabase');
         setDataSourceState('supabase');
         localStorage.setItem('advocacia_data_source', 'supabase');
       }
 
-      setAuthenticatedUserEmail(safeUser.email);
-      localStorage.setItem('advocacia_user_email', safeUser.email);
-      localStorage.removeItem('advocacia_data_backup');
-      
-      // Carrega dados completos APENAS após a confirmação do login
-      await handleImportRef.current(true);
-      
-      if (safeUser.escritoriosIds && safeUser.escritoriosIds.length > 0) {
-        setEscritorioAtivoId(safeUser.escritoriosIds[0]);
-      }
-      
-      const loginLogData = {
-        usuario: safeUser.email,
-        acao: 'LOGIN',
-        idEscritorio: safeUser.escritoriosIds && safeUser.escritoriosIds.length > 0 ? safeUser.escritoriosIds[0] : '',
-        detalhes: `Usuário ${safeUser.nome} logou no sistema com sucesso.`
-      };
+      let user: Usuario | undefined;
+      let authSuccess = false;
 
-      if (getActiveDataSource() === 'supabase' && isSupabaseConfigured()) {
-        const newLog: LogRegistro = {
-          id: generateId('default'),
-          data: new Date().toLocaleString('pt-BR'),
-          ...loginLogData
+      // 1. Tenta autenticação direta pelo Supabase Auth (sem baixar lista de usuários)
+      if (isSupabaseConfigured()) {
+        try {
+          const hybridRes = await signInHybrid(normalizedEmail, normalizedSenha);
+          if (hybridRes.success) {
+            authSuccess = true;
+            // Busca pontualmente apenas o perfil deste usuário logado no Supabase (case-insensitive)
+            const supabase = getSupabase();
+            const { data: dbUser } = await supabase
+              .from('usuarios')
+              .select('*')
+              .ilike('email', normalizedEmail)
+              .maybeSingle();
+
+            if (dbUser) {
+              user = mapUsuarioFromDb(dbUser);
+            } else {
+              // Tenta o endpoint unificado /api/supabase/user-by-email como redundância para espelhar exatamente o login Google
+              try {
+                const resp = await fetch(`/api/supabase/user-by-email?email=${encodeURIComponent(normalizedEmail)}`);
+                if (resp.ok && (resp.headers.get('content-type') || '').includes('application/json')) {
+                  const json = await resp.json();
+                  if (json.success && json.user) {
+                    user = json.user;
+                  }
+                }
+              } catch {
+                // prossegue para metadata do Supabase Auth
+              }
+
+              if (!user) {
+                const meta = hybridRes.user?.user_metadata || {};
+                let rawEsc = meta.escritorios_ids || [];
+                if (typeof rawEsc === 'string') {
+                  try { rawEsc = JSON.parse(rawEsc); } catch { rawEsc = []; }
+                }
+                user = {
+                  id: hybridRes.user?.id || generateId('usuario'),
+                  nome: meta.nome || meta.display_name || meta.full_name || normalizedEmail.split('@')[0],
+                  email: normalizedEmail,
+                  cargo: meta.cargo || '',
+                  permissao: normalizedEmail === 'pratadeouro@gmail.com' ? 'Admin' : (meta.permissao || 'user'),
+                  contato: meta.contato || '',
+                  cpf: meta.cpf || '',
+                  escritoriosIds: Array.isArray(rawEsc) ? rawEsc.map((id: any) => String(id).trim().toUpperCase()).filter(Boolean) : []
+                };
+              }
+            }
+          } else {
+            // Se não autenticou no Auth, verifica pontualmente na tabela public.usuarios (1º login pós-migração)
+            const supabase = getSupabase();
+            const { data: dbUser } = await supabase
+              .from('usuarios')
+              .select('*')
+              .ilike('email', normalizedEmail)
+              .maybeSingle();
+
+            if (dbUser) {
+              const mapped = mapUsuarioFromDb(dbUser);
+              const isMatch = mapped.senha !== undefined && mapped.senha !== null && mapped.senha.toString().trim() === normalizedSenha;
+              if (isMatch) {
+                const retryHybrid = await signInHybrid(normalizedEmail, normalizedSenha, mapped);
+                if (retryHybrid.success) {
+                  authSuccess = true;
+                  user = mapped;
+                }
+              }
+            }
+          }
+        } catch (authErr) {
+          console.warn('[Login Híbrido] Exceção:', authErr);
+        }
+      }
+
+      // 2. Fallback de administrador principal
+      if (!authSuccess && !user && normalizedEmail === 'pratadeouro@gmail.com' && normalizedSenha === '12345') {
+        user = {
+          id: 'admin-fallback',
+          nome: 'Administrador',
+          email: normalizedEmail,
+          permissao: 'Admin',
+          cargo: 'Administrador',
+          contato: '',
+          cpf: '',
+          escritoriosIds: state.escritorios.length > 0 ? [state.escritorios[0].id] : []
         };
-        saveLogSupabase(newLog);
-        setState(s => ({
-          ...s,
-          logs: [newLog, ...(s.logs || [])].slice(0, 200)
-        }));
-      } else if (state.settings.scriptUrl) {
-        saveLogToScript(state.settings.scriptUrl, loginLogData);
+        authSuccess = true;
       }
-      
-      return true;
-    }
 
-    return false;
+      // 3. Fallback para lista local em memória (caso já carregada ou modo Sheets)
+      if (!authSuccess && !user && state.usuarios.length > 0) {
+        const localMatch = state.usuarios.find(u => {
+          const matchEmail = (u.email || '').trim().toLowerCase() === normalizedEmail;
+          const matchSenha = (u.senha !== undefined && u.senha !== null) 
+            ? u.senha.toString().trim() === normalizedSenha
+            : false;
+          return matchEmail && matchSenha;
+        });
+        if (localMatch) {
+          user = localMatch;
+          authSuccess = true;
+        }
+      }
+
+      if (authSuccess && user) {
+        // Remove senha em texto da memória para reforçar a segurança
+        const safeUser: Usuario = { ...user, senha: '' };
+
+        // Injeta imediatamente o usuário no estado para manter o comportamento idêntico ao login Google
+        setState(s => {
+          const withoutCurrent = (s.usuarios || []).filter(u => (u.email || '').trim().toLowerCase() !== normalizedEmail);
+          return {
+            ...s,
+            usuarios: [safeUser, ...withoutCurrent]
+          };
+        });
+
+        setAuthenticatedUserEmail(safeUser.email);
+        localStorage.setItem('advocacia_user_email', safeUser.email);
+        localStorage.removeItem('advocacia_data_backup');
+        
+        // Carrega dados completos APENAS após a confirmação do login
+        await handleImportRef.current(true);
+        
+        if (safeUser.escritoriosIds && safeUser.escritoriosIds.length > 0) {
+          setEscritorioAtivoId(safeUser.escritoriosIds[0]);
+        }
+        
+        const loginLogData = {
+          usuario: safeUser.email,
+          acao: 'LOGIN',
+          idEscritorio: safeUser.escritoriosIds && safeUser.escritoriosIds.length > 0 ? safeUser.escritoriosIds[0] : '',
+          detalhes: `Usuário ${safeUser.nome} logou no sistema com sucesso.`
+        };
+
+        if (getActiveDataSource() === 'supabase' && isSupabaseConfigured()) {
+          const newLog: LogRegistro = {
+            id: generateId('default'),
+            data: new Date().toLocaleString('pt-BR'),
+            ...loginLogData
+          };
+          saveLogSupabase(newLog);
+          setState(s => ({
+            ...s,
+            logs: [newLog, ...(s.logs || [])].slice(0, 200)
+          }));
+        } else if (state.settings.scriptUrl) {
+          saveLogToScript(state.settings.scriptUrl, loginLogData);
+        }
+        
+        return true;
+      }
+
+      return false;
+    } finally {
+      isAuthenticatingRef.current = false;
+    }
   }, [state.usuarios, state.escritorios, state.settings.scriptUrl, setEscritorioAtivoId]);
 
   const loginWithGoogleEmail = useCallback(async (googleEmail: string, googleCredential?: string): Promise<{ success: boolean; error?: string }> => {
     const normalizedEmail = googleEmail.trim().toLowerCase();
     if (!normalizedEmail) return { success: false, error: 'E-mail Google inválido.' };
 
-    // FORÇAR FONTE DE DADOS SUPABASE: O login com Google deve sempre autenticar e carregar dados do Supabase
-    setActiveDataSource('supabase');
-    setDataSourceState('supabase');
-    localStorage.setItem('advocacia_data_source', 'supabase');
+    isAuthenticatingRef.current = true;
+    try {
+      // FORÇAR FONTE DE DADOS SUPABASE: O login com Google deve sempre autenticar e carregar dados do Supabase
+      setActiveDataSource('supabase');
+      setDataSourceState('supabase');
+      localStorage.setItem('advocacia_data_source', 'supabase');
 
-    let user: Usuario | undefined;
-    let explicitNotFound = false;
-    let backendErrorMsg: string | undefined;
+      let user: Usuario | undefined;
+      let explicitNotFound = false;
+      let backendErrorMsg: string | undefined;
+      let hasJwtSession = false;
 
     // 1. Consulta o usuário diretamente no Supabase via endpoint seguro do servidor (Auth + public.usuarios)
     try {
@@ -667,6 +707,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               if (otpErr) {
                 console.warn('[Login Google] Aviso ao estabelecer sessão JWT via verifyOtp:', otpErr.message);
               } else {
+                hasJwtSession = true;
                 console.log('[Login Google] Sessão JWT autenticada estabelecida no Supabase Auth.');
               }
             } catch (otpEx) {
@@ -686,8 +727,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       console.warn('[Login Google] Falha ao consultar endpoint /api/supabase/user-by-email:', apiErr);
     }
 
-    // 2. Se /api falhou (ex: 502 em produção estática) ou não obteve sessão, tenta autenticação nativa via Google ID Token no Supabase Auth
-    if (!user && googleCredential && isSupabaseConfigured()) {
+    // 2. Se /api falhou (ex: 502) ou não obteve sessão JWT, autentica nativamente via Google ID Token no Supabase Auth
+    if ((!user || !hasJwtSession) && !explicitNotFound && googleCredential && isSupabaseConfigured()) {
       try {
         const supabase = getSupabase();
         const { data: idTokenData, error: idTokenErr } = await supabase.auth.signInWithIdToken({
@@ -695,33 +736,38 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           token: googleCredential,
         });
         if (!idTokenErr && idTokenData?.user) {
-          const { data: dbUser } = await supabase
-            .from('usuarios')
-            .select('*')
-            .ilike('email', normalizedEmail)
-            .maybeSingle();
+          hasJwtSession = true;
+          if (!user) {
+            const { data: dbUser } = await supabase
+              .from('usuarios')
+              .select('*')
+              .ilike('email', normalizedEmail)
+              .maybeSingle();
 
-          if (dbUser) {
-            user = mapUsuarioFromDb(dbUser);
-          } else {
-            const meta = idTokenData.user.user_metadata || {};
-            let rawEsc = meta.escritorios_ids || [];
-            if (typeof rawEsc === 'string') {
-              try { rawEsc = JSON.parse(rawEsc); } catch { rawEsc = []; }
+            if (dbUser) {
+              user = mapUsuarioFromDb(dbUser);
+            } else {
+              const meta = idTokenData.user.user_metadata || {};
+              let rawEsc = meta.escritorios_ids || [];
+              if (typeof rawEsc === 'string') {
+                try { rawEsc = JSON.parse(rawEsc); } catch { rawEsc = []; }
+              }
+              user = {
+                id: idTokenData.user.id,
+                nome: meta.nome || meta.full_name || meta.name || normalizedEmail.split('@')[0],
+                email: normalizedEmail,
+                senha: '',
+                permissao: normalizedEmail === 'pratadeouro@gmail.com' ? 'Admin' : (meta.permissao || 'user'),
+                cargo: meta.cargo || '',
+                contato: meta.contato || '',
+                cpf: meta.cpf || '',
+                escritoriosIds: Array.isArray(rawEsc) ? rawEsc.map((id: any) => String(id).trim().toUpperCase()) : [],
+              };
             }
-            user = {
-              id: idTokenData.user.id,
-              nome: meta.nome || meta.full_name || meta.name || normalizedEmail.split('@')[0],
-              email: normalizedEmail,
-              senha: '',
-              permissao: normalizedEmail === 'pratadeouro@gmail.com' ? 'Admin' : (meta.permissao || 'user'),
-              cargo: meta.cargo || '',
-              contato: meta.contato || '',
-              cpf: meta.cpf || '',
-              escritoriosIds: Array.isArray(rawEsc) ? rawEsc.map((id: any) => String(id).trim().toUpperCase()) : [],
-            };
           }
-          console.log('[Login Google] Autenticado diretamente via Supabase signInWithIdToken:', normalizedEmail);
+          console.log('[Login Google] Sessão autenticada via Supabase signInWithIdToken:', normalizedEmail);
+        } else if (idTokenErr) {
+          console.warn('[Login Google] Aviso no signInWithIdToken:', idTokenErr.message);
         }
       } catch (idTokErr) {
         console.warn('[Login Google] signInWithIdToken indisponível:', idTokErr);
@@ -836,10 +882,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       };
     }
 
-    return {
-      success: false,
-      error: `A conta Google ${normalizedEmail} não possui acesso cadastrado no sistema.`
-    };
+      return {
+        success: false,
+        error: `A conta Google ${normalizedEmail} não possui acesso cadastrado no sistema.`
+      };
+    } finally {
+      isAuthenticatingRef.current = false;
+    }
   }, [state.escritorios, state.settings.scriptUrl, setEscritorioAtivoId]);
 
   const logout = useCallback(async () => {
@@ -1881,9 +1930,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [state.usuarios, state.escritorios, state.allSettings, state.hasLoaded, isImporting, isLoggingOut]);
 
   const handleImport = useCallback(async (isFullLoad: boolean = false) => {
+    if (isImportingRef.current) return;
     // Se já carregou tudo e pediram core, ignora
     if (stateRef.current.hasLoaded && !isFullLoad && stateRef.current.usuarios.length > 0) return;
     
+    isImportingRef.current = true;
     setIsImporting(true);
     setState(s => ({ ...s, syncStatus: 'loading' }));
     try {
@@ -2052,6 +2103,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setState(s => ({ ...s, syncStatus: 'error' }));
       setTimeout(() => setState(s => ({ ...s, syncStatus: 'idle' })), 5000);
     } finally {
+      isImportingRef.current = false;
       setIsImporting(false);
     }
   }, [authenticatedUserEmail, escritorioAtivoId]);
@@ -2061,8 +2113,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const onImportEvent = () => handleImport(true);
     window.addEventListener('import-google-sheets', onImportEvent);
     
-    // Auto-import on mount APENAS se o usuário estiver autenticado na sessão
-    if (!state.hasLoaded && !!authenticatedUserEmail) {
+    // Auto-import on mount APENAS se o usuário estiver autenticado na sessão e não houver login em andamento
+    if (!state.hasLoaded && !!authenticatedUserEmail && !isAuthenticatingRef.current) {
       handleImport(true);
     }
 
