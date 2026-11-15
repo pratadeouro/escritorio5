@@ -249,9 +249,9 @@ export default function Login() {
             setIsGoogleLoading(true);
             setError('');
             try {
-              const success = await loginWithGoogleEmail(payload.email);
-              if (!success) {
-                setError(`A conta Google ${payload.email} não possui acesso cadastrado no sistema.`);
+              const result = await loginWithGoogleEmail(payload.email, response.credential);
+              if (!result.success) {
+                setError(result.error || `A conta Google ${payload.email} não possui acesso cadastrado no sistema.`);
               }
             } catch (err) {
               setError('Falha ao autenticar com a conta Google.');

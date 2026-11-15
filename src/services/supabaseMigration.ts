@@ -567,6 +567,7 @@ DROP POLICY IF EXISTS "RLS_Calendario" ON public.calendario;
 DROP POLICY IF EXISTS "RLS_LeadsStatus" ON public.leads_status;
 DROP POLICY IF EXISTS "RLS_Leads" ON public.leads;
 DROP POLICY IF EXISTS "RLS_Logs_Insert" ON public.logs;
+DROP POLICY IF EXISTS "RLS_Logs_Update" ON public.logs;
 DROP POLICY IF EXISTS "RLS_Logs_Select" ON public.logs;
 DROP POLICY IF EXISTS "RLS_AppSettings_Select" ON public.app_settings;
 DROP POLICY IF EXISTS "RLS_AppSettings_Mod" ON public.app_settings;
@@ -691,6 +692,11 @@ CREATE POLICY "RLS_Logs_Insert" ON public.logs
   FOR INSERT TO authenticated
   WITH CHECK (true);
 
+CREATE POLICY "RLS_Logs_Update" ON public.logs
+  FOR UPDATE TO authenticated
+  USING (public.is_admin())
+  WITH CHECK (true);
+
 CREATE POLICY "RLS_Logs_Select" ON public.logs
   FOR SELECT TO authenticated
   USING (public.is_admin() OR id_escritorio IS NULL OR id_escritorio = ANY(public.current_user_escritorios()));
@@ -757,6 +763,53 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 GRANT EXECUTE ON FUNCTION public.admin_delete_usuario TO authenticated, anon;
+
+CREATE OR REPLACE FUNCTION public.get_user_by_email_for_login(p_email text)
+RETURNS jsonb AS $$
+DECLARE
+  v_user jsonb;
+BEGIN
+  SELECT json_build_object(
+    'id', u.id,
+    'nome', u.nome,
+    'email', u.email,
+    'cargo', u.cargo,
+    'contato', u.contato,
+    'oab', u.oab,
+    'permissao', u.permissao,
+    'escritorios_ids', u.escritorios_ids,
+    'status', u.status
+  )::jsonb
+  INTO v_user
+  FROM public.usuarios u
+  WHERE lower(trim(u.email)) = lower(trim(p_email))
+  LIMIT 1;
+
+  IF v_user IS NOT NULL THEN
+    RETURN v_user;
+  END IF;
+
+  SELECT json_build_object(
+    'id', a.id::text,
+    'nome', COALESCE(a.raw_user_meta_data->>'nome', a.raw_user_meta_data->>'full_name', a.raw_user_meta_data->>'display_name', a.email),
+    'email', a.email,
+    'cargo', COALESCE(a.raw_user_meta_data->>'cargo', ''),
+    'contato', COALESCE(a.raw_user_meta_data->>'contato', ''),
+    'oab', COALESCE(a.raw_user_meta_data->>'oab', ''),
+    'permissao', COALESCE(a.raw_user_meta_data->>'permissao', 'user'),
+    'escritorios_ids', COALESCE(a.raw_user_meta_data->'escritorios_ids', '[]'::jsonb),
+    'status', COALESCE(a.raw_user_meta_data->>'status', 'Ativo')
+  )::jsonb
+  INTO v_user
+  FROM auth.users a
+  WHERE lower(trim(a.email)) = lower(trim(p_email))
+  LIMIT 1;
+
+  RETURN v_user;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+GRANT EXECUTE ON FUNCTION public.get_user_by_email_for_login TO authenticated, anon;
 
 CREATE OR REPLACE FUNCTION public.handle_new_auth_user()
 RETURNS trigger AS $$

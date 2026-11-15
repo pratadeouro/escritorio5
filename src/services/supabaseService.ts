@@ -636,10 +636,23 @@ export const toIsoDate = (val?: string | null): string | null => {
 const executeUpsert = async (table: string, data: any, conflictCol: string = 'id'): Promise<boolean> => {
   if (!isSupabaseConfigured()) return false;
   const supabase = getSupabase();
-  const { error } = await supabase.from(table).upsert(data, { onConflict: conflictCol });
-  if (!error) return true;
 
-  console.warn(`[Supabase] Gravação direta via cliente em ${table} encontrou restrição (${error.code || error.message}). Acionando proxy do servidor...`);
+  // Verifica se existe sessão autenticada no Supabase Auth antes de tentar escrita direta sujeita a RLS
+  let hasSession = false;
+  try {
+    const { data: sessData } = await supabase.auth.getSession();
+    hasSession = !!sessData?.session;
+  } catch {
+    hasSession = false;
+  }
+
+  if (hasSession) {
+    const { error } = await supabase.from(table).upsert(data, { onConflict: conflictCol });
+    if (!error) return true;
+    console.warn(`[Supabase] Gravação direta via cliente em ${table} encontrou restrição (${error.code || error.message}). Acionando proxy do servidor...`);
+  } else {
+    console.info(`[Supabase] Sem sessão JWT ativa no cliente para ${table}. Enviando via proxy seguro do servidor...`);
+  }
   
   try {
     const resp = await fetch('/api/supabase/upsert', {
@@ -897,14 +910,37 @@ export const deleteItemGenericSupabase = async (table: string, id: string): Prom
 
 export const saveLogSupabase = async (log: Partial<LogRegistro>): Promise<void> => {
   if (!isSupabaseConfigured()) return;
-  await executeUpsert('logs', {
+  const payload = {
     id: log.id || `log_${Math.random().toString(36).substring(2, 9)}_${Date.now()}`,
     data: new Date().toISOString(),
     usuario: log.usuario || 'Sistema',
     acao: log.acao || 'INFO',
     id_escritorio: log.idEscritorio || null,
     detalhes: log.detalhes || '',
-  }, 'id');
+  };
+
+  const supabase = getSupabase();
+  try {
+    const { data: sessData } = await supabase.auth.getSession();
+    if (sessData?.session) {
+      // Usa INSERT direto (tabela logs possui política FOR INSERT TO authenticated)
+      const { error } = await supabase.from('logs').insert(payload);
+      if (!error) return;
+      console.warn('[Supabase] Aviso ao inserir log autenticado:', error.message);
+    }
+  } catch {
+    // prossegue para fallback do servidor
+  }
+
+  try {
+    await fetch('/api/supabase/upsert', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ table: 'logs', record: payload, conflictColumn: 'id' })
+    });
+  } catch {
+    // Log de auditoria nunca deve bloquear ou travar o fluxo do usuário
+  }
 };
 
 export const upsertSettingsSupabase = async (s: AppSettings): Promise<boolean> => {

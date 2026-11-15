@@ -718,22 +718,39 @@ async function startServer() {
   // 1.0 CONSULTAR USUÁRIO ESPECÍFICO POR E-MAIL DIRETAMENTE DO SUPABASE (Auth + public.usuarios)
   app.get("/api/supabase/user-by-email", async (req, res) => {
     const rawEmail = String(req.query.email || "").trim().toLowerCase();
+    const withSession = req.query.withSession === 'true';
     if (!rawEmail) {
       return res.status(400).json({ success: false, error: "Parâmetro 'email' é obrigatório." });
     }
 
     const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca')) ? process.env.SUPABASE_URL : 'https://qhxdujbsipgwthrgvncl.supabase.co';
     const supabaseKey = (process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi')) ? process.env.SUPABASE_SECRET_KEY : (process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL');
+    const hasServiceRole = !!(process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi'));
+
+    if (!hasServiceRole) {
+      return res.status(500).json({
+        success: false,
+        error: "Chave administrativa (SUPABASE_SECRET_KEY) não configurada no servidor para consultar usuários."
+      });
+    }
 
     try {
-      const [authRes, pubRes] = await Promise.all([
+      const [authResp, pubResp] = await Promise.all([
         fetch(`${supabaseUrl}/auth/v1/admin/users?per_page=1000`, {
           headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
-        }).then(r => r.json()).catch(() => ({ users: [] })),
-        fetch(`${supabaseUrl}/rest/v1/usuarios?email=eq.${encodeURIComponent(rawEmail)}`, {
+        }),
+        fetch(`${supabaseUrl}/rest/v1/usuarios?email=ilike.${encodeURIComponent(rawEmail)}`, {
           headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
-        }).then(r => r.json()).catch(() => [])
+        })
       ]);
+
+      const authRes = authResp.ok ? await authResp.json().catch(() => ({ users: [] })) : { users: [] };
+      const pubRes = pubResp.ok ? await pubResp.json().catch(() => []) : [];
+
+      if (!authResp.ok) {
+        const authErrText = await authResp.text().catch(() => '');
+        console.error("[Server Supabase User By Email] Erro ao consultar auth.users:", authResp.status, authErrText);
+      }
 
       const authUsers = authRes?.users || [];
       const au = authUsers.find((u: any) => (u.email || "").trim().toLowerCase() === rawEmail);
@@ -784,7 +801,33 @@ async function startServer() {
         lastSignInAt: au?.last_sign_in_at
       };
 
-      return res.json({ success: true, user });
+      // Se solicitado, gera um token de sessão real no Supabase Auth (magiclink sem envio de e-mail)
+      // para que o cliente autenticado via Google também tenha JWT válido para o RLS do PostgreSQL
+      let hashedToken: string | undefined;
+      if (withSession && au?.email) {
+        try {
+          const linkResp = await fetch(`${supabaseUrl}/auth/v1/admin/generate_link`, {
+            method: "POST",
+            headers: {
+              apikey: supabaseKey,
+              Authorization: `Bearer ${supabaseKey}`,
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({
+              type: "magiclink",
+              email: au.email
+            })
+          });
+          if (linkResp.ok) {
+            const linkData = await linkResp.json().catch(() => null);
+            hashedToken = linkData?.properties?.hashed_token || linkData?.hashed_token;
+          }
+        } catch (linkErr) {
+          console.warn("[Server Supabase User By Email] Aviso ao gerar token de sessão:", linkErr);
+        }
+      }
+
+      return res.json({ success: true, user, hashedToken });
     } catch (err: any) {
       console.error("[Server Supabase User By Email] Erro ao buscar usuário:", err);
       return res.status(500).json({ success: false, error: err.message || String(err) });

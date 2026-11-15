@@ -179,7 +179,7 @@ interface AppContextType {
   forceSave: () => Promise<void>;
   forceLoad: () => Promise<void>;
   login: (email: string, senha: string) => Promise<boolean>;
-  loginWithGoogleEmail: (email: string) => Promise<boolean>;
+  loginWithGoogleEmail: (email: string, googleCredential?: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
   resetPassword: (email: string) => Promise<{ success: boolean; message: string }>;
   updatePassword: (newPassword: string) => Promise<{ success: boolean; message: string }>;
@@ -632,9 +632,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return false;
   }, [state.usuarios, state.escritorios, state.settings.scriptUrl, setEscritorioAtivoId]);
 
-  const loginWithGoogleEmail = useCallback(async (googleEmail: string): Promise<boolean> => {
+  const loginWithGoogleEmail = useCallback(async (googleEmail: string, googleCredential?: string): Promise<{ success: boolean; error?: string }> => {
     const normalizedEmail = googleEmail.trim().toLowerCase();
-    if (!normalizedEmail) return false;
+    if (!normalizedEmail) return { success: false, error: 'E-mail Google inválido.' };
 
     // FORÇAR FONTE DE DADOS SUPABASE: O login com Google deve sempre autenticar e carregar dados do Supabase
     setActiveDataSource('supabase');
@@ -642,31 +642,122 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     localStorage.setItem('advocacia_data_source', 'supabase');
 
     let user: Usuario | undefined;
+    let explicitNotFound = false;
+    let backendErrorMsg: string | undefined;
 
     // 1. Consulta o usuário diretamente no Supabase via endpoint seguro do servidor (Auth + public.usuarios)
     try {
-      const resp = await fetch(`/api/supabase/user-by-email?email=${encodeURIComponent(normalizedEmail)}`);
-      if (resp.ok) {
+      const resp = await fetch(`/api/supabase/user-by-email?email=${encodeURIComponent(normalizedEmail)}&withSession=true`);
+      const contentType = resp.headers.get('content-type') || '';
+
+      if (resp.ok && contentType.includes('application/json')) {
         const json = await resp.json();
         if (json.success && json.user) {
           user = json.user;
           console.log('[Login Google] Usuário autenticado com sucesso do Supabase:', user?.email, user?.nome);
+
+          // Estabelece sessão JWT real no cliente Supabase para que RLS (logs, processos, etc.) reconheça TO authenticated
+          if (json.hashedToken && isSupabaseConfigured()) {
+            try {
+              const supabase = getSupabase();
+              const { error: otpErr } = await supabase.auth.verifyOtp({
+                token_hash: json.hashedToken,
+                type: 'magiclink',
+              });
+              if (otpErr) {
+                console.warn('[Login Google] Aviso ao estabelecer sessão JWT via verifyOtp:', otpErr.message);
+              } else {
+                console.log('[Login Google] Sessão JWT autenticada estabelecida no Supabase Auth.');
+              }
+            } catch (otpEx) {
+              console.warn('[Login Google] Exceção ao verificar OTP de sessão:', otpEx);
+            }
+          }
         }
+      } else if (resp.status === 404 && contentType.includes('application/json')) {
+        explicitNotFound = true;
+      } else {
+        const errJson = contentType.includes('application/json') ? await resp.json().catch(() => null) : null;
+        backendErrorMsg = errJson?.error || `Servidor (/api) retornou status ${resp.status}.`;
+        console.warn('[Login Google] Erro do backend ao buscar usuário:', resp.status, backendErrorMsg);
       }
-    } catch (apiErr) {
+    } catch (apiErr: any) {
+      backendErrorMsg = apiErr?.message || 'Falha de rede ao consultar o servidor.';
       console.warn('[Login Google] Falha ao consultar endpoint /api/supabase/user-by-email:', apiErr);
     }
 
-    // 2. Se a API pontual falhar, tenta consultar a listagem administrativa de usuários do Supabase
-    if (!user) {
+    // 2. Se /api falhou (ex: 502 em produção estática) ou não obteve sessão, tenta autenticação nativa via Google ID Token no Supabase Auth
+    if (!user && googleCredential && isSupabaseConfigured()) {
+      try {
+        const supabase = getSupabase();
+        const { data: idTokenData, error: idTokenErr } = await supabase.auth.signInWithIdToken({
+          provider: 'google',
+          token: googleCredential,
+        });
+        if (!idTokenErr && idTokenData?.user) {
+          const { data: dbUser } = await supabase
+            .from('usuarios')
+            .select('*')
+            .ilike('email', normalizedEmail)
+            .maybeSingle();
+
+          if (dbUser) {
+            user = mapUsuarioFromDb(dbUser);
+          } else {
+            const meta = idTokenData.user.user_metadata || {};
+            let rawEsc = meta.escritorios_ids || [];
+            if (typeof rawEsc === 'string') {
+              try { rawEsc = JSON.parse(rawEsc); } catch { rawEsc = []; }
+            }
+            user = {
+              id: idTokenData.user.id,
+              nome: meta.nome || meta.full_name || meta.name || normalizedEmail.split('@')[0],
+              email: normalizedEmail,
+              senha: '',
+              permissao: normalizedEmail === 'pratadeouro@gmail.com' ? 'Admin' : (meta.permissao || 'user'),
+              cargo: meta.cargo || '',
+              contato: meta.contato || '',
+              cpf: meta.cpf || '',
+              escritoriosIds: Array.isArray(rawEsc) ? rawEsc.map((id: any) => String(id).trim().toUpperCase()) : [],
+            };
+          }
+          console.log('[Login Google] Autenticado diretamente via Supabase signInWithIdToken:', normalizedEmail);
+        }
+      } catch (idTokErr) {
+        console.warn('[Login Google] signInWithIdToken indisponível:', idTokErr);
+      }
+    }
+
+    // 3. Fallback via RPC SECURITY DEFINER no Supabase (funciona mesmo sem backend /api se o script SQL atualizado tiver sido aplicado)
+    if (!user && !explicitNotFound && isSupabaseConfigured()) {
+      try {
+        const supabase = getSupabase();
+        const { data: rpcUser, error: rpcErr } = await supabase.rpc('get_user_by_email_for_login', {
+          p_email: normalizedEmail,
+        });
+        if (!rpcErr && rpcUser) {
+          user = mapUsuarioFromDb(rpcUser);
+          console.log('[Login Google] Usuário localizado via RPC Supabase:', user.email);
+        } else if (!rpcErr && rpcUser === null) {
+          explicitNotFound = true;
+        }
+      } catch {
+        // RPC pode ainda não existir no banco
+      }
+    }
+
+    // 4. Se a API pontual falhou por outro motivo que não 404, tenta a listagem administrativa como redundância
+    if (!user && !explicitNotFound) {
       try {
         const adminResp = await fetch('/api/supabase/admin/users');
-        if (adminResp.ok) {
+        if (adminResp.ok && (adminResp.headers.get('content-type') || '').includes('application/json')) {
           const adminJson = await adminResp.json();
           if (adminJson.success && Array.isArray(adminJson.users)) {
             user = adminJson.users.find((u: any) => (u.email || '').trim().toLowerCase() === normalizedEmail);
             if (user) {
               console.log('[Login Google] Usuário localizado na listagem administrativa do Supabase:', user.email);
+            } else {
+              explicitNotFound = true;
             }
           }
         }
@@ -675,7 +766,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
     }
 
-    // 3. Fallback de admin principal caso seja pratadeouro@gmail.com
+    // 5. Fallback de admin principal caso seja pratadeouro@gmail.com
     if (!user && normalizedEmail === 'pratadeouro@gmail.com') {
       user = {
         id: 'admin-fallback',
@@ -735,10 +826,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         saveLogToScript(state.settings.scriptUrl, googleLoginLogData);
       }
 
-      return true;
+      return { success: true };
     }
 
-    return false;
+    if (backendErrorMsg && !explicitNotFound) {
+      return {
+        success: false,
+        error: `Falha ao validar a conta ${normalizedEmail} no servidor (${backendErrorMsg}). Verifique se o backend Node.js e a SUPABASE_SECRET_KEY estão ativos.`
+      };
+    }
+
+    return {
+      success: false,
+      error: `A conta Google ${normalizedEmail} não possui acesso cadastrado no sistema.`
+    };
   }, [state.escritorios, state.settings.scriptUrl, setEscritorioAtivoId]);
 
   const logout = useCallback(async () => {
@@ -1822,7 +1923,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           varas: importedData.varas !== undefined ? importedData.varas : prevState.varas,
           tarefas: importedData.tarefas !== undefined ? importedData.tarefas : prevState.tarefas,
           escritorios: (importedData.escritorios && importedData.escritorios.length > 0) ? importedData.escritorios : (prevState.escritorios.length > 0 ? prevState.escritorios : (importedData.escritorios || [])),
-          usuarios: (importedData.usuarios !== undefined && (importedData.usuarios.length > 0 || !prevState.hasLoaded)) ? importedData.usuarios : prevState.usuarios,
+          usuarios: (importedData.usuarios !== undefined && importedData.usuarios.length > 0) ? importedData.usuarios : prevState.usuarios,
           pendencias: importedData.pendencias !== undefined ? importedData.pendencias : prevState.pendencias,
           modelos: importedData.modelos !== undefined ? importedData.modelos : prevState.modelos,
           julgadores: importedData.julgadores !== undefined ? importedData.julgadores : prevState.julgadores,
