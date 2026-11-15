@@ -432,6 +432,10 @@ CREATE TABLE IF NOT EXISTS public.app_settings (
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Atualizações incrementais de colunas em tabelas já existentes
+ALTER TABLE public.usuarios ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'Ativo';
+ALTER TABLE public.app_settings ADD COLUMN IF NOT EXISTS environment_mode TEXT DEFAULT 'homologacao';
+
 -- HABILITAR RLS (ROW LEVEL SECURITY) - Inicialmente permissivo para facilitar migração
 ALTER TABLE public.escritorios ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.usuarios ENABLE ROW LEVEL SECURITY;
