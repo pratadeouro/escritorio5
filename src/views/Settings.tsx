@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAppContext } from '../context';
 import { 
   Settings as SettingsIcon, 
@@ -155,7 +155,7 @@ function SortableMenuItem({ id, menu, index, total, onMove }: SortableMenuItemPr
 }
 
 export default function Settings() {
-  const { state, updateSettings, escritorioAtivoId, updateEscritorio, applyTheme, currentUser, isAdmin } = useAppContext();
+  const { state, updateSettings, escritorioAtivoId, updateEscritorio, applyTheme, currentUser, isAdmin, isProductionMode } = useAppContext();
   const activeOffice = state.escritorios.find(e => e.id === escritorioAtivoId);
   
   const sensors = useSensors(
@@ -250,6 +250,12 @@ export default function Settings() {
 
   const [isSaved, setIsSaved] = useState(false);
   const [activeTab, setActiveTab] = useState<'theme' | 'office' | 'email' | 'regional' | 'import' | 'supabase'>('theme');
+
+  useEffect(() => {
+    if (isProductionMode && (activeTab === 'import' || activeTab === 'supabase')) {
+      setActiveTab('theme');
+    }
+  }, [isProductionMode, activeTab]);
 
   const [isCheckingHeaders, setIsCheckingHeaders] = useState(false);
   const [headerReport, setHeaderReport] = useState<{ sheet: string; status: string; missingColumns: string[] }[] | null>(null);
@@ -973,8 +979,10 @@ export default function Settings() {
     { id: 'office', label: 'Dados do Escritório', icon: <Building2 size={18} /> },
     { id: 'email', label: 'E-mail e Notificações', icon: <Mail size={18} /> },
     { id: 'regional', label: 'Regional', icon: <Globe size={18} /> },
-    { id: 'import', label: 'Importar Processos', icon: <Upload size={18} /> },
-    { id: 'supabase', label: 'Migração Supabase', icon: <Database size={18} /> },
+    ...(!isProductionMode ? [
+      { id: 'import', label: 'Importar Processos', icon: <Upload size={18} /> },
+      { id: 'supabase', label: 'Migração Supabase', icon: <Database size={18} /> },
+    ] : []),
   ];
 
   const allMenuItems: { id: View; label: string; icon: React.ReactNode }[] = [
@@ -1837,11 +1845,11 @@ export default function Settings() {
           </div>
         )}
 
-        {activeTab === 'import' && (
+        {!isProductionMode && activeTab === 'import' && (
           <ImportTab />
         )}
 
-        {activeTab === 'supabase' && (
+        {!isProductionMode && activeTab === 'supabase' && (
           <SupabaseMigrationTab />
         )}
 

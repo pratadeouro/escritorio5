@@ -28,6 +28,7 @@ import {
 } from 'lucide-react';
 import { isSupabaseConfigured, OFFICIAL_SUPABASE_URL } from '../services/supabaseService';
 import { CURRENT_APP_VERSION } from '../services/versionService';
+import { EnvironmentMode } from '../types';
 
 const PRIMARY_COLORS = [
   { name: 'Índigo Moderno', hex: '#4f46e5' },
@@ -48,7 +49,10 @@ export default function ConfiguracoesGlobais() {
     applyTheme, 
     dataSource, 
     setDataSource,
-    activeOfficeName
+    activeOfficeName,
+    environmentMode,
+    environmentSource,
+    saveEnvironmentMode
   } = useAppContext();
 
   // Proteção de segurança estrita para administradores
@@ -132,6 +136,14 @@ export default function ConfiguracoesGlobais() {
   const [emailPass, setEmailPass] = useState(() => state.settings.emailPass || '');
   const [showEmailPass, setShowEmailPass] = useState(false);
 
+  // Modo de operação do sistema (Homologação vs Produção)
+  const [selectedEnvMode, setSelectedEnvMode] = useState<EnvironmentMode>(environmentMode);
+  const [isSwitchingEnv, setIsSwitchingEnv] = useState(false);
+
+  useEffect(() => {
+    setSelectedEnvMode(environmentMode);
+  }, [environmentMode]);
+
   // Estados de feedback de gravação
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -170,6 +182,18 @@ export default function ConfiguracoesGlobais() {
     applyTheme(themeMode, primaryColor, '#ffffff', '#f8fafc', siteName);
   };
 
+  const handleQuickSwitchEnvironment = async (targetMode: EnvironmentMode) => {
+    setSelectedEnvMode(targetMode);
+    setIsSwitchingEnv(true);
+    try {
+      await saveEnvironmentMode(targetMode);
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3500);
+    } finally {
+      setIsSwitchingEnv(false);
+    }
+  };
+
   const handleSaveAll = async () => {
     setIsSaving(true);
     setSaveSuccess(false);
@@ -196,6 +220,7 @@ export default function ConfiguracoesGlobais() {
         smtpSecure,
         emailUser: emailUser.trim(),
         emailPass: emailPass.trim(),
+        environmentMode: selectedEnvMode,
       };
 
       // 1. Salva no contexto
@@ -205,6 +230,7 @@ export default function ConfiguracoesGlobais() {
       if (typeof localStorage !== 'undefined') {
         localStorage.setItem('advocacia_google_client_id', googleClientId.trim());
         localStorage.setItem('advocacia_site_name', siteName.trim());
+        localStorage.setItem('advocacia_environment_mode', selectedEnvMode);
         localStorage.setItem('advocacia_theme_cache', JSON.stringify({
           officeName: siteName.trim(),
           theme: themeMode,
@@ -215,7 +241,10 @@ export default function ConfiguracoesGlobais() {
       // 3. Aplica estilos globais
       applyTheme(themeMode, primaryColor, '#ffffff', '#f8fafc', siteName.trim());
 
-      // 4. Grava diretamente no .env do servidor para persistência total independente de cache
+      // 4. Grava modo de ambiente no .env do servidor atual e sincroniza no app_settings do Supabase
+      await saveEnvironmentMode(selectedEnvMode);
+
+      // 5. Grava diretamente no .env do servidor para persistência total independente de cache
       try {
         await fetch('/api/admin/save-google-client-id', {
           method: 'POST',
@@ -226,7 +255,7 @@ export default function ConfiguracoesGlobais() {
         console.warn('Falha ao gravar .env no servidor:', envErr);
       }
 
-      // 5. Salva no banco de dados Supabase / Sheets
+      // 6. Salva no banco de dados Supabase / Sheets
       await forceSave();
 
       setSaveSuccess(true);
@@ -277,9 +306,85 @@ export default function ConfiguracoesGlobais() {
         {saveSuccess && (
           <div className="mt-4 p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-600 dark:text-emerald-400 text-xs font-semibold flex items-center gap-2 animate-bounce">
             <CheckCircle2 size={16} className="shrink-0" />
-            Configurações globais salvas com sucesso no banco de dados e sincronizadas para todo o sistema!
+            Configurações globais salvas com sucesso no servidor (.env) e sincronizadas!
           </div>
         )}
+      </div>
+
+      {/* Painel Rápido: Modo do Ambiente (Homologação vs Produção) */}
+      <div className="bg-app-surface border border-app-border rounded-3xl p-5 shadow-sm space-y-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="text-base font-bold text-app-text">Modo de Operação do Ambiente</h2>
+              <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${
+                selectedEnvMode === 'producao'
+                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
+                  : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
+              }`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${selectedEnvMode === 'producao' ? 'bg-emerald-500' : 'bg-amber-500 animate-pulse'}`} />
+                {selectedEnvMode === 'producao' ? 'Produção Ativa' : 'Homologação Ativa'}
+              </span>
+              <span className="text-[11px] text-app-text-muted">
+                (Origem atual: {environmentSource === 'env' ? '.env do servidor' : environmentSource === 'supabase' ? 'Supabase app_settings' : 'Padrão'})
+              </span>
+            </div>
+            <p className="text-xs text-app-text-muted mt-1">
+              Alterna este servidor entre Homologação e Produção, gravando no <code className="font-mono">.env</code> local e sincronizando com o Supabase.
+            </p>
+          </div>
+          {isSwitchingEnv && (
+            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary">
+              <Loader2 size={14} className="animate-spin" /> Aplicando modo...
+            </span>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <button
+            type="button"
+            disabled={isSwitchingEnv}
+            onClick={() => handleQuickSwitchEnvironment('homologacao')}
+            className={`text-left p-4 rounded-2xl border transition-all ${
+              selectedEnvMode === 'homologacao'
+                ? 'border-amber-500 bg-amber-500/10 ring-2 ring-amber-500/20'
+                : 'border-app-border bg-app-bg hover:border-amber-500/40'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-sm font-bold text-app-text flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse" />
+                Modo Homologação (Testes)
+              </span>
+              {selectedEnvMode === 'homologacao' && <CheckCircle2 size={18} className="text-amber-500" />}
+            </div>
+            <p className="text-xs text-app-text-muted leading-relaxed">
+              Exibe os avisos de <strong>Ambiente de Homologação</strong> (Login, Sidebar, Topo e Dashboard) e libera as abas de carga em massa: <strong>Migração Supabase</strong>, <strong>Importar para Supabase Auth</strong> e <strong>Importar Processos</strong>.
+            </p>
+          </button>
+
+          <button
+            type="button"
+            disabled={isSwitchingEnv}
+            onClick={() => handleQuickSwitchEnvironment('producao')}
+            className={`text-left p-4 rounded-2xl border transition-all ${
+              selectedEnvMode === 'producao'
+                ? 'border-emerald-500 bg-emerald-500/10 ring-2 ring-emerald-500/20'
+                : 'border-app-border bg-app-bg hover:border-emerald-500/40'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-sm font-bold text-app-text flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+                Modo Produção (Operação Real)
+              </span>
+              {selectedEnvMode === 'producao' && <CheckCircle2 size={18} className="text-emerald-500" />}
+            </div>
+            <p className="text-xs text-app-text-muted leading-relaxed">
+              Remove todos os avisos de homologação da interface e oculta as abas de carga em massa (<strong>Migração Supabase</strong>, <strong>Importar para Supabase Auth</strong> e <strong>Importar Processos</strong>), mantendo ativos o botão <strong>Google Forms</strong> e o <strong>DJEN</strong>.
+            </p>
+          </button>
+        </div>
       </div>
 
       {/* Navegação por Abas das Configurações Globais */}

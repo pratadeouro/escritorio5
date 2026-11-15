@@ -426,6 +426,7 @@ CREATE TABLE IF NOT EXISTS public.app_settings (
   email_dispatch_time TEXT DEFAULT '08:00',
   google_client_id TEXT,
   app_version TEXT,
+  environment_mode TEXT DEFAULT 'homologacao',
   theme TEXT DEFAULT 'light',
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -551,6 +552,7 @@ ALTER TABLE public.leads_status ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.leads ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.logs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.app_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.app_settings ADD COLUMN IF NOT EXISTS environment_mode TEXT DEFAULT 'homologacao';
 
 -- 3. REMOVER POLÍTICAS ANTIGAS / PÚBLICAS
 DROP POLICY IF EXISTS "Public Access Escritorios" ON public.escritorios;
@@ -1515,6 +1517,7 @@ export const migrateAllDataToSupabase = async (
           email_dispatch_time: s.emailDispatchTime || '08:00',
           google_client_id: s.googleClientId || null,
           app_version: s.appVersion || null,
+          environment_mode: s.environmentMode || 'homologacao',
           theme: s.theme || 'light',
         }));
       }

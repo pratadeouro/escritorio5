@@ -607,6 +607,7 @@ const mapSettingsFromDb = (r: any): AppSettings => ({
   googleClientId: r.google_client_id || undefined,
   idEscritorio: r.id_escritorio || undefined,
   appVersion: r.app_version || undefined,
+  environmentMode: r.environment_mode === 'producao' ? 'producao' : (r.environment_mode === 'homologacao' ? 'homologacao' : undefined),
   theme: r.theme || 'light',
 });
 
@@ -946,7 +947,7 @@ export const saveLogSupabase = async (log: Partial<LogRegistro>): Promise<void> 
 };
 
 export const upsertSettingsSupabase = async (s: AppSettings): Promise<boolean> => {
-  return executeUpsert('app_settings', {
+  const basePayload = {
     id_escritorio: s.idEscritorio || 'GLOBAL',
     timezone: s.timezone || 'America/Sao_Paulo',
     items_per_page: s.itemsPerPage || 10,
@@ -971,5 +972,15 @@ export const upsertSettingsSupabase = async (s: AppSettings): Promise<boolean> =
     google_client_id: s.googleClientId || null,
     app_version: s.appVersion || null,
     theme: s.theme || 'light',
-  }, 'id_escritorio');
+  };
+
+  if (s.environmentMode) {
+    const withEnvOk = await executeUpsert('app_settings', {
+      ...basePayload,
+      environment_mode: s.environmentMode,
+    }, 'id_escritorio');
+    if (withEnvOk) return true;
+  }
+
+  return executeUpsert('app_settings', basePayload, 'id_escritorio');
 };

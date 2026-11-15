@@ -26,7 +26,7 @@ declare global {
 }
 
 export default function Login() {
-  const { state, login, loginWithGoogleEmail, forceLoad, isImporting, activeOfficeName, escritorioAtivoId, resetPassword, updatePassword } = useAppContext();
+  const { state, login, loginWithGoogleEmail, forceLoad, isImporting, activeOfficeName, escritorioAtivoId, resetPassword, updatePassword, isProductionMode } = useAppContext();
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
   const [error, setError] = useState('');
@@ -379,10 +379,12 @@ export default function Login() {
         
         <div className="text-center relative z-10">
           <div className="flex items-center justify-center gap-2 mb-4 flex-wrap">
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
-              <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
-              Ambiente de homologação
-            </div>
+            {!isProductionMode && (
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20">
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+                Ambiente de homologação
+              </div>
+            )}
             <div className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
               <ShieldCheck size={13} />
               Supabase Auth Híbrido

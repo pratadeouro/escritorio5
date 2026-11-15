@@ -92,6 +92,8 @@ export interface Forum {
   escritorioId?: string;
 }
 
+export type EnvironmentMode = 'homologacao' | 'producao';
+
 export interface AppSettings {
   spreadsheetId: string;
   scriptUrl: string;
@@ -120,6 +122,7 @@ export interface AppSettings {
   googleClientId?: string;
   idEscritorio?: string;
   appVersion?: string;
+  environmentMode?: EnvironmentMode;
   // UI Theme state
   theme?: 'light' | 'dark' | 'system';
   siteName?: string;

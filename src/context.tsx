@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, ReactNode, useEffect, useRef, useCallback, useMemo } from 'react';
-import { AppState, Contato, Processo, Evento, Movimento, Transacao, Documento, Vara, Julgador, Escritorio, Usuario, Tarefa, Tribunal, View, RolePermission, Modelo, Etiqueta, TipoEnvolvimento, Envolvido, Calendario, UPJ, Recurso, Servidor, Forum, Lead, LeadStatus, DEFAULT_LEAD_STATUSES, LogRegistro } from './types';
+import { AppState, Contato, Processo, Evento, Movimento, Transacao, Documento, Vara, Julgador, Escritorio, Usuario, Tarefa, Tribunal, View, RolePermission, Modelo, Etiqueta, TipoEnvolvimento, Envolvido, Calendario, UPJ, Recurso, Servidor, Forum, Lead, LeadStatus, DEFAULT_LEAD_STATUSES, LogRegistro, EnvironmentMode } from './types';
 import { importFromGoogleSheets, generateId } from './services/googleSheets';
 import { saveAllDataToScript, saveLogToScript, upsertItemToScript, deleteItemFromScript, saveTableToScript } from './services/googleAppsScript';
 import { 
@@ -212,7 +212,23 @@ interface AppContextType {
   dataSource: 'supabase' | 'sheets';
   setDataSource: (source: 'supabase' | 'sheets') => void;
   refreshAuthUsers: () => Promise<void>;
+  environmentMode: EnvironmentMode;
+  environmentSource: 'env' | 'supabase' | 'default';
+  isProductionMode: boolean;
+  isHomologationMode: boolean;
+  saveEnvironmentMode: (mode: EnvironmentMode) => Promise<{ success: boolean; supabaseSynced?: boolean; error?: string }>;
 }
+
+const normalizeEnvironmentMode = (val: any): EnvironmentMode | null => {
+  const clean = String(val || '').trim().toLowerCase();
+  if (clean === 'producao' || clean === 'produção' || clean === 'production' || clean === 'prod') {
+    return 'producao';
+  }
+  if (clean === 'homologacao' || clean === 'homologação' || clean === 'homolog' || clean === 'staging' || clean === 'dev') {
+    return 'homologacao';
+  }
+  return null;
+};
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
@@ -269,6 +285,59 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [authenticatedUserEmail, setAuthenticatedUserEmail] = useState<string | null>(() => {
     return localStorage.getItem('advocacia_user_email');
   });
+
+  const [environmentMode, setEnvironmentModeState] = useState<EnvironmentMode>(() => {
+    const cached = typeof localStorage !== 'undefined' ? normalizeEnvironmentMode(localStorage.getItem('advocacia_environment_mode')) : null;
+    if (cached) return cached;
+    const viteEnv = normalizeEnvironmentMode((import.meta as any).env?.VITE_APP_ENVIRONMENT);
+    if (viteEnv) return viteEnv;
+    return normalizeEnvironmentMode(state.settings.environmentMode) || 'homologacao';
+  });
+  const [environmentSource, setEnvironmentSource] = useState<'env' | 'supabase' | 'default'>('default');
+  const environmentSourceRef = useRef<'env' | 'supabase' | 'default'>('default');
+  useEffect(() => {
+    environmentSourceRef.current = environmentSource;
+  }, [environmentSource]);
+
+  // Hidratação híbrida de configurações públicas (.env do servidor + fallback Supabase) antes mesmo do login
+  useEffect(() => {
+    let isMounted = true;
+    const loadPublicSettings = async () => {
+      try {
+        const res = await fetch('/api/public/settings');
+        if (!res.ok) return;
+        const text = await res.text();
+        if (!text || !text.startsWith('{')) return;
+        const data = JSON.parse(text);
+        if (!isMounted || !data?.success) return;
+
+        const resolvedMode = normalizeEnvironmentMode(data.environmentMode);
+        const source = (data.environmentSource === 'env' || data.environmentSource === 'supabase')
+          ? data.environmentSource
+          : 'default';
+
+        if (resolvedMode) {
+          setEnvironmentModeState(resolvedMode);
+          setEnvironmentSource(source);
+          try {
+            localStorage.setItem('advocacia_environment_mode', resolvedMode);
+          } catch {}
+          setState(s => ({
+            ...s,
+            settings: {
+              ...s.settings,
+              environmentMode: resolvedMode,
+              ...(data.googleClientId && !s.settings.googleClientId ? { googleClientId: data.googleClientId } : {})
+            }
+          }));
+        }
+      } catch {
+        // Fallback garantido por localStorage / VITE_APP_ENVIRONMENT
+      }
+    };
+    loadPublicSettings();
+    return () => { isMounted = false; };
+  }, []);
 
   // Limpeza de URLs antigas ou chaves residuais de outros ambientes
   useEffect(() => {
@@ -2125,6 +2194,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (importedData.processos) {
         initialProcessCountRef.current = importedData.processos.length;
       }
+
+      // Sincroniza modo do ambiente a partir do app_settings do Supabase apenas se o .env do servidor não estiver fixando outro modo
+      if (environmentSourceRef.current !== 'env') {
+        const loadedEnv = normalizeEnvironmentMode(
+          importedData.settings?.environmentMode ||
+          (importedData.allSettings || []).find((as: any) => normalizeEnvironmentMode(as?.environmentMode))?.environmentMode
+        );
+        if (loadedEnv) {
+          setEnvironmentModeState(loadedEnv);
+          setEnvironmentSource('supabase');
+          try {
+            localStorage.setItem('advocacia_environment_mode', loadedEnv);
+          } catch {}
+        }
+      }
       
       // Se carregamos apenas core mas estamos logados, dispara o full load
       if (!shouldLoadFull && !!authenticatedUserEmail && !isFullLoad) {
@@ -3358,6 +3442,50 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return newState;
     });
   }, [escritorioAtivoId, currentUser, saveAndLog]);
+
+  const saveEnvironmentMode = useCallback(async (mode: EnvironmentMode): Promise<{ success: boolean; supabaseSynced?: boolean; error?: string }> => {
+    const cleanMode: EnvironmentMode = mode === 'producao' ? 'producao' : 'homologacao';
+    setEnvironmentModeState(cleanMode);
+    setEnvironmentSource('env');
+    try {
+      localStorage.setItem('advocacia_environment_mode', cleanMode);
+    } catch {}
+
+    setState(s => ({
+      ...s,
+      settings: {
+        ...s.settings,
+        environmentMode: cleanMode
+      }
+    }));
+
+    let supabaseSynced = false;
+    try {
+      const resp = await fetch('/api/admin/save-environment-mode', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ environmentMode: cleanMode })
+      });
+      if (resp.ok) {
+        const json = await resp.json().catch(() => ({}));
+        supabaseSynced = !!json?.supabaseSynced;
+      }
+    } catch (err: any) {
+      console.warn('[Ambiente] Falha ao gravar no .env via backend:', err);
+    }
+
+    try {
+      if (getActiveDataSource() === 'supabase' && isSupabaseConfigured()) {
+        const dbOk = await upsertSettingsSupabase({
+          ...stateRef.current.settings,
+          environmentMode: cleanMode
+        });
+        if (dbOk) supabaseSynced = true;
+      }
+    } catch {}
+
+    return { success: true, supabaseSynced };
+  }, []);
   const setSelectedProcessId = useCallback((id: string | undefined) => setState(s => ({ ...s, selectedProcessId: id })), []);
   
   const forceLoad = useCallback(async () => {
@@ -3654,6 +3782,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     dataSource,
     setDataSource,
     refreshAuthUsers,
+    environmentMode,
+    environmentSource,
+    isProductionMode: environmentMode === 'producao',
+    isHomologationMode: environmentMode === 'homologacao',
+    saveEnvironmentMode,
     lastSyncTime: state.lastSyncTime,
     syncLogs: state.syncLogs,
   }), [
@@ -3747,6 +3880,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     dataSource,
     setDataSource,
     refreshAuthUsers,
+    environmentMode,
+    environmentSource,
+    saveEnvironmentMode,
     resetPassword,
     updatePassword,
   ]);

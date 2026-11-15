@@ -32,13 +32,20 @@ export default function Usuarios() {
     isAdmin, 
     updateSettings,
     dataSource,
-    refreshAuthUsers
+    refreshAuthUsers,
+    isProductionMode
   } = useAppContext();
 
   const isUserAdmin = isAdmin() || (currentUser?.email || '').trim().toLowerCase() === 'pratadeouro@gmail.com';
   const canWrite = hasPermission('usuarios', 'write') || isUserAdmin;
   const canDelete = hasPermission('usuarios', 'delete') || isUserAdmin;
   const [activeTab, setActiveTab] = useState<'usuarios' | 'permissions' | 'import_auth'>('usuarios');
+
+  useEffect(() => {
+    if (isProductionMode && activeTab === 'import_auth') {
+      setActiveTab('usuarios');
+    }
+  }, [isProductionMode, activeTab]);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'Ativo' | 'Inativo'>('all');
   const [togglingUserId, setTogglingUserId] = useState<string | null>(null);
@@ -740,7 +747,7 @@ export default function Usuarios() {
             )}
           </button>
         )}
-        {isAdmin() && (
+        {isAdmin() && !isProductionMode && (
           <button
             onClick={() => setActiveTab('import_auth')}
             className={`flex items-center gap-2 px-6 py-3 text-sm font-medium transition-colors relative ${
@@ -1224,7 +1231,7 @@ export default function Usuarios() {
         </div>
       )}
 
-      {activeTab === 'import_auth' && (
+      {activeTab === 'import_auth' && isAdmin() && !isProductionMode && (
         <SupabaseAuthImportModule />
       )}
 

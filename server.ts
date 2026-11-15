@@ -569,23 +569,61 @@ async function startServer() {
     }
   });
 
-  // API pública para carregar configurações essenciais (Google Client ID e Identidade) mesmo antes do login
+  const normalizeEnvironmentMode = (val: any): 'homologacao' | 'producao' | null => {
+    const clean = String(val || '').trim().toLowerCase();
+    if (clean === 'producao' || clean === 'produção' || clean === 'production' || clean === 'prod') {
+      return 'producao';
+    }
+    if (clean === 'homologacao' || clean === 'homologação' || clean === 'homolog' || clean === 'staging' || clean === 'dev') {
+      return 'homologacao';
+    }
+    return null;
+  };
+
+  // API pública para carregar configurações essenciais (Google Client ID, Ambiente e Identidade) mesmo antes do login
   app.get("/api/public/settings", async (_req, res) => {
     try {
       let googleClientId = process.env.VITE_GOOGLE_CLIENT_ID || process.env.GOOGLE_CLIENT_ID || '';
       const siteName = process.env.VITE_SITE_NAME || 'Meu Escritório Jurídico';
       const siteSubtitle = process.env.VITE_SITE_SUBTITLE || 'Sistema de Gestão Jurídica e Processual';
-      
-      // Fallback: se não estiver no .env, consulta a tabela app_settings no Supabase
-      if (!googleClientId) {
+
+      const envMode = normalizeEnvironmentMode(process.env.APP_ENVIRONMENT || process.env.VITE_APP_ENVIRONMENT);
+      let environmentMode: 'homologacao' | 'producao' = envMode || 'homologacao';
+      let environmentSource: 'env' | 'supabase' | 'default' = envMode ? 'env' : 'default';
+
+      // Fallback no Supabase app_settings para google_client_id e/ou environment_mode
+      if (!googleClientId || !envMode) {
         try {
           const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca')) ? process.env.SUPABASE_URL : 'https://qhxdujbsipgwthrgvncl.supabase.co';
           const supabaseKey = (process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi')) ? process.env.SUPABASE_SECRET_KEY : (process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL');
-          const sbRes = await fetch(`${supabaseUrl}/rest/v1/app_settings?select=google_client_id&limit=1`, {
+
+          let sbRes = await fetch(`${supabaseUrl}/rest/v1/app_settings?select=google_client_id,environment_mode&limit=5`, {
             headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
-          }).then(r => r.json()).catch(() => []);
-          if (Array.isArray(sbRes) && sbRes.length > 0 && sbRes[0]?.google_client_id) {
-            googleClientId = sbRes[0].google_client_id;
+          });
+
+          // Caso a coluna environment_mode ainda não exista na tabela app_settings, faz fallback seguro para google_client_id
+          if (!sbRes.ok) {
+            sbRes = await fetch(`${supabaseUrl}/rest/v1/app_settings?select=google_client_id&limit=5`, {
+              headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+            });
+          }
+
+          const rows = sbRes.ok ? await sbRes.json().catch(() => []) : [];
+          if (Array.isArray(rows) && rows.length > 0) {
+            if (!googleClientId) {
+              const withGoogle = rows.find((r: any) => r?.google_client_id);
+              if (withGoogle?.google_client_id) {
+                googleClientId = withGoogle.google_client_id;
+              }
+            }
+            if (!envMode) {
+              const withEnv = rows.find((r: any) => normalizeEnvironmentMode(r?.environment_mode));
+              const dbMode = normalizeEnvironmentMode(withEnv?.environment_mode);
+              if (dbMode) {
+                environmentMode = dbMode;
+                environmentSource = 'supabase';
+              }
+            }
           }
         } catch (sbErr) {
           console.warn("[Public Settings] Erro ao consultar Supabase app_settings:", sbErr);
@@ -597,8 +635,75 @@ async function startServer() {
         googleClientId,
         siteName,
         siteSubtitle,
+        environmentMode,
+        environmentSource,
       });
     } catch (err: any) {
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // API para o administrador salvar o Modo do Ambiente (homologacao | producao) no .env e sincronizar no Supabase
+  app.post("/api/admin/save-environment-mode", async (req, res) => {
+    try {
+      const cleanMode = normalizeEnvironmentMode(req.body?.environmentMode);
+      if (!cleanMode) {
+        return res.status(400).json({ success: false, error: "Modo inválido. Utilize 'homologacao' ou 'producao'." });
+      }
+
+      // Atualiza variáveis em tempo de execução
+      process.env.APP_ENVIRONMENT = cleanMode;
+      process.env.VITE_APP_ENVIRONMENT = cleanMode;
+
+      // 1. Atualiza arquivo .env do servidor atual
+      const envPath = path.resolve(__dirname, ".env");
+      let envContent = "";
+      if (fs.existsSync(envPath)) {
+        envContent = fs.readFileSync(envPath, "utf-8");
+      }
+
+      if (/^APP_ENVIRONMENT=.*$/m.test(envContent)) {
+        envContent = envContent.replace(/^APP_ENVIRONMENT=.*$/m, `APP_ENVIRONMENT=${cleanMode}`);
+      } else {
+        envContent += `${envContent.endsWith('\n') || !envContent ? '' : '\n'}APP_ENVIRONMENT=${cleanMode}\n`;
+      }
+
+      if (/^VITE_APP_ENVIRONMENT=.*$/m.test(envContent)) {
+        envContent = envContent.replace(/^VITE_APP_ENVIRONMENT=.*$/m, `VITE_APP_ENVIRONMENT=${cleanMode}`);
+      } else {
+        envContent += `VITE_APP_ENVIRONMENT=${cleanMode}\n`;
+      }
+
+      fs.writeFileSync(envPath, envContent, "utf-8");
+      console.log(`[Configuração Global] APP_ENVIRONMENT=${cleanMode} gravado no .env com sucesso.`);
+
+      // 2. Sincroniza na tabela app_settings do Supabase (se a coluna existir)
+      let supabaseSynced = false;
+      try {
+        const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca')) ? process.env.SUPABASE_URL : 'https://qhxdujbsipgwthrgvncl.supabase.co';
+        const supabaseKey = (process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi')) ? process.env.SUPABASE_SECRET_KEY : (process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL');
+        const sbResp = await fetch(`${supabaseUrl}/rest/v1/app_settings`, {
+          method: "POST",
+          headers: {
+            apikey: supabaseKey,
+            Authorization: `Bearer ${supabaseKey}`,
+            "Content-Type": "application/json",
+            "Prefer": "resolution=merge-duplicates"
+          },
+          body: JSON.stringify({ id: "global", id_escritorio: "GLOBAL", environment_mode: cleanMode })
+        });
+        supabaseSynced = sbResp.ok;
+        if (!sbResp.ok) {
+          const errText = await sbResp.text().catch(() => '');
+          console.warn("[Configuração Global] Aviso ao gravar environment_mode no Supabase:", errText);
+        }
+      } catch (sbSyncErr) {
+        console.warn("[Configuração Global] Aviso ao sincronizar environment_mode com Supabase:", sbSyncErr);
+      }
+
+      res.json({ success: true, environmentMode: cleanMode, environmentSource: 'env', supabaseSynced });
+    } catch (err: any) {
+      console.error("[Configuração Global] Erro ao gravar APP_ENVIRONMENT no .env:", err);
       res.status(500).json({ success: false, error: err.message });
     }
   });
