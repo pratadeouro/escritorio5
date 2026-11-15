@@ -74,7 +74,6 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import Modal from '../components/Modal';
 import ImportTab from '../components/ImportTab';
-import { SupabaseMigrationTab } from '../components/SupabaseMigrationTab';
 import { View, RolePermission, AppSettings } from '../types';
 import { checkSheetHeaders, fixSheetHeaders, sendTestEmail, sendTestEmailExternal } from '../services/googleAppsScript';
 import { 
@@ -249,10 +248,10 @@ export default function Settings() {
   };
 
   const [isSaved, setIsSaved] = useState(false);
-  const [activeTab, setActiveTab] = useState<'theme' | 'office' | 'email' | 'regional' | 'import' | 'supabase'>('theme');
+  const [activeTab, setActiveTab] = useState<'theme' | 'office' | 'email' | 'regional' | 'import'>('theme');
 
   useEffect(() => {
-    if (isProductionMode && (activeTab === 'import' || activeTab === 'supabase')) {
+    if (isProductionMode && activeTab === 'import') {
       setActiveTab('theme');
     }
   }, [isProductionMode, activeTab]);
@@ -981,7 +980,6 @@ export default function Settings() {
     { id: 'regional', label: 'Regional', icon: <Globe size={18} /> },
     ...(!isProductionMode ? [
       { id: 'import', label: 'Importar Processos', icon: <Upload size={18} /> },
-      { id: 'supabase', label: 'Migração Supabase', icon: <Database size={18} /> },
     ] : []),
   ];
 
@@ -1849,13 +1847,9 @@ export default function Settings() {
           <ImportTab />
         )}
 
-        {!isProductionMode && activeTab === 'supabase' && (
-          <SupabaseMigrationTab />
-        )}
-
         {/* Bloqueio de interface removido para centralizar no Perfil/Preferências */}
 
-        {activeTab !== 'import' && activeTab !== 'supabase' && (
+        {activeTab !== 'import' && (
           <div className="flex items-center justify-end space-x-4">
             {isSaved && (
               <span className="text-emerald-600 dark:text-emerald-400 text-sm font-medium flex items-center">

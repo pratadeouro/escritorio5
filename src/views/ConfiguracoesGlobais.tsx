@@ -29,6 +29,7 @@ import {
 import { isSupabaseConfigured, OFFICIAL_SUPABASE_URL } from '../services/supabaseService';
 import { CURRENT_APP_VERSION } from '../services/versionService';
 import { EnvironmentMode } from '../types';
+import { SupabaseMigrationTab } from '../components/SupabaseMigrationTab';
 
 const PRIMARY_COLORS = [
   { name: 'Índigo Moderno', hex: '#4f46e5' },
@@ -52,6 +53,7 @@ export default function ConfiguracoesGlobais() {
     activeOfficeName,
     environmentMode,
     environmentSource,
+    isProductionMode,
     saveEnvironmentMode
   } = useAppContext();
 
@@ -70,7 +72,13 @@ export default function ConfiguracoesGlobais() {
     );
   }
 
-  const [activeTab, setActiveTab] = useState<'google' | 'identity' | 'theme' | 'operations' | 'database' | 'email'>('google');
+  const [activeTab, setActiveTab] = useState<'google' | 'identity' | 'theme' | 'operations' | 'database' | 'email' | 'migration'>('google');
+
+  useEffect(() => {
+    if (isProductionMode && activeTab === 'migration') {
+      setActiveTab('google');
+    }
+  }, [isProductionMode, activeTab]);
   
   // Estados do formulário global
   const [googleClientId, setGoogleClientId] = useState(() => {
@@ -460,6 +468,20 @@ export default function ConfiguracoesGlobais() {
           <Mail size={15} />
           E-mails & Disparos
         </button>
+
+        {!isProductionMode && (
+          <button
+            onClick={() => setActiveTab('migration')}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs transition-all whitespace-nowrap ${
+              activeTab === 'migration'
+                ? 'bg-amber-600 text-white shadow-md'
+                : 'text-amber-600 dark:text-amber-400 hover:bg-amber-500/10'
+            }`}
+          >
+            <Database size={15} />
+            Migração Supabase
+          </button>
+        )}
       </div>
 
       {/* Conteúdo da Aba 1: Google OAuth & Login */}
@@ -1131,17 +1153,23 @@ export default function ConfiguracoesGlobais() {
         </div>
       )}
 
+      {!isProductionMode && activeTab === 'migration' && (
+        <SupabaseMigrationTab />
+      )}
+
       {/* Botão de Rodapé Flutuante para Salvar */}
-      <div className="flex justify-end pt-4">
-        <button
-          onClick={handleSaveAll}
-          disabled={isSaving}
-          className="flex items-center gap-2 px-8 py-3.5 bg-primary hover:bg-primary/90 text-white font-bold text-sm rounded-2xl shadow-xl shadow-primary/25 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50"
-        >
-          {isSaving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
-          {isSaving ? 'Salvando Alterações Globais...' : 'Salvar Todas as Configurações Globais'}
-        </button>
-      </div>
+      {activeTab !== 'migration' && (
+        <div className="flex justify-end pt-4">
+          <button
+            onClick={handleSaveAll}
+            disabled={isSaving}
+            className="flex items-center gap-2 px-8 py-3.5 bg-primary hover:bg-primary/90 text-white font-bold text-sm rounded-2xl shadow-xl shadow-primary/25 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50"
+          >
+            {isSaving ? <Loader2 size={18} className="animate-spin" /> : <Save size={18} />}
+            {isSaving ? 'Salvando Alterações Globais...' : 'Salvar Todas as Configurações Globais'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
