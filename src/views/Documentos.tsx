@@ -1,15 +1,41 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useAppContext } from '../context';
-import { 
-  FileText, Plus, Search, FileDown, Eye, Trash2, Edit2, Copy, 
-  Check, FilePlus, ChevronRight, User, FolderOpen, RefreshCw, 
-  Printer, ArrowLeftRight, FileCode, Bold, Italic, List, Heading,
-  CheckCircle2, AlertCircle, Sparkles, Download, ArrowRight, Share2,
-  Underline, Quote, Link, Table, Minus
+import {
+  FileText,
+  Plus,
+  Search,
+  Eye,
+  Trash2,
+  Edit2,
+  Copy,
+  Check,
+  FilePlus,
+  FolderOpen,
+  Printer,
+  ArrowLeftRight,
+  FileCode,
+  CheckCircle2,
+  AlertCircle,
+  Sparkles,
+  Download,
+  FileUp
 } from 'lucide-react';
 import { formatDate } from '../utils/date';
-import Markdown from 'react-markdown';
 import { Documento, Processo, Contato } from '../types';
+import WordDocumentEditor, { WordDocumentEditorHandle } from '../components/WordDocumentEditor';
+import {
+  downloadDocx,
+  htmlToPlainText,
+  importDocxToHtml,
+  isHtmlContent,
+  normalizeContentToHtml,
+  printHtmlDocument
+} from '../utils/docxUtils';
+import {
+  ConfirmDeleteModal,
+  matchesOfficeFilter,
+  normalizeSearchStr
+} from '../components/CadastrosTableHelper';
 
 const AVAILABLE_VARIABLES = [
   {
@@ -26,7 +52,7 @@ const AVAILABLE_VARIABLES = [
       { name: '%PASTA_PROCESSO%', desc: 'Pasta/Arquivo de referência' },
       { name: '%PARTE_CONTRARIA%', desc: 'Parte contrária' },
       { name: '%LINK_PROCESSO%', desc: 'Link de consulta externa' },
-      { name: '%VARA_NOME%', desc: 'Nome da Vara vinculada' },
+      { name: '%VARA_NOME%', desc: 'Nome da Vara vinculada' }
     ]
   },
   {
@@ -41,7 +67,7 @@ const AVAILABLE_VARIABLES = [
       { name: '%CLIENTE_ENDERECO%', desc: 'Endereço completo' },
       { name: '%CLIENTE_CEP%', desc: 'Código Postal (CEP)' },
       { name: '%CLIENTE_TELEFONE%', desc: 'Telefone de contato' },
-      { name: '%CLIENTE_EMAIL%', desc: 'E-mail principal' },
+      { name: '%CLIENTE_EMAIL%', desc: 'E-mail principal' }
     ]
   },
   {
@@ -53,17 +79,26 @@ const AVAILABLE_VARIABLES = [
       { name: '%ESCRITORIO_EMAIL%', desc: 'E-mail corporativo' },
       { name: '%ESCRITORIO_TELEFONE%', desc: 'Telefone comercial' },
       { name: '%ESCRITORIO_RESPONSAVEL%', desc: 'Advogado responsável' },
-      { name: '%ESCRITORIO_OAB%', desc: 'Inscrição OAB do responsável' },
+      { name: '%ESCRITORIO_OAB%', desc: 'Inscrição OAB do responsável' }
     ]
   },
   {
     category: 'Gerais',
     items: [
-      { name: '%DATA_ATUAL%', desc: 'Data de hoje por extenso ou formatada' },
-      { name: '%HORA_ATUAL%', desc: 'Hora atual formatada' },
+      { name: '%DATA_ATUAL%', desc: 'Data de hoje formatada' },
+      { name: '%HORA_ATUAL%', desc: 'Hora atual formatada' }
     ]
   }
 ];
+
+function safeVal(rawVal: string | undefined | null, escapeForHtml: boolean): string {
+  const str = String(rawVal ?? '');
+  if (!escapeForHtml) return str;
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
 
 export function replaceVariables(
   templateText: string,
@@ -71,24 +106,31 @@ export function replaceVariables(
 ) {
   if (!templateText) return '';
   let text = templateText;
+  const escapeHtmlVal = isHtmlContent(templateText);
 
   // Processo variables
   if (options.processo) {
     const p = options.processo;
-    text = text.replace(/%NUMERO_PROCESSO%/g, p.numero || '');
-    text = text.replace(/%TITULO_PROCESSO%/g, p.titulo || '');
-    text = text.replace(/%STATUS_PROCESSO%/g, p.status || '');
-    text = text.replace(/%DATA_DISTRIBUICAO%/g, p.dataDistribuicao || '');
-    text = text.replace(/%TIPO_PROCESSO%/g, p.tipo || '');
-    text = text.replace(/%CLASSE_PROCESSO%/g, p.classe || '');
-    text = text.replace(/%ASSUNTO_PROCESSO%/g, p.assunto || '');
-    text = text.replace(/%VALOR_CAUSA%/g, p.valorCausa ? `R$ ${Number(p.valorCausa).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : 'R$ 0,00');
-    text = text.replace(/%PASTA_PROCESSO%/g, p.pasta || '');
-    text = text.replace(/%PARTE_CONTRARIA%/g, p.parteContraria || '');
-    text = text.replace(/%LINK_PROCESSO%/g, p.link || '');
+    text = text.replace(/%NUMERO_PROCESSO%/g, safeVal(p.numero, escapeHtmlVal));
+    text = text.replace(/%TITULO_PROCESSO%/g, safeVal(p.titulo, escapeHtmlVal));
+    text = text.replace(/%STATUS_PROCESSO%/g, safeVal(p.status, escapeHtmlVal));
+    text = text.replace(/%DATA_DISTRIBUICAO%/g, safeVal(p.dataDistribuicao, escapeHtmlVal));
+    text = text.replace(/%TIPO_PROCESSO%/g, safeVal(p.tipo, escapeHtmlVal));
+    text = text.replace(/%CLASSE_PROCESSO%/g, safeVal(p.classe, escapeHtmlVal));
+    text = text.replace(/%ASSUNTO_PROCESSO%/g, safeVal(p.assunto, escapeHtmlVal));
+    const formattedValor = p.valorCausa
+      ? `R$ ${Number(p.valorCausa).toLocaleString('pt-BR', {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2
+        })}`
+      : 'R$ 0,00';
+    text = text.replace(/%VALOR_CAUSA%/g, safeVal(formattedValor, escapeHtmlVal));
+    text = text.replace(/%PASTA_PROCESSO%/g, safeVal(p.pasta, escapeHtmlVal));
+    text = text.replace(/%PARTE_CONTRARIA%/g, safeVal(p.parteContraria, escapeHtmlVal));
+    text = text.replace(/%LINK_PROCESSO%/g, safeVal(p.link, escapeHtmlVal));
     if (options.varas && p.varaId) {
       const v = options.varas.find(vara => vara.id === p.varaId);
-      text = text.replace(/%VARA_NOME%/g, v ? v.nome : '');
+      text = text.replace(/%VARA_NOME%/g, safeVal(v ? v.nome : '', escapeHtmlVal));
     } else {
       text = text.replace(/%VARA_NOME%/g, '');
     }
@@ -110,16 +152,16 @@ export function replaceVariables(
   // Cliente/Contato variables
   if (options.cliente) {
     const c = options.cliente;
-    text = text.replace(/%CLIENTE_NOME%/g, c.nome || '');
-    text = text.replace(/%CLIENTE_APELIDO%/g, c.apelido || '');
-    text = text.replace(/%CLIENTE_STATUS_CIVIL%/g, c.statusCivil || '');
-    text = text.replace(/%CLIENTE_PROFISSAO%/g, c.profissao || '');
-    text = text.replace(/%CLIENTE_RG%/g, c.rg || '');
-    text = text.replace(/%CLIENTE_CPF_CNPJ%/g, c.cpfCnpj || '');
-    text = text.replace(/%CLIENTE_ENDERECO%/g, c.endereco || '');
-    text = text.replace(/%CLIENTE_CEP%/g, c.cep || '');
-    text = text.replace(/%CLIENTE_TELEFONE%/g, c.telefone || '');
-    text = text.replace(/%CLIENTE_EMAIL%/g, c.email || '');
+    text = text.replace(/%CLIENTE_NOME%/g, safeVal(c.nome, escapeHtmlVal));
+    text = text.replace(/%CLIENTE_APELIDO%/g, safeVal(c.apelido, escapeHtmlVal));
+    text = text.replace(/%CLIENTE_STATUS_CIVIL%/g, safeVal(c.statusCivil, escapeHtmlVal));
+    text = text.replace(/%CLIENTE_PROFISSAO%/g, safeVal(c.profissao, escapeHtmlVal));
+    text = text.replace(/%CLIENTE_RG%/g, safeVal(c.rg, escapeHtmlVal));
+    text = text.replace(/%CLIENTE_CPF_CNPJ%/g, safeVal(c.cpfCnpj, escapeHtmlVal));
+    text = text.replace(/%CLIENTE_ENDERECO%/g, safeVal(c.endereco, escapeHtmlVal));
+    text = text.replace(/%CLIENTE_CEP%/g, safeVal(c.cep, escapeHtmlVal));
+    text = text.replace(/%CLIENTE_TELEFONE%/g, safeVal(c.telefone, escapeHtmlVal));
+    text = text.replace(/%CLIENTE_EMAIL%/g, safeVal(c.email, escapeHtmlVal));
   } else {
     text = text.replace(/%CLIENTE_NOME%/g, '');
     text = text.replace(/%CLIENTE_APELIDO%/g, '');
@@ -136,13 +178,13 @@ export function replaceVariables(
   // Office variables
   if (options.office) {
     const o = options.office;
-    text = text.replace(/%ESCRITORIO_NOME%/g, o.nome || '');
-    text = text.replace(/%ESCRITORIO_CNPJ%/g, o.cnpj || '');
-    text = text.replace(/%ESCRITORIO_ENDERECO%/g, o.endereco || '');
-    text = text.replace(/%ESCRITORIO_EMAIL%/g, o.email || '');
-    text = text.replace(/%ESCRITORIO_TELEFONE%/g, o.telefone || '');
-    text = text.replace(/%ESCRITORIO_RESPONSAVEL%/g, o.responsavel || '');
-    text = text.replace(/%ESCRITORIO_OAB%/g, o.oab || '');
+    text = text.replace(/%ESCRITORIO_NOME%/g, safeVal(o.nome, escapeHtmlVal));
+    text = text.replace(/%ESCRITORIO_CNPJ%/g, safeVal(o.cnpj, escapeHtmlVal));
+    text = text.replace(/%ESCRITORIO_ENDERECO%/g, safeVal(o.endereco, escapeHtmlVal));
+    text = text.replace(/%ESCRITORIO_EMAIL%/g, safeVal(o.email, escapeHtmlVal));
+    text = text.replace(/%ESCRITORIO_TELEFONE%/g, safeVal(o.telefone, escapeHtmlVal));
+    text = text.replace(/%ESCRITORIO_RESPONSAVEL%/g, safeVal(o.responsavel, escapeHtmlVal));
+    text = text.replace(/%ESCRITORIO_OAB%/g, safeVal(o.oab, escapeHtmlVal));
   } else {
     text = text.replace(/%ESCRITORIO_NOME%/g, '');
     text = text.replace(/%ESCRITORIO_CNPJ%/g, '');
@@ -155,36 +197,43 @@ export function replaceVariables(
 
   // General variables
   text = text.replace(/%DATA_ATUAL%/g, new Date().toLocaleDateString('pt-BR'));
-  text = text.replace(/%HORA_ATUAL%/g, new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }));
+  text = text.replace(
+    /%HORA_ATUAL%/g,
+    new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+  );
 
   return text;
 }
 
 export default function Documentos() {
-  const { 
-    state, 
-    escritorioAtivoId, 
-    isAdmin, 
-    currentUser, 
+  const {
+    state,
+    escritorioAtivoId,
+    isAdmin,
+    currentUser,
     hasPermission,
     addDocumento,
     updateDocumento,
-    deleteDocumento 
+    deleteDocumento
   } = useAppContext();
 
   const canWrite = hasPermission('documentos', 'write');
   const canDelete = hasPermission('documentos', 'delete');
 
-  const [activeTab, setActiveTab] = useState<'salvos' | 'editor' | 'gerar-processo' | 'gerar-contrato'>('salvos');
-  
+  const [activeTab, setActiveTab] = useState<
+    'salvos' | 'editor' | 'gerar-processo' | 'gerar-contrato'
+  >('salvos');
+
   // Search state for list tab
   const [searchTerm, setSearchTerm] = useState('');
 
   // Editor states
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editorDocKey, setEditorDocKey] = useState<string>('new-0');
   const [editorTitle, setEditorTitle] = useState('');
   const [editorType, setEditorType] = useState<Documento['tipo']>('Outro');
   const [editorContent, setEditorContent] = useState('');
+  const [variableSearch, setVariableSearch] = useState('');
   const [copiedVariable, setCopiedVariable] = useState<string | null>(null);
   const [showEditorPreview, setShowEditorPreview] = useState(false);
 
@@ -200,43 +249,82 @@ export default function Documentos() {
   const [cliSearchTerm, setCliSearchTerm] = useState('');
   const [showCliDropdown, setShowCliDropdown] = useState(false);
 
-  // Modal view state
+  // Modal & status states
   const [viewingDoc, setViewingDoc] = useState<Documento | null>(null);
+  const [deletingDoc, setDeletingDoc] = useState<Documento | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [exportingDocId, setExportingDocId] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const wordEditorRef = useRef<WordDocumentEditorHandle>(null);
+  const quickImportInputRef = useRef<HTMLInputElement>(null);
 
   // Active office details
-  const activeOffice = state.escritorios?.find(e => e.id === escritorioAtivoId) || state.escritorios?.[0] || (state.settings as any);
+  const activeOffice =
+    state.escritorios?.find(e => e.id === escritorioAtivoId) ||
+    state.escritorios?.[0] ||
+    (state.settings as any);
 
-  // Filtered lists
-  const filteredDocumentos = state.documentos.filter(d => {
-    if (escritorioAtivoId && d.escritorioId !== escritorioAtivoId) return false;
-    if (!isAdmin() && !(currentUser?.escritoriosIds || []).includes(d.escritorioId)) return false;
-    
-    return d.titulo.toLowerCase().includes(searchTerm.toLowerCase()) || 
-           d.tipo.toLowerCase().includes(searchTerm.toLowerCase());
+  const isAdminUser = isAdmin();
+
+  // Office-scoped documents (supports 'x' global templates and case-insensitive office IDs)
+  const accessibleDocumentos = state.documentos.filter(d =>
+    matchesOfficeFilter(d.escritorioId, escritorioAtivoId, isAdminUser, currentUser?.escritoriosIds)
+  );
+
+  const normalizedQuery = normalizeSearchStr(searchTerm);
+  const filteredDocumentos = accessibleDocumentos.filter(d => {
+    if (!normalizedQuery) return true;
+    return (
+      normalizeSearchStr(d.titulo).includes(normalizedQuery) ||
+      normalizeSearchStr(d.tipo).includes(normalizedQuery)
+    );
   });
 
+  const normalizedProcSearch = normalizeSearchStr(procSearchTerm);
   const filteredProcessos = state.processos.filter(p => {
-    if (escritorioAtivoId && p.escritorioId !== escritorioAtivoId) return false;
+    if (
+      !matchesOfficeFilter(p.escritorioId, escritorioAtivoId, isAdminUser, currentUser?.escritoriosIds)
+    ) {
+      return false;
+    }
     const client = state.contatos.find(c => c.id === p.clienteId);
-    return p.numero.toLowerCase().includes(procSearchTerm.toLowerCase()) ||
-           (p.titulo || '').toLowerCase().includes(procSearchTerm.toLowerCase()) ||
-           (client?.nome || '').toLowerCase().includes(procSearchTerm.toLowerCase());
+    return (
+      normalizeSearchStr(p.numero).includes(normalizedProcSearch) ||
+      normalizeSearchStr(p.titulo).includes(normalizedProcSearch) ||
+      normalizeSearchStr(client?.nome).includes(normalizedProcSearch)
+    );
   });
 
+  const normalizedCliSearch = normalizeSearchStr(cliSearchTerm);
   const filteredClientes = state.contatos.filter(c => {
-    if (escritorioAtivoId && c.escritorioId !== escritorioAtivoId) return false;
-    // We can filter by "Cliente" or any contact
-    return c.nome.toLowerCase().includes(cliSearchTerm.toLowerCase()) ||
-           c.cpfCnpj.toLowerCase().includes(cliSearchTerm.toLowerCase());
+    if (
+      !matchesOfficeFilter(c.escritorioId, escritorioAtivoId, isAdminUser, currentUser?.escritoriosIds)
+    ) {
+      return false;
+    }
+    return (
+      normalizeSearchStr(c.nome).includes(normalizedCliSearch) ||
+      normalizeSearchStr(c.cpfCnpj).includes(normalizedCliSearch)
+    );
   });
+
+  const normalizedVarSearch = normalizeSearchStr(variableSearch);
+  const filteredVariableGroups = AVAILABLE_VARIABLES.map(group => ({
+    ...group,
+    items: group.items.filter(
+      item =>
+        !normalizedVarSearch ||
+        normalizeSearchStr(item.name).includes(normalizedVarSearch) ||
+        normalizeSearchStr(item.desc).includes(normalizedVarSearch)
+    )
+  })).filter(group => group.items.length > 0);
 
   const selectedProcessObj = state.processos.find(p => p.id === genProcProcessoId);
-  const selectedClientForProc = selectedProcessObj ? state.contatos.find(c => c.id === selectedProcessObj.clienteId) : undefined;
+  const selectedClientForProc = selectedProcessObj
+    ? state.contatos.find(c => c.id === selectedProcessObj.clienteId)
+    : undefined;
   const selectedTemplateObjForProc = state.documentos.find(d => d.id === genProcTemplateId);
 
   const selectedClientObj = state.contatos.find(c => c.id === genCliClienteId);
@@ -257,24 +345,30 @@ export default function Documentos() {
     }
   }, [errorMessage]);
 
-  const insertVariable = (variableName: string) => {
-    if (!textareaRef.current) {
-      setEditorContent(prev => prev + ' ' + variableName + ' ');
-      return;
+  const notify = (type: 'success' | 'error', message: string) => {
+    if (type === 'success') {
+      setErrorMessage(null);
+      setSuccessMessage(message);
+    } else {
+      setSuccessMessage(null);
+      setErrorMessage(message);
     }
-    const start = textareaRef.current.selectionStart;
-    const end = textareaRef.current.selectionEnd;
-    const text = editorContent;
-    const before = text.substring(0, start);
-    const after = text.substring(end, text.length);
-    setEditorContent(before + variableName + after);
-    
-    setTimeout(() => {
-      if (textareaRef.current) {
-        textareaRef.current.focus();
-        textareaRef.current.setSelectionRange(start + variableName.length, start + variableName.length);
-      }
-    }, 0);
+  };
+
+  const resetEditor = () => {
+    setEditingId(null);
+    setEditorTitle('');
+    setEditorContent('');
+    setEditorType('Outro');
+    setEditorDocKey(`new-${Date.now()}`);
+  };
+
+  const insertVariable = (variableName: string) => {
+    if (wordEditorRef.current) {
+      wordEditorRef.current.insertVariable(variableName);
+    } else {
+      setEditorContent(prev => `${prev} ${variableName}`);
+    }
   };
 
   const copyVariableToClipboard = async (variableName: string) => {
@@ -282,76 +376,83 @@ export default function Documentos() {
       await navigator.clipboard.writeText(variableName);
       setCopiedVariable(variableName);
       setTimeout(() => setCopiedVariable(null), 1500);
-    } catch (err) {
-      console.error('Falha ao copiar:', err);
+    } catch {
+      notify('error', 'Não foi possível copiar a variável para a área de transferência.');
     }
   };
 
-  const insertFormat = (formatType: 'bold' | 'italic' | 'underline' | 'list' | 'heading' | 'quote' | 'link' | 'table' | 'divider') => {
-    if (!textareaRef.current) return;
-    const start = textareaRef.current.selectionStart;
-    const end = textareaRef.current.selectionEnd;
-    const text = editorContent;
-    const selectedText = text.substring(start, end);
-    let replacement = '';
+  const copyDocumentPlainText = async (content: string) => {
+    try {
+      await navigator.clipboard.writeText(htmlToPlainText(content));
+      notify('success', 'Texto copiado para a área de transferência.');
+    } catch {
+      notify('error', 'Não foi possível copiar o conteúdo.');
+    }
+  };
 
-    switch (formatType) {
-      case 'bold':
-        replacement = `**${selectedText || 'texto em negrito'}**`;
-        break;
-      case 'italic':
-        replacement = `*${selectedText || 'texto em itálico'}*`;
-        break;
-      case 'underline':
-        replacement = `<u>${selectedText || 'texto sublinhado'}</u>`;
-        break;
-      case 'list':
-        replacement = `\n- ${selectedText || 'item da lista'}`;
-        break;
-      case 'heading':
-        replacement = `\n# ${selectedText || 'Título Principal'}\n`;
-        break;
-      case 'quote':
-        replacement = `\n> ${selectedText || 'Citação / Parágrafo Recuado'}\n`;
-        break;
-      case 'link':
-        replacement = `[${selectedText || 'texto do link'}](https://exemplo.com)`;
-        break;
-      case 'table':
-        replacement = `\n| Cabeçalho 1 | Cabeçalho 2 |\n| ----------- | ----------- |\n| Dado 1      | Dado 2      |\n`;
-        break;
-      case 'divider':
-        replacement = `\n---\n`;
-        break;
+  const handleQuickImportDocx = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    if (!file.name.toLowerCase().endsWith('.docx')) {
+      notify('error', 'Selecione um arquivo Microsoft Word no formato .docx.');
+      return;
     }
 
-    const before = text.substring(0, start);
-    const after = text.substring(end, text.length);
-    setEditorContent(before + replacement + after);
+    try {
+      const { html } = await importDocxToHtml(file);
+      const baseName = file.name.replace(/\.docx$/i, '').replace(/[_-]+/g, ' ').trim();
+      setEditingId(null);
+      setEditorTitle(baseName || 'Documento Importado');
+      setEditorType(
+        /contrato/i.test(baseName)
+          ? 'Contrato'
+          : /procura/i.test(baseName)
+          ? 'Procuração'
+          : /peti/i.test(baseName)
+          ? 'Petição'
+          : 'Outro'
+      );
+      setEditorContent(html);
+      setEditorDocKey(`import-${Date.now()}`);
+      setActiveTab('editor');
+      notify('success', `Arquivo "${file.name}" carregado no editor Word.`);
+    } catch (err: any) {
+      notify('error', `Falha ao importar o arquivo .docx: ${err?.message || 'arquivo inválido'}.`);
+    }
+  };
 
-    setTimeout(() => {
-      if (textareaRef.current) {
-        textareaRef.current.focus();
-        textareaRef.current.setSelectionRange(start + replacement.length, start + replacement.length);
-      }
-    }, 0);
+  const handleDownloadDocumentDocx = async (id: string, title: string, content: string) => {
+    setExportingDocId(id);
+    try {
+      await downloadDocx(content, title || 'Documento');
+      notify('success', `Arquivo "${title || 'Documento'}.docx" baixado com sucesso.`);
+    } catch (err: any) {
+      notify('error', `Erro ao exportar .docx: ${err?.message || 'falha inesperada'}.`);
+    } finally {
+      setExportingDocId(null);
+    }
   };
 
   const handleSaveModel = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editorTitle.trim()) {
-      setErrorMessage('O título do documento é obrigatório.');
+      notify('error', 'O título do documento é obrigatório.');
       return;
     }
 
     setIsSaving(true);
     try {
+      const latestHtml = wordEditorRef.current
+        ? wordEditorRef.current.getHtmlContent()
+        : editorContent;
       const existingDoc = editingId ? state.documentos.find(d => d.id === editingId) : null;
       const docData: Documento = {
         id: editingId || `DOC_${Math.random().toString(16).slice(2, 10).toUpperCase()}`,
-        titulo: editorTitle,
+        titulo: editorTitle.trim(),
         tipo: editorType,
-        conteudo: editorContent,
+        conteudo: latestHtml,
         dataCriacao: existingDoc?.dataCriacao || new Date().toISOString().split('T')[0],
         escritorioId: existingDoc?.escritorioId || escritorioAtivoId || 'x',
         processoId: existingDoc?.processoId || ''
@@ -359,20 +460,16 @@ export default function Documentos() {
 
       if (editingId) {
         updateDocumento(docData);
-        setSuccessMessage('Documento atualizado com sucesso!');
+        notify('success', 'Documento atualizado com sucesso!');
       } else {
         addDocumento(docData);
-        setSuccessMessage('Documento criado e salvo com sucesso!');
+        notify('success', 'Documento criado e salvo com sucesso!');
       }
-      
-      // Reset editor or switch to salvos tab after delay
-      setEditingId(null);
-      setEditorTitle('');
-      setEditorContent('');
-      setEditorType('Outro');
+
+      resetEditor();
       setActiveTab('salvos');
     } catch (err: any) {
-      setErrorMessage('Erro ao salvar documento: ' + err.message);
+      notify('error', 'Erro ao salvar documento: ' + err.message);
     } finally {
       setIsSaving(false);
     }
@@ -382,24 +479,41 @@ export default function Documentos() {
     setEditingId(doc.id);
     setEditorTitle(doc.titulo);
     setEditorType(doc.tipo);
-    setEditorContent(doc.conteudo);
+    setEditorContent(normalizeContentToHtml(doc.conteudo));
+    setEditorDocKey(`doc-${doc.id}-${Date.now()}`);
+    setViewingDoc(null);
     setActiveTab('editor');
   };
 
-  const handleDelete = (docId: string) => {
-    if (window.confirm('Tem certeza de que deseja excluir este documento?')) {
-      try {
-        deleteDocumento(docId);
-        setSuccessMessage('Documento excluído com sucesso!');
-      } catch (err: any) {
-        setErrorMessage('Erro ao excluir documento: ' + err.message);
-      }
+  const confirmDelete = () => {
+    if (!deletingDoc) return;
+    try {
+      deleteDocumento(deletingDoc.id);
+      notify('success', 'Documento excluído com sucesso.');
+    } catch (err: any) {
+      notify('error', 'Erro ao excluir documento: ' + err.message);
+    } finally {
+      setDeletingDoc(null);
     }
+  };
+
+  const openResolvedInWordEditor = (
+    title: string,
+    tipo: Documento['tipo'],
+    resolvedHtml: string
+  ) => {
+    setEditingId(null);
+    setEditorTitle(title);
+    setEditorType(tipo);
+    setEditorContent(normalizeContentToHtml(resolvedHtml));
+    setEditorDocKey(`resolved-${Date.now()}`);
+    setActiveTab('editor');
+    notify('success', 'Documento aberto no Editor Word para ajustes finais.');
   };
 
   const handleGenerateForProcess = async () => {
     if (!genProcTemplateId || !genProcProcessoId) {
-      setErrorMessage('Por favor, selecione um modelo e um processo.');
+      notify('error', 'Por favor, selecione um modelo e um processo.');
       return;
     }
 
@@ -409,7 +523,7 @@ export default function Documentos() {
 
     setIsSaving(true);
     try {
-      const resolvedContent = replaceVariables(template.conteudo, {
+      const resolvedContent = replaceVariables(normalizeContentToHtml(template.conteudo), {
         processo: process,
         cliente: selectedClientForProc,
         office: activeOffice,
@@ -423,14 +537,14 @@ export default function Documentos() {
         conteudo: resolvedContent,
         processoId: process.id,
         dataCriacao: new Date().toISOString().split('T')[0],
-        escritorioId: escritorioAtivoId || ''
+        escritorioId: escritorioAtivoId || 'x'
       };
 
       addDocumento(newDoc);
-      setSuccessMessage('Novo documento gerado e salvo com sucesso!');
+      notify('success', 'Novo documento gerado e salvo com sucesso!');
       setActiveTab('salvos');
     } catch (err: any) {
-      setErrorMessage('Erro ao gerar documento: ' + err.message);
+      notify('error', 'Erro ao gerar documento: ' + err.message);
     } finally {
       setIsSaving(false);
     }
@@ -438,7 +552,7 @@ export default function Documentos() {
 
   const handleGenerateContract = async () => {
     if (!genCliTemplateId || !genCliClienteId) {
-      setErrorMessage('Por favor, selecione um modelo e um cliente.');
+      notify('error', 'Por favor, selecione um modelo e um cliente.');
       return;
     }
 
@@ -448,7 +562,7 @@ export default function Documentos() {
 
     setIsSaving(true);
     try {
-      const resolvedContent = replaceVariables(template.conteudo, {
+      const resolvedContent = replaceVariables(normalizeContentToHtml(template.conteudo), {
         cliente: client,
         office: activeOffice,
         varas: state.varas
@@ -460,72 +574,53 @@ export default function Documentos() {
         tipo: 'Contrato',
         conteudo: resolvedContent,
         dataCriacao: new Date().toISOString().split('T')[0],
-        escritorioId: escritorioAtivoId || ''
+        escritorioId: escritorioAtivoId || 'x'
       };
 
       addDocumento(newDoc);
-      setSuccessMessage('Contrato gerado e salvo com sucesso!');
+      notify('success', 'Contrato gerado e salvo com sucesso!');
       setActiveTab('salvos');
     } catch (err: any) {
-      setErrorMessage('Erro ao gerar contrato: ' + err.message);
+      notify('error', 'Erro ao gerar contrato: ' + err.message);
     } finally {
       setIsSaving(false);
     }
   };
 
-  const printDocument = (doc: Documento) => {
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) {
-      alert('Por favor, permita popups para imprimir o documento.');
-      return;
-    }
-
-    printWindow.document.write(`
-      <html>
-        <head>
-          <title>${doc.titulo}</title>
-          <style>
-            body {
-              font-family: 'Inter', system-ui, sans-serif;
-              padding: 2.5cm;
-              line-height: 1.6;
-              color: #1a1a1a;
-              background-color: #ffffff;
-            }
-            h1, h2, h3, h4 {
-              color: #000000;
-              margin-top: 1.5em;
-              margin-bottom: 0.5em;
-            }
-            p {
-              margin-bottom: 1em;
-              text-align: justify;
-            }
-            @media print {
-              body {
-                padding: 0;
-              }
-            }
-          </style>
-        </head>
-        <body>
-          <h1>${doc.titulo}</h1>
-          <div style="white-space: pre-wrap; font-size: 11pt;">${doc.conteudo}</div>
-          <script>
-            window.onload = function() {
-              window.print();
-              setTimeout(function() { window.close(); }, 500);
-            };
-          </script>
-        </body>
-      </html>
-    `);
-    printWindow.document.close();
+  const printDocument = (doc: Pick<Documento, 'titulo' | 'conteudo'>) => {
+    printHtmlDocument(doc.titulo || 'Documento', doc.conteudo);
   };
 
+  const resolvedProcHtml =
+    selectedTemplateObjForProc && selectedProcessObj
+      ? replaceVariables(normalizeContentToHtml(selectedTemplateObjForProc.conteudo), {
+          processo: selectedProcessObj,
+          cliente: selectedClientForProc,
+          office: activeOffice,
+          varas: state.varas
+        })
+      : '';
+
+  const resolvedCliHtml =
+    selectedTemplateObjForCli && selectedClientObj
+      ? replaceVariables(normalizeContentToHtml(selectedTemplateObjForCli.conteudo), {
+          cliente: selectedClientObj,
+          office: activeOffice,
+          varas: state.varas
+        })
+      : '';
+
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-6">
-      
+    <div className="p-6 max-w-[1440px] mx-auto space-y-6">
+      {/* Hidden input for quick .docx import from header */}
+      <input
+        ref={quickImportInputRef}
+        type="file"
+        accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        className="hidden"
+        onChange={handleQuickImportDocx}
+      />
+
       {/* Header and alerts */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
@@ -534,23 +629,32 @@ export default function Documentos() {
             Gerador de Documentos
           </h1>
           <p className="text-xs text-app-text-muted mt-1">
-            Editor profissional com suporte a variáveis automáticas e preenchimento inteligente de dados.
+            Editor estilo Word em folha A4 com importação e exportação nativa de arquivos .docx e variáveis automáticas.
           </p>
         </div>
         {canWrite && activeTab === 'salvos' && (
-          <button 
-            onClick={() => {
-              setEditingId(null);
-              setEditorTitle('');
-              setEditorContent('');
-              setEditorType('Outro');
-              setActiveTab('editor');
-            }}
-            className="bg-primary hover:opacity-90 text-white px-4 py-2 rounded-lg flex items-center transition-colors shadow-sm text-sm"
-          >
-            <Plus size={18} className="mr-2" />
-            Novo Modelo / Texto
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => quickImportInputRef.current?.click()}
+              className="bg-app-surface hover:bg-app-bg text-app-text border border-app-border px-3.5 py-2 rounded-lg flex items-center gap-2 transition-colors shadow-sm text-sm font-medium"
+              title="Importar um arquivo .docx do computador para o editor"
+            >
+              <FileUp size={16} className="text-primary" />
+              Importar .docx
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                resetEditor();
+                setActiveTab('editor');
+              }}
+              className="bg-primary hover:opacity-90 text-white px-4 py-2 rounded-lg flex items-center transition-colors shadow-sm text-sm font-medium"
+            >
+              <Plus size={18} className="mr-2" />
+              Novo Modelo / Texto
+            </button>
+          </div>
         )}
       </div>
 
@@ -569,9 +673,10 @@ export default function Documentos() {
         </div>
       )}
 
-      {/* Modern responsive tabs */}
+      {/* Navigation tabs */}
       <div className="flex overflow-x-auto gap-2 border-b border-app-border pb-px no-scrollbar">
         <button
+          type="button"
           onClick={() => setActiveTab('salvos')}
           className={`px-4 py-2.5 font-medium text-sm border-b-2 transition-all flex items-center gap-2 shrink-0 ${
             activeTab === 'salvos'
@@ -581,8 +686,12 @@ export default function Documentos() {
         >
           <FolderOpen size={16} />
           Documentos Salvos
+          <span className="text-xs text-app-text-muted tabular-nums">
+            ({filteredDocumentos.length})
+          </span>
         </button>
         <button
+          type="button"
           onClick={() => setActiveTab('editor')}
           className={`px-4 py-2.5 font-medium text-sm border-b-2 transition-all flex items-center gap-2 shrink-0 ${
             activeTab === 'editor'
@@ -591,9 +700,10 @@ export default function Documentos() {
           }`}
         >
           <FileCode size={16} />
-          {editingId ? 'Editar Documento' : 'Criar Modelo / Editor'}
+          {editingId ? 'Editar no Word (.docx)' : 'Editor Word (.docx)'}
         </button>
         <button
+          type="button"
           onClick={() => setActiveTab('gerar-processo')}
           className={`px-4 py-2.5 font-medium text-sm border-b-2 transition-all flex items-center gap-2 shrink-0 ${
             activeTab === 'gerar-processo'
@@ -605,6 +715,7 @@ export default function Documentos() {
           Gerar p/ Processo
         </button>
         <button
+          type="button"
           onClick={() => setActiveTab('gerar-contrato')}
           className={`px-4 py-2.5 font-medium text-sm border-b-2 transition-all flex items-center gap-2 shrink-0 ${
             activeTab === 'gerar-contrato'
@@ -619,21 +730,26 @@ export default function Documentos() {
 
       {/* Tab contents */}
       <div className="space-y-6">
-        
         {/* TAB 1: SAVED DOCUMENTS */}
         {activeTab === 'salvos' && (
           <div className="bg-app-surface rounded-xl shadow-sm border border-app-border overflow-hidden">
-            <div className="p-4 border-b border-app-border flex items-center">
+            <div className="p-4 border-b border-app-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="relative flex-1 max-w-md">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-app-text-muted" size={18} />
-                <input 
-                  type="text" 
-                  placeholder="Buscar documentos salvos..." 
+                <Search
+                  className="absolute left-3 top-1/2 transform -translate-y-1/2 text-app-text-muted"
+                  size={18}
+                />
+                <input
+                  type="text"
+                  placeholder="Buscar documentos ou modelos salvos..."
                   className="w-full pl-10 pr-4 py-2 border border-app-border bg-app-bg text-app-text rounded-lg focus:outline-none focus:ring-1 focus:ring-primary focus:border-transparent text-sm"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
               </div>
+              <span className="text-xs text-app-text-muted tabular-nums">
+                Exibindo {filteredDocumentos.length} de {accessibleDocumentos.length} documento(s)
+              </span>
             </div>
 
             <div className="overflow-x-auto">
@@ -657,62 +773,89 @@ export default function Documentos() {
                             <div className="p-2 bg-primary/10 text-primary rounded-lg shrink-0">
                               <FileText size={16} />
                             </div>
-                            <span className="truncate max-w-xs sm:max-w-md font-semibold text-sm" title={doc.titulo}>
+                            <span
+                              className="truncate max-w-xs sm:max-w-md font-semibold text-sm"
+                              title={doc.titulo}
+                            >
                               {doc.titulo}
                             </span>
                           </div>
                         </td>
                         <td className="py-3.5 px-4 whitespace-nowrap">
-                          <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${
-                            doc.tipo === 'Petição' ? 'bg-indigo-500/10 text-indigo-500 dark:bg-indigo-500/20' :
-                            doc.tipo === 'Contrato' ? 'bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400' :
-                            doc.tipo === 'Procuração' ? 'bg-amber-500/10 text-amber-600 dark:bg-amber-500/20 dark:text-amber-400' :
-                            'bg-app-bg text-app-text-muted'
-                          }`}>
+                          <span
+                            className={`px-2 py-0.5 rounded text-xs font-semibold ${
+                              doc.tipo === 'Petição'
+                                ? 'bg-indigo-500/10 text-indigo-500 dark:bg-indigo-500/20'
+                                : doc.tipo === 'Contrato'
+                                ? 'bg-emerald-500/10 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400'
+                                : doc.tipo === 'Procuração'
+                                ? 'bg-amber-500/10 text-amber-600 dark:bg-amber-500/20 dark:text-amber-400'
+                                : 'bg-app-bg text-app-text-muted'
+                            }`}
+                          >
                             {doc.tipo}
                           </span>
                         </td>
                         <td className="py-3.5 px-4 whitespace-nowrap">
                           {process ? (
-                            <span className="text-xs font-mono text-primary bg-primary/5 px-2 py-0.5 rounded border border-primary/10 truncate inline-block max-w-[200px]" title={process.numero}>
+                            <span
+                              className="text-xs font-mono text-primary bg-primary/5 px-2 py-0.5 rounded border border-primary/10 truncate inline-block max-w-[200px] tabular-nums"
+                              title={process.numero}
+                            >
                               {process.numero}
                             </span>
                           ) : (
                             <span className="text-xs text-app-text-muted italic">-</span>
                           )}
                         </td>
-                        <td className="py-3.5 px-4 whitespace-nowrap text-xs text-app-text-muted">
+                        <td className="py-3.5 px-4 whitespace-nowrap text-xs text-app-text-muted tabular-nums">
                           {formatDate(doc.dataCriacao)}
                         </td>
                         <td className="py-3.5 px-4 text-right whitespace-nowrap">
                           <div className="flex items-center justify-end gap-1.5">
-                            <button 
+                            <button
+                              type="button"
                               onClick={() => setViewingDoc(doc)}
                               className="px-2.5 py-1.5 text-xs text-app-text hover:text-primary hover:bg-app-bg rounded-lg border border-app-border transition-colors flex items-center gap-1"
-                              title="Visualizar documento completo"
+                              title="Visualizar documento em folha A4"
                             >
                               <Eye size={13} />
                               Ver
                             </button>
+                            <button
+                              type="button"
+                              disabled={exportingDocId === doc.id}
+                              onClick={() =>
+                                handleDownloadDocumentDocx(doc.id, doc.titulo, doc.conteudo)
+                              }
+                              className="px-2.5 py-1.5 text-xs text-primary hover:bg-primary/10 rounded-lg border border-primary/20 transition-colors flex items-center gap-1 font-medium disabled:opacity-50"
+                              title="Baixar arquivo Microsoft Word (.docx)"
+                            >
+                              <Download size={13} />
+                              .docx
+                            </button>
                             {canWrite && (
-                              <button 
+                              <button
+                                type="button"
                                 onClick={() => handleEdit(doc)}
                                 className="p-1.5 text-app-text hover:text-primary hover:bg-app-bg rounded-lg border border-app-border transition-colors"
-                                title="Editar documento"
+                                title="Abrir no Editor Word"
                               >
                                 <Edit2 size={13} />
                               </button>
                             )}
-                            <button 
+                            <button
+                              type="button"
                               onClick={() => printDocument(doc)}
                               className="p-1.5 text-app-text hover:text-primary hover:bg-app-bg rounded-lg border border-app-border transition-colors"
-                              title="Imprimir / Exportar"
+                              title="Imprimir / Salvar PDF"
                             >
                               <Printer size={13} />
                             </button>
                             {canDelete && (
-                              <button 
-                                onClick={() => handleDelete(doc.id)}
+                              <button
+                                type="button"
+                                onClick={() => setDeletingDoc(doc)}
                                 className="p-1.5 text-app-text hover:text-rose-600 hover:bg-app-bg rounded-lg border border-app-border transition-colors"
                                 title="Excluir documento"
                               >
@@ -731,7 +874,9 @@ export default function Documentos() {
                         <div className="flex flex-col items-center justify-center gap-3">
                           <FolderOpen size={44} className="text-app-text-muted opacity-30" />
                           <p className="text-sm font-medium">Nenhum documento salvo encontrado.</p>
-                          <p className="text-xs">Crie um novo modelo para começar a gerar documentos automáticos.</p>
+                          <p className="text-xs">
+                            Crie um novo modelo no Editor Word ou importe um arquivo .docx pronto.
+                          </p>
                         </div>
                       </td>
                     </tr>
@@ -742,37 +887,47 @@ export default function Documentos() {
           </div>
         )}
 
-        {/* TAB 2: RICH WORKSPACE EDITOR */}
+        {/* TAB 2: EMBEDDED WORD-STYLE A4 EDITOR (OPTION A) */}
         {activeTab === 'editor' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            
+          <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
             {/* Left side column: Document settings & Variable picker */}
-            <div className="lg:col-span-4 space-y-6">
-              <div className="bg-app-surface border border-app-border rounded-xl p-5 shadow-sm space-y-5">
-                <h2 className="text-sm font-semibold text-app-text flex items-center gap-2 pb-2 border-b border-app-border">
-                  <FilePlus size={16} className="text-primary" />
-                  Configurações do Modelo
-                </h2>
-                
-                <form onSubmit={handleSaveModel} className="space-y-4">
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-app-text">Título do Modelo</label>
-                    <input 
+            <div className="xl:col-span-3 space-y-5">
+              <div className="bg-app-surface border border-app-border rounded-xl p-4 shadow-sm space-y-4">
+                <div className="flex items-center justify-between pb-2 border-b border-app-border">
+                  <h2 className="text-sm font-semibold text-app-text flex items-center gap-2">
+                    <FilePlus size={16} className="text-primary" />
+                    {editingId ? 'Editando Modelo' : 'Dados do Modelo'}
+                  </h2>
+                  <button
+                    type="button"
+                    onClick={() => setShowEditorPreview(true)}
+                    className="text-xs text-primary hover:underline flex items-center gap-1 font-medium"
+                    title="Visualizar folha limpa"
+                  >
+                    <Eye size={13} />
+                    Prévia A4
+                  </button>
+                </div>
+
+                <form onSubmit={handleSaveModel} className="space-y-3.5">
+                  <div className="space-y-1">
+                    <label className="text-xs font-semibold text-app-text">Título do Documento</label>
+                    <input
                       type="text"
                       required
-                      placeholder="Ex: Contrato de Honorários Advocatícios"
+                      placeholder="Ex: Procuração Ad Judicia"
                       className="w-full px-3 py-2 border border-app-border bg-app-bg text-app-text rounded-lg focus:outline-none focus:ring-1 focus:ring-primary text-sm"
                       value={editorTitle}
                       onChange={(e) => setEditorTitle(e.target.value)}
                     />
                   </div>
 
-                  <div className="space-y-1.5">
+                  <div className="space-y-1">
                     <label className="text-xs font-semibold text-app-text">Tipo do Documento</label>
                     <select
                       className="w-full px-3 py-2 border border-app-border bg-app-bg text-app-text rounded-lg focus:outline-none focus:ring-1 focus:ring-primary text-sm"
                       value={editorType}
-                      onChange={(e) => setEditorType(e.target.value as any)}
+                      onChange={(e) => setEditorType(e.target.value as Documento['tipo'])}
                     >
                       <option value="Outro">Outro / Geral</option>
                       <option value="Contrato">Contrato</option>
@@ -781,23 +936,22 @@ export default function Documentos() {
                     </select>
                   </div>
 
-                  <div className="flex gap-2 pt-2">
+                  <div className="flex gap-2 pt-1">
                     <button
                       type="submit"
-                      disabled={isSaving}
-                      className="flex-1 bg-primary hover:opacity-90 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-medium transition-all shadow-sm"
+                      disabled={isSaving || !canWrite}
+                      className="flex-1 bg-primary hover:opacity-90 disabled:opacity-50 text-white px-3 py-2 rounded-lg text-sm font-medium transition-all shadow-sm"
                     >
-                      {isSaving ? 'Salvando...' : (editingId ? 'Salvar Edições' : 'Salvar Modelo')}
+                      {isSaving
+                        ? 'Salvando...'
+                        : editingId
+                        ? 'Salvar Alterações'
+                        : 'Salvar Modelo'}
                     </button>
                     <button
                       type="button"
-                      onClick={() => {
-                        setEditingId(null);
-                        setEditorTitle('');
-                        setEditorContent('');
-                        setEditorType('Outro');
-                      }}
-                      className="px-3 py-2 border border-app-border hover:bg-app-bg text-app-text rounded-lg text-sm transition-all"
+                      onClick={resetEditor}
+                      className="px-3 py-2 border border-app-border hover:bg-app-bg text-app-text rounded-lg text-xs font-medium transition-all"
                     >
                       Limpar
                     </button>
@@ -806,51 +960,74 @@ export default function Documentos() {
               </div>
 
               {/* Variable library card */}
-              <div className="bg-app-surface border border-app-border rounded-xl p-5 shadow-sm space-y-4 max-h-[500px] overflow-y-auto custom-scrollbar">
+              <div className="bg-app-surface border border-app-border rounded-xl p-4 shadow-sm space-y-3 flex flex-col max-h-[485px]">
                 <div>
                   <h3 className="text-sm font-semibold text-app-text flex items-center gap-1.5">
-                    <Sparkles size={16} className="text-amber-500" />
-                    Biblioteca de Variáveis
+                    <Sparkles size={15} className="text-amber-500" />
+                    Variáveis Automáticas
                   </h3>
-                  <p className="text-[11px] text-app-text-muted mt-1">
-                    Insira estas variáveis no seu modelo. Elas serão substituídas automaticamente ao gerar um documento.
+                  <p className="text-[11px] text-app-text-muted mt-0.5">
+                    Clique em <strong>Inserir</strong> para posicionar a variável exatamente onde está o cursor na folha.
                   </p>
                 </div>
 
-                <div className="space-y-4">
-                  {AVAILABLE_VARIABLES.map(group => (
-                    <div key={group.category} className="space-y-2">
+                <div className="relative">
+                  <Search
+                    size={14}
+                    className="absolute left-2.5 top-1/2 -translate-y-1/2 text-app-text-muted"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Filtrar variável (ex: CPF, Vara)..."
+                    value={variableSearch}
+                    onChange={(e) => setVariableSearch(e.target.value)}
+                    className="w-full pl-8 pr-3 py-1.5 bg-app-bg border border-app-border rounded-lg text-xs text-app-text focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                </div>
+
+                <div className="space-y-3 overflow-y-auto custom-scrollbar pr-1 flex-1">
+                  {filteredVariableGroups.map(group => (
+                    <div key={group.category} className="space-y-1.5">
                       <span className="text-[10px] font-bold text-primary uppercase tracking-wider block border-b border-app-border pb-1">
                         {group.category}
                       </span>
                       <div className="space-y-1.5">
                         {group.items.map(item => (
-                          <div 
-                            key={item.name} 
-                            className="p-1.5 bg-app-bg hover:bg-app-border border border-app-border rounded-lg flex items-center justify-between text-xs transition-colors group/item"
+                          <div
+                            key={item.name}
+                            className="p-1.5 bg-app-bg hover:bg-app-border/60 border border-app-border rounded-lg flex items-center justify-between gap-2 text-xs transition-colors"
                           >
                             <div className="min-w-0">
                               <span className="font-mono text-primary font-semibold select-all block truncate text-[11px]">
                                 {item.name}
                               </span>
-                              <span className="text-[10px] text-app-text-muted block truncate mt-0.5" title={item.desc}>
+                              <span
+                                className="text-[10px] text-app-text-muted block truncate mt-0.5"
+                                title={item.desc}
+                              >
                                 {item.desc}
                               </span>
                             </div>
                             <div className="flex items-center gap-1 shrink-0">
                               <button
+                                type="button"
                                 onClick={() => insertVariable(item.name)}
-                                className="px-1.5 py-0.5 bg-primary/10 hover:bg-primary/20 text-primary rounded text-[10px] font-medium transition-colors"
-                                title="Inserir no cursor do editor"
+                                className="px-2 py-0.5 bg-primary/10 hover:bg-primary/20 text-primary rounded text-[10px] font-semibold transition-colors"
+                                title="Inserir na posição do cursor"
                               >
                                 Inserir
                               </button>
                               <button
+                                type="button"
                                 onClick={() => copyVariableToClipboard(item.name)}
                                 className="p-1 text-app-text-muted hover:text-primary transition-colors"
                                 title="Copiar variável"
                               >
-                                {copiedVariable === item.name ? <Check size={12} className="text-emerald-500" /> : <Copy size={12} />}
+                                {copiedVariable === item.name ? (
+                                  <Check size={12} className="text-emerald-500" />
+                                ) : (
+                                  <Copy size={12} />
+                                )}
                               </button>
                             </div>
                           </div>
@@ -858,151 +1035,64 @@ export default function Documentos() {
                       </div>
                     </div>
                   ))}
+                  {filteredVariableGroups.length === 0 && (
+                    <p className="text-xs text-app-text-muted text-center py-4">
+                      Nenhuma variável encontrada.
+                    </p>
+                  )}
                 </div>
               </div>
             </div>
 
-            {/* Right side column: Main Text Editor (Full width) */}
-            <div className="lg:col-span-8 flex flex-col gap-6">
-              <div className="bg-app-surface border border-app-border rounded-xl shadow-sm overflow-hidden flex flex-col h-[650px]">
-                
-                {/* Editor formatting toolbar */}
-                <div className="bg-app-bg px-4 py-2 border-b border-app-border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 overflow-x-auto no-scrollbar">
-                  <div className="flex items-center flex-wrap gap-1 shrink-0">
-                    <button 
-                      type="button"
-                      onClick={() => insertFormat('bold')} 
-                      className="p-1.5 hover:bg-app-border rounded-md text-app-text-muted hover:text-app-text transition-colors"
-                      title="Negrito (**)"
-                    >
-                      <Bold size={15} />
-                    </button>
-                    <button 
-                      type="button"
-                      onClick={() => insertFormat('italic')} 
-                      className="p-1.5 hover:bg-app-border rounded-md text-app-text-muted hover:text-app-text transition-colors"
-                      title="Itálico (*)"
-                    >
-                      <Italic size={15} />
-                    </button>
-                    <button 
-                      type="button"
-                      onClick={() => insertFormat('underline')} 
-                      className="p-1.5 hover:bg-app-border rounded-md text-app-text-muted hover:text-app-text transition-colors"
-                      title="Sublinhado (<u>)"
-                    >
-                      <Underline size={15} />
-                    </button>
-                    <div className="h-4 w-[1px] bg-app-border mx-1" />
-                    <button 
-                      type="button"
-                      onClick={() => insertFormat('heading')} 
-                      className="p-1.5 hover:bg-app-border rounded-md text-app-text-muted hover:text-app-text transition-colors"
-                      title="Título (#)"
-                    >
-                      <Heading size={15} />
-                    </button>
-                    <button 
-                      type="button"
-                      onClick={() => insertFormat('list')} 
-                      className="p-1.5 hover:bg-app-border rounded-md text-app-text-muted hover:text-app-text transition-colors"
-                      title="Lista (-)"
-                    >
-                      <List size={15} />
-                    </button>
-                    <button 
-                      type="button"
-                      onClick={() => insertFormat('quote')} 
-                      className="p-1.5 hover:bg-app-border rounded-md text-app-text-muted hover:text-app-text transition-colors"
-                      title="Citação (>)"
-                    >
-                      <Quote size={15} />
-                    </button>
-                    <button 
-                      type="button"
-                      onClick={() => insertFormat('link')} 
-                      className="p-1.5 hover:bg-app-border rounded-md text-app-text-muted hover:text-app-text transition-colors"
-                      title="Link"
-                    >
-                      <Link size={15} />
-                    </button>
-                    <button 
-                      type="button"
-                      onClick={() => insertFormat('table')} 
-                      className="p-1.5 hover:bg-app-border rounded-md text-app-text-muted hover:text-app-text transition-colors"
-                      title="Tabela"
-                    >
-                      <Table size={15} />
-                    </button>
-                    <button 
-                      type="button"
-                      onClick={() => insertFormat('divider')} 
-                      className="p-1.5 hover:bg-app-border rounded-md text-app-text-muted hover:text-app-text transition-colors"
-                      title="Linha Divisória (---)"
-                    >
-                      <Minus size={15} />
-                    </button>
-                  </div>
-
-                  <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-end">
-                    <span className="text-[10px] text-app-text-muted font-mono bg-app-surface px-2 py-0.5 rounded border border-app-border shrink-0">
-                      Markdown / HTML
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setShowEditorPreview(true)}
-                      className="bg-primary/10 hover:bg-primary/20 text-primary px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors border border-primary/20 shrink-0"
-                      title="Visualizar documento formatado"
-                    >
-                      <Eye size={13} />
-                      Visualizar Rascunho
-                    </button>
-                  </div>
-                </div>
-
-                {/* Editor Content Area (Full width text editor) */}
-                <div className="flex flex-col flex-1 overflow-hidden">
-                  <div className="px-3 py-1 bg-app-bg text-[10px] text-app-text-muted font-semibold uppercase tracking-wider border-b border-app-border flex justify-between items-center">
-                    <span>Área de Escrita</span>
-                    <span className="text-[10px] text-app-text-muted font-mono">{editorContent.length} caracteres</span>
-                  </div>
-                  <textarea
-                    ref={textareaRef}
-                    className="w-full flex-1 p-5 bg-app-surface text-app-text text-sm font-sans focus:outline-none resize-none overflow-y-auto leading-relaxed custom-scrollbar border-0"
-                    placeholder="Comece a digitar seu modelo aqui...&#10;&#10;Exemplo:&#10;AO JUÍZO DA %VARA_NOME%&#10;&#10;%CLIENTE_NOME%, nacionalidade..., portador do CPF %CLIENTE_CPF_CNPJ%, vem por meio deste...&#10;&#10;Contrato em anexo relativo ao processo de número %NUMERO_PROCESSO%."
-                    value={editorContent}
-                    onChange={(e) => setEditorContent(e.target.value)}
-                  />
-                </div>
-              </div>
+            {/* Right side column: Embedded Word-Style A4 Rich Editor */}
+            <div className="xl:col-span-9">
+              <WordDocumentEditor
+                ref={wordEditorRef}
+                value={editorContent}
+                onChange={setEditorContent}
+                documentKey={editorDocKey}
+                documentTitle={editorTitle || 'Modelo_Juridico'}
+                onImportDocx={({ fileName }) => {
+                  if (!editorTitle.trim()) {
+                    const cleanName = fileName
+                      .replace(/\.docx$/i, '')
+                      .replace(/[_-]+/g, ' ')
+                      .trim();
+                    if (cleanName) setEditorTitle(cleanName);
+                  }
+                }}
+                onNotify={notify}
+              />
             </div>
-            
           </div>
         )}
 
         {/* TAB 3: GENERATOR BY PROCESSO */}
         {activeTab === 'gerar-processo' && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            
             {/* Template Selection Column */}
             <div className="lg:col-span-4 space-y-6">
               <div className="bg-app-surface border border-app-border rounded-xl p-5 shadow-sm space-y-5">
                 <h2 className="text-sm font-semibold text-app-text flex items-center gap-2 pb-2 border-b border-app-border">
                   <ArrowLeftRight size={16} className="text-primary" />
-                  Preencher dados do Processo
+                  Preencher Dados do Processo
                 </h2>
 
                 {/* 1. Pick Template */}
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-app-text">1. Selecione o Modelo Base</label>
+                  <label className="text-xs font-semibold text-app-text">
+                    1. Selecione o Modelo Base
+                  </label>
                   <select
                     className="w-full px-3 py-2 border border-app-border bg-app-bg text-app-text rounded-lg focus:outline-none focus:ring-1 focus:ring-primary text-sm"
                     value={genProcTemplateId}
                     onChange={(e) => setGenProcTemplateId(e.target.value)}
                   >
                     <option value="">-- Escolha um modelo --</option>
-                    {state.documentos.map(doc => (
-                      <option key={doc.id} value={doc.id}>{doc.titulo} ({doc.tipo})</option>
+                    {accessibleDocumentos.map(doc => (
+                      <option key={doc.id} value={doc.id}>
+                        {doc.titulo} ({doc.tipo})
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -1011,7 +1101,10 @@ export default function Documentos() {
                 <div className="space-y-1.5 relative">
                   <label className="text-xs font-semibold text-app-text">2. Escolha o Processo</label>
                   <div className="relative">
-                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-app-text-muted" size={16} />
+                    <Search
+                      className="absolute left-3 top-1/2 transform -translate-y-1/2 text-app-text-muted"
+                      size={16}
+                    />
                     <input
                       type="text"
                       placeholder="Pesquisar por nº ou cliente..."
@@ -1039,40 +1132,77 @@ export default function Documentos() {
                             }}
                             className="p-2 hover:bg-primary/10 cursor-pointer border-b border-app-border last:border-0 transition-colors flex flex-col gap-0.5"
                           >
-                            <span className="font-mono text-primary font-bold">{p.numero}</span>
-                            <span className="text-app-text truncate">{p.titulo || 'Sem título'}</span>
-                            {client && <span className="text-app-text-muted text-[10px]">Cliente: {client.nome}</span>}
+                            <span className="font-mono text-primary font-bold tabular-nums">
+                              {p.numero}
+                            </span>
+                            <span className="text-app-text truncate">
+                              {p.titulo || 'Sem título'}
+                            </span>
+                            {client && (
+                              <span className="text-app-text-muted text-[10px]">
+                                Cliente: {client.nome}
+                              </span>
+                            )}
                           </div>
                         );
                       })}
                       {filteredProcessos.length === 0 && (
-                        <div className="p-3 text-center text-app-text-muted">Nenhum processo encontrado.</div>
+                        <div className="p-3 text-center text-app-text-muted">
+                          Nenhum processo encontrado.
+                        </div>
                       )}
                     </div>
                   )}
 
                   {selectedProcessObj && (
-                    <div className="p-3 bg-primary/5 border border-primary/10 rounded-lg text-xs space-y-1 mt-2">
+                    <div className="p-3 bg-primary/5 border border-primary/15 rounded-lg text-xs space-y-1 mt-2">
                       <p className="font-bold text-primary">Processo Selecionado:</p>
-                      <p><span className="font-semibold">Nº:</span> {selectedProcessObj.numero}</p>
-                      <p><span className="font-semibold">Ação:</span> {selectedProcessObj.titulo || 'Não informada'}</p>
+                      <p className="tabular-nums">
+                        <span className="font-semibold">Nº:</span> {selectedProcessObj.numero}
+                      </p>
+                      <p>
+                        <span className="font-semibold">Ação:</span>{' '}
+                        {selectedProcessObj.titulo || 'Não informada'}
+                      </p>
                       {selectedClientForProc && (
-                        <p><span className="font-semibold">Cliente:</span> {selectedClientForProc.nome}</p>
+                        <p>
+                          <span className="font-semibold">Cliente:</span>{' '}
+                          {selectedClientForProc.nome}
+                        </p>
                       )}
                     </div>
                   )}
                 </div>
 
                 {/* Confirm generation */}
-                <button
-                  type="button"
-                  disabled={isSaving || !genProcTemplateId || !genProcProcessoId}
-                  onClick={handleGenerateForProcess}
-                  className="w-full bg-primary hover:opacity-90 disabled:opacity-50 text-white py-2 px-4 rounded-lg font-medium text-sm transition-all shadow-sm flex items-center justify-center gap-2"
-                >
-                  <FilePlus size={16} />
-                  {isSaving ? 'Gerando...' : 'Gerar e Salvar Documento'}
-                </button>
+                <div className="space-y-2">
+                  <button
+                    type="button"
+                    disabled={isSaving || !genProcTemplateId || !genProcProcessoId || !canWrite}
+                    onClick={handleGenerateForProcess}
+                    className="w-full bg-primary hover:opacity-90 disabled:opacity-50 text-white py-2 px-4 rounded-lg font-medium text-sm transition-all shadow-sm flex items-center justify-center gap-2"
+                  >
+                    <FilePlus size={16} />
+                    {isSaving ? 'Gerando...' : 'Gerar e Salvar Documento'}
+                  </button>
+
+                  {selectedTemplateObjForProc && selectedProcessObj && canWrite && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        openResolvedInWordEditor(
+                          `${selectedTemplateObjForProc.titulo} - Processo ${selectedProcessObj.numero}`,
+                          selectedTemplateObjForProc.tipo,
+                          resolvedProcHtml
+                        )
+                      }
+                      className="w-full border border-app-border hover:bg-app-bg text-app-text py-2 px-4 rounded-lg font-medium text-xs transition-all flex items-center justify-center gap-2"
+                    >
+                      <Edit2 size={14} className="text-primary" />
+                      Abrir no Editor Word p/ Ajustes Finais
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* Status Variables preview */}
@@ -1084,19 +1214,36 @@ export default function Documentos() {
                   <div className="space-y-2 max-h-[250px] overflow-y-auto text-xs custom-scrollbar">
                     <div className="flex justify-between border-b border-app-border py-1">
                       <span className="font-mono text-primary">%NUMERO_PROCESSO%</span>
-                      <span className="text-app-text truncate max-w-[150px]" title={selectedProcessObj?.numero}>{selectedProcessObj?.numero || 'Vazio'}</span>
+                      <span
+                        className="text-app-text truncate max-w-[150px] tabular-nums"
+                        title={selectedProcessObj?.numero}
+                      >
+                        {selectedProcessObj?.numero || 'Vazio'}
+                      </span>
                     </div>
                     <div className="flex justify-between border-b border-app-border py-1">
                       <span className="font-mono text-primary">%CLIENTE_NOME%</span>
-                      <span className="text-app-text truncate max-w-[150px]" title={selectedClientForProc?.nome}>{selectedClientForProc?.nome || 'Vazio'}</span>
+                      <span
+                        className="text-app-text truncate max-w-[150px]"
+                        title={selectedClientForProc?.nome}
+                      >
+                        {selectedClientForProc?.nome || 'Vazio'}
+                      </span>
                     </div>
                     <div className="flex justify-between border-b border-app-border py-1">
                       <span className="font-mono text-primary">%CLIENTE_CPF_CNPJ%</span>
-                      <span className="text-app-text truncate max-w-[150px]" title={selectedClientForProc?.cpfCnpj}>{selectedClientForProc?.cpfCnpj || 'Vazio'}</span>
+                      <span
+                        className="text-app-text truncate max-w-[150px] tabular-nums"
+                        title={selectedClientForProc?.cpfCnpj}
+                      >
+                        {selectedClientForProc?.cpfCnpj || 'Vazio'}
+                      </span>
                     </div>
                     <div className="flex justify-between border-b border-app-border py-1">
                       <span className="font-mono text-primary">%ESCRITORIO_NOME%</span>
-                      <span className="text-app-text truncate max-w-[150px]">{activeOffice?.nome || 'Vazio'}</span>
+                      <span className="text-app-text truncate max-w-[150px]">
+                        {activeOffice?.nome || 'Vazio'}
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -1105,69 +1252,77 @@ export default function Documentos() {
 
             {/* Generated Document Live Preview Sheet */}
             <div className="lg:col-span-8 flex flex-col gap-4">
-              <div className="bg-app-surface border border-app-border rounded-xl shadow-sm flex flex-col h-[650px] overflow-hidden">
-                <div className="bg-app-bg px-4 py-3 border-b border-app-border flex items-center justify-between">
+              <div className="bg-app-surface border border-app-border rounded-xl shadow-sm flex flex-col h-[700px] overflow-hidden">
+                <div className="bg-app-bg px-4 py-3 border-b border-app-border flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <FileText className="text-primary" size={18} />
-                    <span className="font-semibold text-app-text text-sm">Visualização em Tempo Real (Com Variáveis Substituídas)</span>
+                    <span className="font-semibold text-app-text text-sm">
+                      Visualização A4 em Tempo Real (Com Variáveis Substituídas)
+                    </span>
                   </div>
-                  {genProcTemplateId && genProcProcessoId && (
-                    <button 
-                      onClick={() => {
-                        const resolved = replaceVariables(selectedTemplateObjForProc?.conteudo || '', {
-                          processo: selectedProcessObj,
-                          cliente: selectedClientForProc,
-                          office: activeOffice,
-                          varas: state.varas
-                        });
-                        printDocument({
-                          id: '',
-                          titulo: selectedTemplateObjForProc?.titulo || 'Documento',
-                          tipo: 'Outro',
-                          conteudo: resolved,
-                          dataCriacao: ''
-                        });
-                      }}
-                      className="px-2.5 py-1 text-xs border border-app-border hover:bg-app-bg rounded-lg text-app-text transition-colors flex items-center gap-1.5"
-                    >
-                      <Printer size={13} />
-                      Imprimir
-                    </button>
+                  {selectedTemplateObjForProc && selectedProcessObj && (
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={exportingDocId === 'gen-proc'}
+                        onClick={() =>
+                          handleDownloadDocumentDocx(
+                            'gen-proc',
+                            `${selectedTemplateObjForProc.titulo}_${selectedProcessObj.numero}`,
+                            resolvedProcHtml
+                          )
+                        }
+                        className="px-2.5 py-1 text-xs bg-primary/10 hover:bg-primary/20 border border-primary/20 rounded-lg text-primary font-semibold transition-colors flex items-center gap-1.5"
+                      >
+                        <Download size={13} />
+                        Baixar .docx
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          printDocument({
+                            titulo: `${selectedTemplateObjForProc.titulo} - ${selectedProcessObj.numero}`,
+                            conteudo: resolvedProcHtml
+                          })
+                        }
+                        className="px-2.5 py-1 text-xs border border-app-border hover:bg-app-surface rounded-lg text-app-text transition-colors flex items-center gap-1.5"
+                      >
+                        <Printer size={13} />
+                        Imprimir / PDF
+                      </button>
+                    </div>
                   )}
                 </div>
 
-                <div className="flex-1 p-8 bg-zinc-100 dark:bg-zinc-950 overflow-y-auto custom-scrollbar flex justify-center">
-                  <div className="w-full max-w-[21cm] min-h-[29.7cm] bg-white dark:bg-zinc-900 shadow-lg border border-zinc-200 dark:border-zinc-800 p-[2.5cm] select-text">
-                    <div className="prose dark:prose-invert prose-sm max-w-none text-black dark:text-zinc-100 leading-relaxed markdown-body">
-                      {selectedTemplateObjForProc && selectedProcessObj ? (
-                        <Markdown>
-                          {replaceVariables(selectedTemplateObjForProc.conteudo, {
-                            processo: selectedProcessObj,
-                            cliente: selectedClientForProc,
-                            office: activeOffice,
-                            varas: state.varas
-                          })}
-                        </Markdown>
-                      ) : (
-                        <div className="flex flex-col items-center justify-center py-24 text-app-text-muted gap-3">
-                          <ArrowLeftRight size={36} className="text-primary/40" />
-                          <p className="text-sm font-medium">Selecione o modelo e o processo ao lado.</p>
-                          <p className="text-xs text-center max-w-xs">O documento será preenchido automaticamente substituindo os marcadores %variavel% em tempo real.</p>
-                        </div>
-                      )}
-                    </div>
+                <div className="flex-1 p-6 sm:p-8 bg-zinc-100 dark:bg-zinc-950 overflow-y-auto overflow-x-auto custom-scrollbar flex justify-center">
+                  <div className="w-[21cm] min-h-[29.7cm] bg-white text-zinc-900 shadow-md border border-zinc-300 dark:border-zinc-700 p-[2.5cm] select-text">
+                    {selectedTemplateObjForProc && selectedProcessObj ? (
+                      <div
+                        className="word-page-content"
+                        dangerouslySetInnerHTML={{ __html: resolvedProcHtml }}
+                      />
+                    ) : (
+                      <div className="flex flex-col items-center justify-center py-24 text-zinc-500 gap-3">
+                        <ArrowLeftRight size={36} className="text-primary/40" />
+                        <p className="text-sm font-medium text-zinc-700">
+                          Selecione o modelo e o processo ao lado.
+                        </p>
+                        <p className="text-xs text-center max-w-xs text-zinc-500">
+                          O documento será preenchido automaticamente substituindo os marcadores
+                          %VARIAVEL% em tempo real na folha A4.
+                        </p>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
             </div>
-
           </div>
         )}
 
         {/* TAB 4: GENERATOR FOR CLIENT CONTRATO */}
         {activeTab === 'gerar-contrato' && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            
             {/* Client and Template selection */}
             <div className="lg:col-span-4 space-y-6">
               <div className="bg-app-surface border border-app-border rounded-xl p-5 shadow-sm space-y-5">
@@ -1178,15 +1333,19 @@ export default function Documentos() {
 
                 {/* 1. Pick Template */}
                 <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-app-text">1. Selecione o Modelo Base</label>
+                  <label className="text-xs font-semibold text-app-text">
+                    1. Selecione o Modelo Base
+                  </label>
                   <select
                     className="w-full px-3 py-2 border border-app-border bg-app-bg text-app-text rounded-lg focus:outline-none focus:ring-1 focus:ring-primary text-sm"
                     value={genCliTemplateId}
                     onChange={(e) => setGenCliTemplateId(e.target.value)}
                   >
                     <option value="">-- Escolha um modelo --</option>
-                    {state.documentos.map(doc => (
-                      <option key={doc.id} value={doc.id}>{doc.titulo} ({doc.tipo})</option>
+                    {accessibleDocumentos.map(doc => (
+                      <option key={doc.id} value={doc.id}>
+                        {doc.titulo} ({doc.tipo})
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -1195,7 +1354,10 @@ export default function Documentos() {
                 <div className="space-y-1.5 relative">
                   <label className="text-xs font-semibold text-app-text">2. Escolha o Cliente</label>
                   <div className="relative">
-                    <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-app-text-muted" size={16} />
+                    <Search
+                      className="absolute left-3 top-1/2 transform -translate-y-1/2 text-app-text-muted"
+                      size={16}
+                    />
                     <input
                       type="text"
                       placeholder="Pesquisar por nome ou CPF..."
@@ -1222,36 +1384,71 @@ export default function Documentos() {
                           className="p-2 hover:bg-primary/10 cursor-pointer border-b border-app-border last:border-0 transition-colors flex flex-col gap-0.5"
                         >
                           <span className="font-bold text-app-text">{c.nome}</span>
-                          <span className="text-app-text-muted text-[10px]">CPF: {c.cpfCnpj} | Cel: {c.telefone}</span>
+                          <span className="text-app-text-muted text-[10px] tabular-nums">
+                            CPF: {c.cpfCnpj} | Tel: {c.telefone}
+                          </span>
                         </div>
                       ))}
                       {filteredClientes.length === 0 && (
-                        <div className="p-3 text-center text-app-text-muted">Nenhum cliente encontrado.</div>
+                        <div className="p-3 text-center text-app-text-muted">
+                          Nenhum cliente encontrado.
+                        </div>
                       )}
                     </div>
                   )}
 
                   {selectedClientObj && (
-                    <div className="p-3 bg-amber-500/5 border border-amber-500/10 rounded-lg text-xs space-y-1 mt-2">
-                      <p className="font-bold text-amber-500">Cliente Selecionado:</p>
-                      <p><span className="font-semibold">Nome:</span> {selectedClientObj.nome}</p>
-                      <p><span className="font-semibold">CPF/CNPJ:</span> {selectedClientObj.cpfCnpj}</p>
-                      <p><span className="font-semibold">Telefone:</span> {selectedClientObj.telefone}</p>
-                      <p><span className="font-semibold">Endereço:</span> {selectedClientObj.endereco || 'Não cadastrado'}</p>
+                    <div className="p-3 bg-amber-500/5 border border-amber-500/15 rounded-lg text-xs space-y-1 mt-2">
+                      <p className="font-bold text-amber-600 dark:text-amber-400">
+                        Cliente Selecionado:
+                      </p>
+                      <p>
+                        <span className="font-semibold">Nome:</span> {selectedClientObj.nome}
+                      </p>
+                      <p className="tabular-nums">
+                        <span className="font-semibold">CPF/CNPJ:</span> {selectedClientObj.cpfCnpj}
+                      </p>
+                      <p className="tabular-nums">
+                        <span className="font-semibold">Telefone:</span>{' '}
+                        {selectedClientObj.telefone}
+                      </p>
+                      <p>
+                        <span className="font-semibold">Endereço:</span>{' '}
+                        {selectedClientObj.endereco || 'Não cadastrado'}
+                      </p>
                     </div>
                   )}
                 </div>
 
                 {/* Confirm contract generation */}
-                <button
-                  type="button"
-                  disabled={isSaving || !genCliTemplateId || !genCliClienteId}
-                  onClick={handleGenerateContract}
-                  className="w-full bg-primary hover:opacity-90 disabled:opacity-50 text-white py-2 px-4 rounded-lg font-medium text-sm transition-all shadow-sm flex items-center justify-center gap-2"
-                >
-                  <FilePlus size={16} />
-                  {isSaving ? 'Gerando...' : 'Gerar e Salvar Contrato'}
-                </button>
+                <div className="space-y-2">
+                  <button
+                    type="button"
+                    disabled={isSaving || !genCliTemplateId || !genCliClienteId || !canWrite}
+                    onClick={handleGenerateContract}
+                    className="w-full bg-primary hover:opacity-90 disabled:opacity-50 text-white py-2 px-4 rounded-lg font-medium text-sm transition-all shadow-sm flex items-center justify-center gap-2"
+                  >
+                    <FilePlus size={16} />
+                    {isSaving ? 'Gerando...' : 'Gerar e Salvar Contrato'}
+                  </button>
+
+                  {selectedTemplateObjForCli && selectedClientObj && canWrite && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        openResolvedInWordEditor(
+                          `Contrato - ${selectedClientObj.nome}`,
+                          'Contrato',
+                          resolvedCliHtml
+                        )
+                      }
+                      className="w-full border border-app-border hover:bg-app-bg text-app-text py-2 px-4 rounded-lg font-medium text-xs transition-all flex items-center justify-center gap-2"
+                    >
+                      <Edit2 size={14} className="text-primary" />
+                      Abrir Contrato no Editor Word p/ Ajustes
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* Variable mapped fields */}
@@ -1263,19 +1460,33 @@ export default function Documentos() {
                   <div className="space-y-2 max-h-[250px] overflow-y-auto text-xs custom-scrollbar">
                     <div className="flex justify-between border-b border-app-border py-1">
                       <span className="font-mono text-primary">%CLIENTE_NOME%</span>
-                      <span className="text-app-text truncate max-w-[150px]" title={selectedClientObj?.nome}>{selectedClientObj?.nome || 'Vazio'}</span>
+                      <span
+                        className="text-app-text truncate max-w-[150px]"
+                        title={selectedClientObj?.nome}
+                      >
+                        {selectedClientObj?.nome || 'Vazio'}
+                      </span>
                     </div>
                     <div className="flex justify-between border-b border-app-border py-1">
                       <span className="font-mono text-primary">%CLIENTE_CPF_CNPJ%</span>
-                      <span className="text-app-text truncate max-w-[150px]">{selectedClientObj?.cpfCnpj || 'Vazio'}</span>
+                      <span className="text-app-text truncate max-w-[150px] tabular-nums">
+                        {selectedClientObj?.cpfCnpj || 'Vazio'}
+                      </span>
                     </div>
                     <div className="flex justify-between border-b border-app-border py-1">
                       <span className="font-mono text-primary">%CLIENTE_RG%</span>
-                      <span className="text-app-text truncate max-w-[150px]">{selectedClientObj?.rg || 'Vazio'}</span>
+                      <span className="text-app-text truncate max-w-[150px] tabular-nums">
+                        {selectedClientObj?.rg || 'Vazio'}
+                      </span>
                     </div>
                     <div className="flex justify-between border-b border-app-border py-1">
                       <span className="font-mono text-primary">%CLIENTE_ENDERECO%</span>
-                      <span className="text-app-text truncate max-w-[150px]" title={selectedClientObj?.endereco}>{selectedClientObj?.endereco || 'Vazio'}</span>
+                      <span
+                        className="text-app-text truncate max-w-[150px]"
+                        title={selectedClientObj?.endereco}
+                      >
+                        {selectedClientObj?.endereco || 'Vazio'}
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -1284,110 +1495,131 @@ export default function Documentos() {
 
             {/* Contract live preview sheet */}
             <div className="lg:col-span-8 flex flex-col gap-4">
-              <div className="bg-app-surface border border-app-border rounded-xl shadow-sm flex flex-col h-[650px] overflow-hidden">
-                <div className="bg-app-bg px-4 py-3 border-b border-app-border flex items-center justify-between">
+              <div className="bg-app-surface border border-app-border rounded-xl shadow-sm flex flex-col h-[700px] overflow-hidden">
+                <div className="bg-app-bg px-4 py-3 border-b border-app-border flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2">
                     <Sparkles className="text-amber-500" size={18} />
-                    <span className="font-semibold text-app-text text-sm">Contrato Gerado - Visualização de Impressão</span>
+                    <span className="font-semibold text-app-text text-sm">
+                      Contrato Gerado - Visualização em Folha A4
+                    </span>
                   </div>
-                  {genCliTemplateId && genCliClienteId && (
-                    <button 
-                      onClick={() => {
-                        const resolved = replaceVariables(selectedTemplateObjForCli?.conteudo || '', {
-                          cliente: selectedClientObj,
-                          office: activeOffice,
-                          varas: state.varas
-                        });
-                        printDocument({
-                          id: '',
-                          titulo: selectedTemplateObjForCli?.titulo || 'Contrato',
-                          tipo: 'Contrato',
-                          conteudo: resolved,
-                          dataCriacao: ''
-                        });
-                      }}
-                      className="px-2.5 py-1 text-xs border border-app-border hover:bg-app-bg rounded-lg text-app-text transition-colors flex items-center gap-1.5"
-                    >
-                      <Printer size={13} />
-                      Imprimir
-                    </button>
+                  {selectedTemplateObjForCli && selectedClientObj && (
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        disabled={exportingDocId === 'gen-cli'}
+                        onClick={() =>
+                          handleDownloadDocumentDocx(
+                            'gen-cli',
+                            `Contrato_${selectedClientObj.nome}`,
+                            resolvedCliHtml
+                          )
+                        }
+                        className="px-2.5 py-1 text-xs bg-primary/10 hover:bg-primary/20 border border-primary/20 rounded-lg text-primary font-semibold transition-colors flex items-center gap-1.5"
+                      >
+                        <Download size={13} />
+                        Baixar .docx
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          printDocument({
+                            titulo: `Contrato - ${selectedClientObj.nome}`,
+                            conteudo: resolvedCliHtml
+                          })
+                        }
+                        className="px-2.5 py-1 text-xs border border-app-border hover:bg-app-surface rounded-lg text-app-text transition-colors flex items-center gap-1.5"
+                      >
+                        <Printer size={13} />
+                        Imprimir / PDF
+                      </button>
+                    </div>
                   )}
                 </div>
 
-                <div className="flex-1 p-8 bg-zinc-100 dark:bg-zinc-950 overflow-y-auto custom-scrollbar flex justify-center">
-                  <div className="w-full max-w-[21cm] min-h-[29.7cm] bg-white dark:bg-zinc-900 shadow-lg border border-zinc-200 dark:border-zinc-800 p-[2.5cm] select-text">
-                    <div className="prose dark:prose-invert prose-sm max-w-none text-black dark:text-zinc-100 leading-relaxed markdown-body">
-                      {selectedTemplateObjForCli && selectedClientObj ? (
-                        <Markdown>
-                          {replaceVariables(selectedTemplateObjForCli.conteudo, {
-                            cliente: selectedClientObj,
-                            office: activeOffice,
-                            varas: state.varas
-                          })}
-                        </Markdown>
-                      ) : (
-                        <div className="flex flex-col items-center justify-center py-24 text-app-text-muted gap-3">
-                          <Sparkles size={36} className="text-amber-500/40 animate-pulse" />
-                          <p className="text-sm font-medium">Selecione o modelo e o cliente ao lado.</p>
-                          <p className="text-xs text-center max-w-xs">O contrato será preenchido substituindo os marcadores de dados do cliente em tempo real.</p>
-                        </div>
-                      )}
-                    </div>
+                <div className="flex-1 p-6 sm:p-8 bg-zinc-100 dark:bg-zinc-950 overflow-y-auto overflow-x-auto custom-scrollbar flex justify-center">
+                  <div className="w-[21cm] min-h-[29.7cm] bg-white text-zinc-900 shadow-md border border-zinc-300 dark:border-zinc-700 p-[2.5cm] select-text">
+                    {selectedTemplateObjForCli && selectedClientObj ? (
+                      <div
+                        className="word-page-content"
+                        dangerouslySetInnerHTML={{ __html: resolvedCliHtml }}
+                      />
+                    ) : (
+                      <div className="flex flex-col items-center justify-center py-24 text-zinc-500 gap-3">
+                        <Sparkles size={36} className="text-amber-500/40" />
+                        <p className="text-sm font-medium text-zinc-700">
+                          Selecione o modelo e o cliente ao lado.
+                        </p>
+                        <p className="text-xs text-center max-w-xs text-zinc-500">
+                          O contrato será preenchido substituindo os marcadores de dados do cliente
+                          em tempo real na folha A4.
+                        </p>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
             </div>
-
           </div>
         )}
-
       </div>
 
-      {/* EDITOR PREVIEW MODAL */}
+      {/* EDITOR DRAFT PREVIEW MODAL */}
       {showEditorPreview && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 flex items-center justify-center p-4">
           <div className="bg-app-surface border border-app-border rounded-xl shadow-2xl max-w-4xl w-full flex flex-col max-h-[90vh] overflow-hidden">
-            
-            {/* Modal Title bar */}
             <div className="px-5 py-4 border-b border-app-border flex items-center justify-between bg-app-bg">
               <div className="flex items-center gap-2">
                 <FileText className="text-primary" size={20} />
                 <h3 className="font-semibold text-app-text text-sm sm:text-base truncate max-w-lg">
-                  Visualização do Rascunho - {editorTitle || 'Sem Título'}
+                  Pré-visualização A4 — {editorTitle || 'Sem Título'}
                 </h3>
               </div>
-              <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-amber-500/10 text-amber-500">
+              <span className="px-2 py-0.5 rounded text-xs font-semibold bg-amber-500/10 text-amber-600 dark:text-amber-400">
                 Rascunho
               </span>
             </div>
 
-            {/* Modal Scrollable Body */}
-            <div className="flex-1 p-6 sm:p-8 bg-zinc-100 dark:bg-zinc-950 overflow-y-auto custom-scrollbar flex justify-center">
-              <div className="w-full max-w-[21cm] min-h-[29.7cm] bg-white dark:bg-zinc-900 shadow-xl border border-zinc-200 dark:border-zinc-800 p-[2cm] select-text">
-                <div className="prose dark:prose-invert prose-sm max-w-none text-black dark:text-zinc-100 leading-relaxed markdown-body">
-                  {editorContent ? (
-                    <Markdown>{editorContent}</Markdown>
-                  ) : (
-                    <p className="text-app-text-muted italic text-center py-12">Nenhum conteúdo no modelo para visualizar.</p>
-                  )}
-                </div>
+            <div className="flex-1 p-6 sm:p-8 bg-zinc-100 dark:bg-zinc-950 overflow-y-auto overflow-x-auto custom-scrollbar flex justify-center">
+              <div className="w-[21cm] min-h-[29.7cm] bg-white text-zinc-900 shadow-md border border-zinc-300 p-[2.5cm] select-text">
+                {editorContent ? (
+                  <div
+                    className="word-page-content"
+                    dangerouslySetInnerHTML={{
+                      __html: normalizeContentToHtml(editorContent)
+                    }}
+                  />
+                ) : (
+                  <p className="text-zinc-400 italic text-center py-12">
+                    Nenhum conteúdo no modelo para visualizar.
+                  </p>
+                )}
               </div>
             </div>
 
-            {/* Modal Footer actions */}
             <div className="p-4 border-t border-app-border bg-app-bg flex flex-wrap gap-2 justify-end">
               <button
                 type="button"
-                onClick={() => {
-                  const demoDoc: Documento = {
-                    id: '',
+                onClick={() =>
+                  handleDownloadDocumentDocx(
+                    'draft',
+                    editorTitle || 'Rascunho',
+                    editorContent
+                  )
+                }
+                className="px-4 py-2 bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all"
+              >
+                <Download size={14} />
+                Baixar .docx
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  printDocument({
                     titulo: editorTitle || 'Rascunho',
-                    tipo: editorType,
-                    conteudo: editorContent,
-                    dataCriacao: ''
-                  };
-                  printDocument(demoDoc);
-                }}
+                    conteudo: editorContent
+                  })
+                }
                 className="px-4 py-2 bg-primary text-white hover:opacity-90 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all shadow-sm"
               >
                 <Printer size={14} />
@@ -1395,10 +1627,7 @@ export default function Documentos() {
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  navigator.clipboard.writeText(editorContent);
-                  alert('Conteúdo copiado para a área de transferência!');
-                }}
+                onClick={() => copyDocumentPlainText(editorContent)}
                 className="px-4 py-2 border border-app-border hover:bg-app-surface rounded-lg text-xs font-semibold text-app-text flex items-center gap-1.5 transition-all"
               >
                 <Copy size={14} />
@@ -1412,7 +1641,6 @@ export default function Documentos() {
                 Fechar
               </button>
             </div>
-
           </div>
         </div>
       )}
@@ -1421,31 +1649,57 @@ export default function Documentos() {
       {viewingDoc && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/60 flex items-center justify-center p-4">
           <div className="bg-app-surface border border-app-border rounded-xl shadow-2xl max-w-4xl w-full flex flex-col max-h-[90vh] overflow-hidden">
-            
-            {/* Modal Title bar */}
             <div className="px-5 py-4 border-b border-app-border flex items-center justify-between bg-app-bg">
               <div className="flex items-center gap-2">
                 <FileText className="text-primary" size={20} />
-                <h3 className="font-semibold text-app-text text-sm sm:text-base truncate max-w-lg" title={viewingDoc.titulo}>
+                <h3
+                  className="font-semibold text-app-text text-sm sm:text-base truncate max-w-lg"
+                  title={viewingDoc.titulo}
+                >
                   {viewingDoc.titulo}
                 </h3>
               </div>
-              <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-primary/10 text-primary">
+              <span className="px-2 py-0.5 rounded text-xs font-semibold bg-primary/10 text-primary">
                 {viewingDoc.tipo}
               </span>
             </div>
 
-            {/* Modal Scrollable Body */}
-            <div className="flex-1 p-6 sm:p-8 bg-zinc-100 dark:bg-zinc-950 overflow-y-auto custom-scrollbar flex justify-center">
-              <div className="w-full max-w-[21cm] min-h-[29.7cm] bg-white dark:bg-zinc-900 shadow-xl border border-zinc-200 dark:border-zinc-800 p-[2cm] select-text">
-                <div className="prose dark:prose-invert prose-sm max-w-none text-black dark:text-zinc-100 leading-relaxed markdown-body">
-                  <Markdown>{viewingDoc.conteudo}</Markdown>
-                </div>
+            <div className="flex-1 p-6 sm:p-8 bg-zinc-100 dark:bg-zinc-950 overflow-y-auto overflow-x-auto custom-scrollbar flex justify-center">
+              <div className="w-[21cm] min-h-[29.7cm] bg-white text-zinc-900 shadow-md border border-zinc-300 p-[2.5cm] select-text">
+                <div
+                  className="word-page-content"
+                  dangerouslySetInnerHTML={{
+                    __html: normalizeContentToHtml(viewingDoc.conteudo)
+                  }}
+                />
               </div>
             </div>
 
-            {/* Modal Footer actions */}
             <div className="p-4 border-t border-app-border bg-app-bg flex flex-wrap gap-2 justify-end">
+              {canWrite && (
+                <button
+                  type="button"
+                  onClick={() => handleEdit(viewingDoc)}
+                  className="px-4 py-2 border border-app-border hover:bg-app-surface rounded-lg text-xs font-semibold text-app-text flex items-center gap-1.5 transition-all"
+                >
+                  <Edit2 size={14} className="text-primary" />
+                  Editar no Word
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() =>
+                  handleDownloadDocumentDocx(
+                    viewingDoc.id,
+                    viewingDoc.titulo,
+                    viewingDoc.conteudo
+                  )
+                }
+                className="px-4 py-2 bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all"
+              >
+                <Download size={14} />
+                Baixar .docx
+              </button>
               <button
                 type="button"
                 onClick={() => printDocument(viewingDoc)}
@@ -1456,10 +1710,7 @@ export default function Documentos() {
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  navigator.clipboard.writeText(viewingDoc.conteudo);
-                  alert('Conteúdo copiado para a área de transferência!');
-                }}
+                onClick={() => copyDocumentPlainText(viewingDoc.conteudo)}
                 className="px-4 py-2 border border-app-border hover:bg-app-surface rounded-lg text-xs font-semibold text-app-text flex items-center gap-1.5 transition-all"
               >
                 <Copy size={14} />
@@ -1473,11 +1724,24 @@ export default function Documentos() {
                 Fechar
               </button>
             </div>
-
           </div>
         </div>
       )}
 
+      {/* CONFIRM DELETE MODAL */}
+      <ConfirmDeleteModal
+        isOpen={Boolean(deletingDoc)}
+        onClose={() => setDeletingDoc(null)}
+        onConfirm={confirmDelete}
+        title="Excluir Documento"
+        description={
+          <>
+            Tem certeza que deseja excluir permanentemente o documento{' '}
+            <strong className="text-app-text">{deletingDoc?.titulo}</strong>? Esta ação não poderá
+            ser desfeita.
+          </>
+        }
+      />
     </div>
   );
 }

@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
   --color-primary: var(--primary-color);
@@ -105,6 +106,132 @@
 .border-primary { border-color: var(--primary-color); }
 .ring-primary { --tw-ring-color: var(--primary-color); }
 .accent-primary { accent-color: var(--primary-color); }
+
+/* Word-style A4 Document & ProseMirror Editor Styles */
+.word-page-content,
+.word-page-content .ProseMirror {
+  outline: none;
+  min-height: 24.7cm;
+  color: #111827;
+  font-family: 'Times New Roman', Georgia, serif;
+  font-size: 12pt;
+  line-height: 1.6;
+  word-wrap: break-word;
+}
+
+.word-page-content .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  color: #9ca3af;
+  pointer-events: none;
+  height: 0;
+  font-style: italic;
+}
+
+.word-page-content p {
+  margin-top: 0;
+  margin-bottom: 0.75em;
+}
+
+.word-page-content h1 {
+  font-size: 18pt;
+  font-weight: 700;
+  margin-top: 1.1em;
+  margin-bottom: 0.5em;
+  line-height: 1.3;
+  color: #09090b;
+}
+
+.word-page-content h2 {
+  font-size: 15pt;
+  font-weight: 700;
+  margin-top: 1em;
+  margin-bottom: 0.45em;
+  line-height: 1.35;
+  color: #09090b;
+}
+
+.word-page-content h3 {
+  font-size: 13pt;
+  font-weight: 700;
+  margin-top: 0.9em;
+  margin-bottom: 0.4em;
+  line-height: 1.4;
+  color: #09090b;
+}
+
+.word-page-content ul {
+  list-style-type: disc;
+  padding-left: 1.75rem;
+  margin-bottom: 0.75em;
+}
+
+.word-page-content ol {
+  list-style-type: decimal;
+  padding-left: 1.75rem;
+  margin-bottom: 0.75em;
+}
+
+.word-page-content li {
+  margin-bottom: 0.25em;
+}
+
+.word-page-content blockquote {
+  margin: 0.85em 0 0.85em 2.5cm;
+  padding: 0.25em 0 0.25em 0.85rem;
+  border-left: 2px solid #cbd5e1;
+  font-size: 10.5pt;
+  line-height: 1.45;
+  color: #334155;
+}
+
+.word-page-content hr {
+  border: none;
+  border-top: 1px dashed #94a3b8;
+  margin: 1.5em 0;
+  position: relative;
+}
+
+.word-page-content table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+  margin: 1em 0;
+  overflow: hidden;
+}
+
+.word-page-content td,
+.word-page-content th {
+  min-width: 1em;
+  border: 1px solid #94a3b8;
+  padding: 6px 10px;
+  vertical-align: top;
+  box-sizing: border-box;
+  position: relative;
+}
+
+.word-page-content th {
+  font-weight: 700;
+  text-align: left;
+  background-color: #f1f5f9;
+}
+
+.word-page-content .selectedCell:after {
+  z-index: 2;
+  position: absolute;
+  content: "";
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  background: rgba(79, 70, 229, 0.12);
+  pointer-events: none;
+}
+
+.word-page-content a {
+  color: #2563eb;
+  text-decoration: underline;
+}
 
 @keyframes loading {
   0% { transform: translateX(-100%); }
