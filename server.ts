@@ -758,6 +758,141 @@ async function startServer() {
     }
   });
 
+  const maskSecret = (val?: string): string => {
+    const clean = (val || '').trim();
+    if (!clean) return '';
+    if (clean.length <= 8) return '••••••••';
+    return `${clean.slice(0, 6)}••••••${clean.slice(-4)}`;
+  };
+
+  // API para consultar o status das chaves Supabase configuradas no servidor (sem expor segredos)
+  app.get("/api/admin/supabase-config-status", (_req, res) => {
+    const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca'))
+      ? process.env.SUPABASE_URL
+      : (process.env.VITE_SUPABASE_URL || 'https://qhxdujbsipgwthrgvncl.supabase.co');
+
+    const publishableKey = process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+      process.env.SUPABASE_PUBLISHABLE_KEY ||
+      process.env.VITE_SUPABASE_ANON_KEY ||
+      process.env.ANON_KEY ||
+      'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL';
+
+    const secretKey = process.env.SUPABASE_SECRET_KEY || process.env.SERVICE_ROLE_KEY || '';
+    const jwtSecret = process.env.JWT_SECRET || '';
+    const postgresPassword = process.env.POSTGRES_PASSWORD || '';
+
+    res.json({
+      success: true,
+      supabaseUrl,
+      publishableKey,
+      hasSecretKey: !!secretKey,
+      secretKeyMask: maskSecret(secretKey),
+      hasJwtSecret: !!jwtSecret,
+      jwtSecretMask: maskSecret(jwtSecret),
+      hasPostgresPassword: !!postgresPassword,
+      postgresPasswordMask: maskSecret(postgresPassword),
+    });
+  });
+
+  // API para salvar as chaves do Supabase diretamente no .env e em memória no servidor
+  app.post("/api/admin/save-supabase-config", async (req, res) => {
+    try {
+      const {
+        supabaseUrl,
+        publishableKey,
+        secretKey,
+        jwtSecret,
+        postgresPassword
+      } = req.body || {};
+
+      const envPath = path.resolve(__dirname, ".env");
+      let envContent = fs.existsSync(envPath) ? fs.readFileSync(envPath, "utf-8") : "";
+
+      const setEnvVar = (key: string, val?: string) => {
+        const clean = typeof val === 'string' ? val.trim() : '';
+        if (!clean) return;
+        process.env[key] = clean;
+        const regex = new RegExp(`^${key}=.*$`, 'm');
+        if (regex.test(envContent)) {
+          envContent = envContent.replace(regex, `${key}=${clean}`);
+        } else {
+          envContent += `${envContent.endsWith('\n') || !envContent ? '' : '\n'}${key}=${clean}\n`;
+        }
+      };
+
+      setEnvVar('SUPABASE_URL', supabaseUrl);
+      setEnvVar('VITE_SUPABASE_URL', supabaseUrl);
+      setEnvVar('VITE_SUPABASE_PUBLISHABLE_KEY', publishableKey);
+      setEnvVar('SUPABASE_PUBLISHABLE_KEY', publishableKey);
+      setEnvVar('VITE_SUPABASE_ANON_KEY', publishableKey);
+      setEnvVar('ANON_KEY', publishableKey);
+      setEnvVar('SUPABASE_SECRET_KEY', secretKey);
+      setEnvVar('SERVICE_ROLE_KEY', secretKey);
+      setEnvVar('JWT_SECRET', jwtSecret);
+      setEnvVar('POSTGRES_PASSWORD', postgresPassword);
+
+      fs.writeFileSync(envPath, envContent, "utf-8");
+      console.log("[Configuração Supabase] Chaves atualizadas no .env do servidor com sucesso.");
+
+      const currentSecret = process.env.SUPABASE_SECRET_KEY || process.env.SERVICE_ROLE_KEY || '';
+      const currentJwt = process.env.JWT_SECRET || '';
+      const currentPg = process.env.POSTGRES_PASSWORD || '';
+
+      res.json({
+        success: true,
+        hasSecretKey: !!currentSecret,
+        secretKeyMask: maskSecret(currentSecret),
+        hasJwtSecret: !!currentJwt,
+        jwtSecretMask: maskSecret(currentJwt),
+        hasPostgresPassword: !!currentPg,
+        postgresPasswordMask: maskSecret(currentPg),
+      });
+    } catch (err: any) {
+      console.error("[Configuração Supabase] Erro ao salvar chaves no .env:", err);
+      res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // API para testar conexão administrativa usando a URL/chave informadas ou já salvas no servidor
+  app.post("/api/admin/test-supabase-connection", async (req, res) => {
+    try {
+      const targetUrl = String(req.body?.supabaseUrl || process.env.SUPABASE_URL || 'https://qhxdujbsipgwthrgvncl.supabase.co').trim();
+      const targetKey = String(
+        req.body?.secretKey ||
+        req.body?.publishableKey ||
+        process.env.SUPABASE_SECRET_KEY ||
+        process.env.SUPABASE_PUBLISHABLE_KEY ||
+        'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL'
+      ).trim();
+
+      if (!targetUrl || !targetKey) {
+        return res.status(400).json({ success: false, message: "URL e Chave do Supabase são obrigatórias." });
+      }
+
+      const resp = await fetch(`${targetUrl.replace(/\/$/, '')}/rest/v1/escritorios?select=id&limit=1`, {
+        headers: { apikey: targetKey, Authorization: `Bearer ${targetKey}` }
+      });
+
+      if (resp.ok) {
+        const usedAdminKey = !!(req.body?.secretKey || process.env.SUPABASE_SECRET_KEY);
+        return res.json({
+          success: true,
+          message: usedAdminKey
+            ? "Conexão administrativa (Service/Secret Key) estabelecida com sucesso!"
+            : "Conexão pública (Publishable/Anon Key) estabelecida! Configure a Secret Key para operações administrativas."
+        });
+      }
+
+      const errText = await resp.text().catch(() => '');
+      return res.json({
+        success: false,
+        message: `Falha ao conectar (HTTP ${resp.status}): ${errText.slice(0, 140) || 'Verifique a URL e as chaves informadas.'}`
+      });
+    } catch (err: any) {
+      res.json({ success: false, message: `Erro na requisição: ${err.message}` });
+    }
+  });
+
   // API para listar escritórios com bypass de RLS via servidor
   app.get("/api/supabase/escritorios", async (req, res) => {
     const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca')) ? process.env.SUPABASE_URL : 'https://qhxdujbsipgwthrgvncl.supabase.co';

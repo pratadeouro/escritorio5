@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { 
   Database, 
   CheckCircle2, 
@@ -9,24 +9,19 @@ import {
   Play, 
   Loader2, 
   Terminal, 
-  Key, 
-  Globe, 
-  TableProperties,
-  ArrowRight,
   ShieldCheck,
   RefreshCw
 } from 'lucide-react';
 import { useAppContext } from '../context';
-import { isSupabaseConfigured } from '../services/supabaseService';
 import { 
   SUPABASE_SCHEMA_SQL, 
   SUPABASE_RLS_SQL,
-  testSupabaseConnection, 
   migrateAllDataToSupabase, 
   generateFullSQLDump,
   MigrationProgress 
 } from '../services/supabaseMigration';
 import { registerUserInSupabaseAuth } from '../services/supabaseAuth';
+import { SupabaseConnectionFields } from './SupabaseConnectionFields';
 
 export const SupabaseMigrationTab: React.FC = () => {
   const { state, forceLoad, dataSource, setDataSource } = useAppContext();
@@ -52,33 +47,15 @@ export const SupabaseMigrationTab: React.FC = () => {
     }
   }, []);
 
-  const [isTesting, setIsTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
-
   const [copiedSchema, setCopiedSchema] = useState(false);
   const [isMigrating, setIsMigrating] = useState(false);
   const [progress, setProgress] = useState<MigrationProgress | null>(null);
   const [migrationResult, setMigrationResult] = useState<{ success: boolean; totalRecords: number; errors: string[] } | null>(null);
 
-  const handleSaveCredentials = (url: string, key: string) => {
-    setSupabaseUrl(url);
-    setSupabaseKey(key);
-    localStorage.setItem('supabase_migration_url', url);
-    localStorage.setItem('supabase_migration_key', key);
-  };
-
-  const handleTestConnection = async () => {
-    setIsTesting(true);
-    setTestResult(null);
-    try {
-      const res = await testSupabaseConnection(supabaseUrl, supabaseKey);
-      setTestResult(res);
-    } catch (err: any) {
-      setTestResult({ success: false, message: err.message || 'Falha ao testar conexão.' });
-    } finally {
-      setIsTesting(false);
-    }
-  };
+  const handleCredentialsChange = useCallback((creds: { supabaseUrl: string; activeKey: string }) => {
+    setSupabaseUrl(creds.supabaseUrl);
+    setSupabaseKey(creds.activeKey);
+  }, []);
 
   const handleCopySchema = () => {
     navigator.clipboard.writeText(SUPABASE_SCHEMA_SQL);
@@ -333,64 +310,7 @@ export const SupabaseMigrationTab: React.FC = () => {
           <h3 className="font-bold text-app-text">Conexão com o Supabase</h3>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="space-y-1.5">
-            <label className="text-xs font-bold text-app-text-muted flex items-center gap-1.5 uppercase">
-              <Globe size={14} className="text-primary" />
-              URL do Projeto Supabase
-            </label>
-            <input
-              type="text"
-              placeholder="https://xyzabcdefg.supabase.co"
-              value={supabaseUrl}
-              onChange={(e) => handleSaveCredentials(e.target.value, supabaseKey)}
-              className="w-full px-3.5 py-2.5 rounded-xl border border-app-border bg-app-bg text-sm text-app-text focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary font-mono text-xs"
-            />
-            <p className="text-[11px] text-app-text-muted">
-              Encontrada em: <b>Project Settings &rarr; API &rarr; Project URL</b>
-            </p>
-          </div>
-
-          <div className="space-y-1.5">
-            <label className="text-xs font-bold text-app-text-muted flex items-center gap-1.5 uppercase">
-              <Key size={14} className="text-primary" />
-              Chave de API (Service Role ou Anon Key)
-            </label>
-            <input
-              type="password"
-              placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-              value={supabaseKey}
-              onChange={(e) => handleSaveCredentials(supabaseUrl, e.target.value)}
-              className="w-full px-3.5 py-2.5 rounded-xl border border-app-border bg-app-bg text-sm text-app-text focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary font-mono text-xs"
-            />
-            <p className="text-[11px] text-app-text-muted">
-              Dica: A chave <b>service_role</b> é recomendada para importar tudo diretamente sem restrições de RLS.
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3 pt-2">
-          <button
-            type="button"
-            onClick={handleTestConnection}
-            disabled={isTesting || !supabaseUrl || !supabaseKey}
-            className="flex items-center gap-2 px-4 py-2 bg-primary/10 text-primary hover:bg-primary/20 rounded-xl text-xs font-bold transition-all disabled:opacity-50"
-          >
-            {isTesting ? <Loader2 size={14} className="animate-spin" /> : <ShieldCheck size={14} />}
-            Testar Conexão com Supabase
-          </button>
-
-          {testResult && (
-            <div className={`flex items-center gap-2 text-xs font-medium px-3 py-1.5 rounded-lg ${
-              testResult.success 
-                ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20' 
-                : 'bg-red-500/10 text-red-600 border border-red-500/20'
-            }`}>
-              {testResult.success ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
-              {testResult.message}
-            </div>
-          )}
-        </div>
+        <SupabaseConnectionFields onCredentialsChange={handleCredentialsChange} />
       </div>
 
       {/* Passo 3: Script DDL do Schema SQL & RLS */}

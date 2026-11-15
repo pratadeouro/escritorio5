@@ -30,6 +30,7 @@ import { isSupabaseConfigured, OFFICIAL_SUPABASE_URL } from '../services/supabas
 import { CURRENT_APP_VERSION } from '../services/versionService';
 import { EnvironmentMode } from '../types';
 import { SupabaseMigrationTab } from '../components/SupabaseMigrationTab';
+import { SupabaseConnectionFields } from '../components/SupabaseConnectionFields';
 
 const PRIMARY_COLORS = [
   { name: 'Índigo Moderno', hex: '#4f46e5' },
@@ -980,20 +981,18 @@ export default function ConfiguracoesGlobais() {
               </div>
             </div>
 
-            {/* Informações da Conexão Supabase Cloud */}
-            <div className="bg-app-bg/50 border border-app-border rounded-2xl p-4 space-y-3">
-              <div className="flex items-center justify-between">
+            {/* Informações e Chaves da Conexão Supabase Cloud */}
+            <div className="bg-app-bg/50 border border-app-border rounded-2xl p-5 space-y-4">
+              <div className="flex items-center justify-between border-b border-app-border pb-3">
                 <span className="text-xs font-bold text-app-text uppercase tracking-wider">
-                  Endpoint Oficial Supabase Cloud
+                  Conexão e Chaves do Supabase Cloud
                 </span>
                 <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                  Conectado
+                  Configuração Ativa
                 </span>
               </div>
-              <code className="block text-xs font-mono text-app-text bg-app-surface p-3 rounded-xl border border-app-border truncate">
-                {OFFICIAL_SUPABASE_URL}
-              </code>
+              <SupabaseConnectionFields showHeader={false} />
             </div>
           </div>
         </div>
