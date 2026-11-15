@@ -643,6 +643,43 @@ async function startServer() {
     }
   });
 
+  const writeEnvVarsSafely = (updates: Record<string, string | undefined>): { envFileSaved: boolean; envWriteError?: string } => {
+    const cwdEnv = path.resolve(process.cwd(), ".env");
+    const dirEnv = path.resolve(__dirname, ".env");
+    const envPath = fs.existsSync(cwdEnv) ? cwdEnv : dirEnv;
+
+    const cleanEntries: Array<[string, string]> = [];
+    for (const [key, rawVal] of Object.entries(updates)) {
+      if (typeof rawVal !== 'string') continue;
+      const clean = rawVal.replace(/[\r\n]+/g, '').trim();
+      if (!clean) continue;
+      process.env[key] = clean;
+      cleanEntries.push([key, clean]);
+    }
+
+    if (cleanEntries.length === 0) {
+      return { envFileSaved: true };
+    }
+
+    try {
+      let envContent = fs.existsSync(envPath) ? fs.readFileSync(envPath, "utf-8") : "";
+      for (const [key, clean] of cleanEntries) {
+        const regex = new RegExp(`^${key}=.*$`, 'm');
+        if (regex.test(envContent)) {
+          // Usa callback no replace para evitar interpretação de '$' em senhas/chaves
+          envContent = envContent.replace(regex, () => `${key}=${clean}`);
+        } else {
+          envContent += `${envContent.endsWith('\n') || !envContent ? '' : '\n'}${key}=${clean}\n`;
+        }
+      }
+      fs.writeFileSync(envPath, envContent, "utf-8");
+      return { envFileSaved: true };
+    } catch (err: any) {
+      const code = err?.code ? ` (${err.code})` : '';
+      return { envFileSaved: false, envWriteError: `${err?.message || String(err)}${code}` };
+    }
+  };
+
   // API para o administrador salvar o Modo do Ambiente (homologacao | producao) no .env e sincronizar no Supabase
   app.post("/api/admin/save-environment-mode", async (req, res) => {
     try {
@@ -651,31 +688,16 @@ async function startServer() {
         return res.status(400).json({ success: false, error: "Modo inválido. Utilize 'homologacao' ou 'producao'." });
       }
 
-      // Atualiza variáveis em tempo de execução
-      process.env.APP_ENVIRONMENT = cleanMode;
-      process.env.VITE_APP_ENVIRONMENT = cleanMode;
-
-      // 1. Atualiza arquivo .env do servidor atual
-      const envPath = path.resolve(__dirname, ".env");
-      let envContent = "";
-      if (fs.existsSync(envPath)) {
-        envContent = fs.readFileSync(envPath, "utf-8");
-      }
-
-      if (/^APP_ENVIRONMENT=.*$/m.test(envContent)) {
-        envContent = envContent.replace(/^APP_ENVIRONMENT=.*$/m, `APP_ENVIRONMENT=${cleanMode}`);
+      // 1. Atualiza em memória e tenta gravar no arquivo .env do servidor atual
+      const { envFileSaved, envWriteError } = writeEnvVarsSafely({
+        APP_ENVIRONMENT: cleanMode,
+        VITE_APP_ENVIRONMENT: cleanMode,
+      });
+      if (envFileSaved) {
+        console.log(`[Configuração Global] APP_ENVIRONMENT=${cleanMode} gravado no .env com sucesso.`);
       } else {
-        envContent += `${envContent.endsWith('\n') || !envContent ? '' : '\n'}APP_ENVIRONMENT=${cleanMode}\n`;
+        console.warn(`[Configuração Global] APP_ENVIRONMENT=${cleanMode} aplicado em memória; .env não gravado: ${envWriteError}`);
       }
-
-      if (/^VITE_APP_ENVIRONMENT=.*$/m.test(envContent)) {
-        envContent = envContent.replace(/^VITE_APP_ENVIRONMENT=.*$/m, `VITE_APP_ENVIRONMENT=${cleanMode}`);
-      } else {
-        envContent += `VITE_APP_ENVIRONMENT=${cleanMode}\n`;
-      }
-
-      fs.writeFileSync(envPath, envContent, "utf-8");
-      console.log(`[Configuração Global] APP_ENVIRONMENT=${cleanMode} gravado no .env com sucesso.`);
 
       // 2. Sincroniza na tabela app_settings do Supabase (se a coluna existir)
       let supabaseSynced = false;
@@ -701,7 +723,14 @@ async function startServer() {
         console.warn("[Configuração Global] Aviso ao sincronizar environment_mode com Supabase:", sbSyncErr);
       }
 
-      res.json({ success: true, environmentMode: cleanMode, environmentSource: 'env', supabaseSynced });
+      res.json({
+        success: true,
+        environmentMode: cleanMode,
+        environmentSource: envFileSaved ? 'env' : 'memory',
+        envFileSaved,
+        envWriteError,
+        supabaseSynced
+      });
     } catch (err: any) {
       console.error("[Configuração Global] Erro ao gravar APP_ENVIRONMENT no .env:", err);
       res.status(500).json({ success: false, error: err.message });
@@ -711,27 +740,41 @@ async function startServer() {
   // API para o administrador salvar o Google Client ID no .env e sincronizar no Supabase
   app.post("/api/admin/save-google-client-id", async (req, res) => {
     try {
-      const { googleClientId } = req.body;
-      const cleanId = typeof googleClientId === 'string' ? googleClientId.trim() : '';
+      const { googleClientId } = req.body || {};
+      const cleanId = typeof googleClientId === 'string' ? googleClientId.replace(/[\r\n]+/g, '').trim() : '';
 
-      // Atualiza variável em tempo de execução
       process.env.VITE_GOOGLE_CLIENT_ID = cleanId;
+      let envFileSaved = true;
+      let envWriteError: string | undefined;
 
-      // 1. Atualiza arquivo .env
-      const envPath = path.resolve(__dirname, ".env");
-      let envContent = "";
-      if (fs.existsSync(envPath)) {
-        envContent = fs.readFileSync(envPath, "utf-8");
-      }
-
-      if (/^VITE_GOOGLE_CLIENT_ID=.*$/m.test(envContent)) {
-        envContent = envContent.replace(/^VITE_GOOGLE_CLIENT_ID=.*$/m, `VITE_GOOGLE_CLIENT_ID=${cleanId}`);
+      if (cleanId) {
+        const result = writeEnvVarsSafely({ VITE_GOOGLE_CLIENT_ID: cleanId });
+        envFileSaved = result.envFileSaved;
+        envWriteError = result.envWriteError;
       } else {
-        envContent += `\nVITE_GOOGLE_CLIENT_ID=${cleanId}\n`;
+        // Permite limpar explicitamente o Google Client ID se enviado vazio
+        try {
+          const cwdEnv = path.resolve(process.cwd(), ".env");
+          const dirEnv = path.resolve(__dirname, ".env");
+          const envPath = fs.existsSync(cwdEnv) ? cwdEnv : dirEnv;
+          if (fs.existsSync(envPath)) {
+            let envContent = fs.readFileSync(envPath, "utf-8");
+            if (/^VITE_GOOGLE_CLIENT_ID=.*$/m.test(envContent)) {
+              envContent = envContent.replace(/^VITE_GOOGLE_CLIENT_ID=.*$/m, () => 'VITE_GOOGLE_CLIENT_ID=');
+              fs.writeFileSync(envPath, envContent, "utf-8");
+            }
+          }
+        } catch (wErr: any) {
+          envFileSaved = false;
+          envWriteError = wErr?.message || String(wErr);
+        }
       }
 
-      fs.writeFileSync(envPath, envContent, "utf-8");
-      console.log(`[Configuração Global] VITE_GOOGLE_CLIENT_ID gravado no .env com sucesso.`);
+      if (envFileSaved) {
+        console.log(`[Configuração Global] VITE_GOOGLE_CLIENT_ID gravado no .env com sucesso.`);
+      } else {
+        console.warn(`[Configuração Global] VITE_GOOGLE_CLIENT_ID aplicado em memória; .env não gravado: ${envWriteError}`);
+      }
 
       // 2. Sincroniza na tabela app_settings do Supabase (para persistência no banco)
       try {
@@ -751,7 +794,7 @@ async function startServer() {
         console.warn("[Configuração Global] Aviso ao sincronizar com app_settings do Supabase:", sbSyncErr);
       }
 
-      res.json({ success: true, googleClientId: cleanId });
+      res.json({ success: true, googleClientId: cleanId, envFileSaved, envWriteError });
     } catch (err: any) {
       console.error("[Configuração Global] Erro ao gravar .env:", err);
       res.status(500).json({ success: false, error: err.message });
@@ -805,34 +848,24 @@ async function startServer() {
         postgresPassword
       } = req.body || {};
 
-      const envPath = path.resolve(__dirname, ".env");
-      let envContent = fs.existsSync(envPath) ? fs.readFileSync(envPath, "utf-8") : "";
+      const { envFileSaved, envWriteError } = writeEnvVarsSafely({
+        SUPABASE_URL: supabaseUrl,
+        VITE_SUPABASE_URL: supabaseUrl,
+        VITE_SUPABASE_PUBLISHABLE_KEY: publishableKey,
+        SUPABASE_PUBLISHABLE_KEY: publishableKey,
+        VITE_SUPABASE_ANON_KEY: publishableKey,
+        ANON_KEY: publishableKey,
+        SUPABASE_SECRET_KEY: secretKey,
+        SERVICE_ROLE_KEY: secretKey,
+        JWT_SECRET: jwtSecret,
+        POSTGRES_PASSWORD: postgresPassword,
+      });
 
-      const setEnvVar = (key: string, val?: string) => {
-        const clean = typeof val === 'string' ? val.trim() : '';
-        if (!clean) return;
-        process.env[key] = clean;
-        const regex = new RegExp(`^${key}=.*$`, 'm');
-        if (regex.test(envContent)) {
-          envContent = envContent.replace(regex, `${key}=${clean}`);
-        } else {
-          envContent += `${envContent.endsWith('\n') || !envContent ? '' : '\n'}${key}=${clean}\n`;
-        }
-      };
-
-      setEnvVar('SUPABASE_URL', supabaseUrl);
-      setEnvVar('VITE_SUPABASE_URL', supabaseUrl);
-      setEnvVar('VITE_SUPABASE_PUBLISHABLE_KEY', publishableKey);
-      setEnvVar('SUPABASE_PUBLISHABLE_KEY', publishableKey);
-      setEnvVar('VITE_SUPABASE_ANON_KEY', publishableKey);
-      setEnvVar('ANON_KEY', publishableKey);
-      setEnvVar('SUPABASE_SECRET_KEY', secretKey);
-      setEnvVar('SERVICE_ROLE_KEY', secretKey);
-      setEnvVar('JWT_SECRET', jwtSecret);
-      setEnvVar('POSTGRES_PASSWORD', postgresPassword);
-
-      fs.writeFileSync(envPath, envContent, "utf-8");
-      console.log("[Configuração Supabase] Chaves atualizadas no .env do servidor com sucesso.");
+      if (envFileSaved) {
+        console.log("[Configuração Supabase] Chaves atualizadas no .env do servidor com sucesso.");
+      } else {
+        console.warn("[Configuração Supabase] Chaves aplicadas em memória, mas não foi possível gravar no .env:", envWriteError);
+      }
 
       const currentSecret = process.env.SUPABASE_SECRET_KEY || process.env.SERVICE_ROLE_KEY || '';
       const currentJwt = process.env.JWT_SECRET || '';
@@ -840,6 +873,8 @@ async function startServer() {
 
       res.json({
         success: true,
+        envFileSaved,
+        envWriteError,
         hasSecretKey: !!currentSecret,
         secretKeyMask: maskSecret(currentSecret),
         hasJwtSecret: !!currentJwt,

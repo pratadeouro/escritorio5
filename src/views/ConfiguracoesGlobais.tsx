@@ -26,7 +26,7 @@ import {
   Clock,
   Sparkles
 } from 'lucide-react';
-import { isSupabaseConfigured, OFFICIAL_SUPABASE_URL } from '../services/supabaseService';
+import { isSupabaseConfigured } from '../services/supabaseService';
 import { CURRENT_APP_VERSION } from '../services/versionService';
 import { EnvironmentMode } from '../types';
 import { SupabaseMigrationTab } from '../components/SupabaseMigrationTab';
@@ -156,6 +156,7 @@ export default function ConfiguracoesGlobais() {
   // Estados de feedback de gravação
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [copiedOrigin, setCopiedOrigin] = useState(false);
 
   const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
@@ -206,6 +207,7 @@ export default function ConfiguracoesGlobais() {
   const handleSaveAll = async () => {
     setIsSaving(true);
     setSaveSuccess(false);
+    setSaveError(null);
 
     try {
       const updatedSettings = {
@@ -269,9 +271,9 @@ export default function ConfiguracoesGlobais() {
 
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 4000);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Erro ao salvar configurações globais:', err);
-      alert('Erro ao salvar configurações globais no banco de dados.');
+      setSaveError(err?.message || 'Erro ao salvar configurações globais no servidor/banco de dados.');
     } finally {
       setIsSaving(false);
     }
@@ -316,6 +318,12 @@ export default function ConfiguracoesGlobais() {
           <div className="mt-4 p-3 bg-emerald-500/10 border border-emerald-500/20 rounded-xl text-emerald-600 dark:text-emerald-400 text-xs font-semibold flex items-center gap-2 animate-bounce">
             <CheckCircle2 size={16} className="shrink-0" />
             Configurações globais salvas com sucesso no servidor (.env) e sincronizadas!
+          </div>
+        )}
+        {saveError && (
+          <div className="mt-4 p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-red-600 dark:text-red-400 text-xs font-semibold flex items-center gap-2">
+            <AlertCircle size={16} className="shrink-0" />
+            {saveError}
           </div>
         )}
       </div>

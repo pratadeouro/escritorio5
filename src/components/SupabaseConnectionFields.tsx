@@ -143,7 +143,14 @@ export const SupabaseConnectionFields: React.FC<SupabaseConnectionFieldsProps> =
           postgresPassword: postgresPassword.trim()
         })
       });
-      const data = await resp.json().catch(() => ({}));
+      const rawText = await resp.text();
+      let data: any = {};
+      try {
+        data = rawText ? JSON.parse(rawText) : {};
+      } catch {
+        data = {};
+      }
+
       if (resp.ok && data.success) {
         setServerStatus({
           hasSecretKey: !!data.hasSecretKey,
@@ -153,14 +160,24 @@ export const SupabaseConnectionFields: React.FC<SupabaseConnectionFieldsProps> =
           hasPostgresPassword: !!data.hasPostgresPassword,
           postgresPasswordMask: data.postgresPasswordMask || ''
         });
-        setSaveMessage({
-          success: true,
-          message: 'Chaves salvas no .env do servidor e aplicadas em tempo real!'
-        });
+        if (data.envFileSaved === false) {
+          setSaveMessage({
+            success: true,
+            message: `Chaves aplicadas em memória no servidor! (Arquivo .env protegido contra escrita neste container: ${data.envWriteError || 'somente leitura'})`
+          });
+        } else {
+          setSaveMessage({
+            success: true,
+            message: 'Chaves salvas no .env do servidor e aplicadas em tempo real!'
+          });
+        }
       } else {
+        const detail = data?.error || (rawText && !rawText.trim().startsWith('<') ? rawText.slice(0, 140) : '');
         setSaveMessage({
           success: false,
-          message: data.error || 'Erro ao gravar chaves no servidor.'
+          message: detail
+            ? `Erro ao gravar chaves (HTTP ${resp.status}): ${detail}`
+            : `Erro ao gravar chaves no servidor (HTTP ${resp.status}). Se estiver na URL publicada, republique o app.`
         });
       }
     } catch (err: any) {
@@ -170,7 +187,7 @@ export const SupabaseConnectionFields: React.FC<SupabaseConnectionFieldsProps> =
       });
     } finally {
       setIsSaving(false);
-      setTimeout(() => setSaveMessage(null), 5000);
+      setTimeout(() => setSaveMessage(null), 7000);
     }
   };
 
