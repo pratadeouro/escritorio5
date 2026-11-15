@@ -204,6 +204,8 @@ interface AppContextType {
   updateCalendario: (item: Calendario) => void;
   deleteCalendario: (id: string) => void;
   addTipoEnvolvimento: (tipo: TipoEnvolvimento) => void;
+  updateTipoEnvolvimento: (tipo: TipoEnvolvimento) => void;
+  deleteTipoEnvolvimento: (id: string) => void;
   addEnvolvimento: (envolvido: Envolvido) => void;
   updateEnvolvimento: (envolvido: Envolvido) => void;
   deleteEnvolvimento: (id: string) => void;
@@ -1259,6 +1261,24 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             });
           } else if (acao === 'DELETE_VARA') {
             await deleteItemGenericSupabase('varas', record?.id || record);
+          } else if (acao === 'ADD_TIPO_ENVOLVIMENTO' || acao === 'UPDATE_TIPO_ENVOLVIMENTO') {
+            await upsertItemGenericSupabase('envolvidos_tipo', {
+              id: record.id,
+              nome: record.nome,
+            });
+          } else if (acao === 'DELETE_TIPO_ENVOLVIMENTO') {
+            await deleteItemGenericSupabase('envolvidos_tipo', record?.id || record);
+          } else if (acao === 'ADD_ENVOLVIMENTO' || acao === 'UPDATE_ENVOLVIMENTO') {
+            await upsertItemGenericSupabase('envolvidos', {
+              id: record.id,
+              contato_id: record.contatoId || null,
+              processo_id: record.processoId || null,
+              recurso_id: record.recursoId || null,
+              tipo_envolvimento: record.tipoEnvolvimento || null,
+              escritorio_id: record.escritorioId || null,
+            });
+          } else if (acao === 'DELETE_ENVOLVIMENTO') {
+            await deleteItemGenericSupabase('envolvidos', record?.id || record);
           } else if (acao === 'UPDATE_SETTINGS') {
             await upsertSettingsSupabase(record);
           }
@@ -1282,6 +1302,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             }, 'ID');
           } else if (acao === 'DELETE_ETIQUETA') {
             await deleteItemFromScript(scriptUrl, 'Etiquetas', record.id || record, 'ID');
+          } else if (acao === 'ADD_TIPO_ENVOLVIMENTO' || acao === 'UPDATE_TIPO_ENVOLVIMENTO') {
+            await upsertItemToScript(scriptUrl, 'envolvidos_tipo', {
+              ID_ENVOLVIMENTO: record.id,
+              NOME_ENVOLVIMENTO: record.nome,
+            }, 'ID_ENVOLVIMENTO');
+          } else if (acao === 'DELETE_TIPO_ENVOLVIMENTO') {
+            await deleteItemFromScript(scriptUrl, 'envolvidos_tipo', record?.id || record, 'ID_ENVOLVIMENTO');
           } else if (acao === 'ADD_ENVOLVIMENTO' || acao === 'UPDATE_ENVOLVIMENTO') {
             await upsertItemToScript(scriptUrl, 'Envolvidos', {
               ID_CADASTRO: record.id,
@@ -1586,8 +1613,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const rolePerm = permissions.find(p => p.role && normalizeString(p.role) === userRoleNormalized);
     
     if (rolePerm) {
-      // Admins sempre devem poder ver as configurações para evitar lockout
-      if (isAdmin() && view === 'settings') return true;
+      // Admins sempre devem poder ver as configurações e cadastros novos para evitar lockout
+      if (isAdmin() && (view === 'settings' || view === 'relacionamento')) return true;
+      if (view === 'relacionamento' && !rolePerm.menus.includes('relacionamento')) {
+        return rolePerm.menus.includes('processosAtivos') || rolePerm.menus.includes('varas');
+      }
       return rolePerm.menus.includes(view);
     }
 
@@ -3328,6 +3358,29 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
   }, [saveAndLog]);
 
+  const updateTipoEnvolvimento = useCallback((tipo: TipoEnvolvimento) => {
+    setState(s => {
+      const newState = {
+        ...s,
+        tipoEnvolvimentos: s.tipoEnvolvimentos.map(t => t.id === tipo.id ? tipo : t)
+      };
+      saveAndLog(newState, 'UPDATE_TIPO_ENVOLVIMENTO', `Tipo de envolvimento atualizado: ${tipo.nome}`, tipo);
+      return newState;
+    });
+  }, [saveAndLog]);
+
+  const deleteTipoEnvolvimento = useCallback((id: string) => {
+    setState(s => {
+      const itemToDelete = s.tipoEnvolvimentos.find(t => t.id === id);
+      const newState = {
+        ...s,
+        tipoEnvolvimentos: s.tipoEnvolvimentos.filter(t => t.id !== id)
+      };
+      saveAndLog(newState, 'DELETE_TIPO_ENVOLVIMENTO', `Tipo de envolvimento excluído: ${itemToDelete?.nome || id}`, itemToDelete || id);
+      return newState;
+    });
+  }, [saveAndLog]);
+
   const addEnvolvimento = useCallback((envolvido: Envolvido) => {
     setState(s => {
       const newState = { ...s, envolvidos: [...s.envolvidos, envolvido] };
@@ -3774,6 +3827,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     updateCalendario,
     deleteCalendario,
     addTipoEnvolvimento,
+    updateTipoEnvolvimento,
+    deleteTipoEnvolvimento,
     addEnvolvimento,
     updateEnvolvimento,
     deleteEnvolvimento,
@@ -3872,6 +3927,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     updateCalendario,
     deleteCalendario,
     addTipoEnvolvimento,
+    updateTipoEnvolvimento,
+    deleteTipoEnvolvimento,
     addEnvolvimento,
     updateEnvolvimento,
     deleteEnvolvimento,

@@ -1008,6 +1008,7 @@ export default function Settings() {
     { id: 'upj', label: 'UPJ', icon: <Building2 size={18} /> },
     { id: 'julgadores', label: 'Julgadores', icon: <Gavel size={18} /> },
     { id: 'servidores', label: 'Servidores', icon: <Users size={18} /> },
+    { id: 'relacionamento', label: 'Relacionamento', icon: <Tag size={18} /> },
     { id: 'api_diario', label: 'Consulta - DJEN', icon: <FileText size={18} /> },
     { id: 'leads', label: 'Leads', icon: <TrendingUp size={18} /> },
     { id: 'settings', label: 'Configurações', icon: <SettingsIconLucide size={18} /> },

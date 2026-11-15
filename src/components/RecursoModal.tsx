@@ -4,6 +4,7 @@ import { useAppContext } from '../context';
 import { FileText, Link as LinkIcon, Users, Plus, Search, Trash2, UserPlus } from 'lucide-react';
 import Modal from './Modal';
 import ProcessoSelect from './ProcessoSelect';
+import TipoEnvolvimentoModal from './TipoEnvolvimentoModal';
 import { Recurso, Envolvido } from '../types';
 
 interface RecursoModalProps {
@@ -24,6 +25,7 @@ export default function RecursoModal({ isOpen, onClose, recurso, readOnly: propR
   
   const [selectedContactToAdd, setSelectedContactToAdd] = useState('');
   const [selectedTipoEnvolvimento, setSelectedTipoEnvolvimento] = useState('');
+  const [isTipoEnvolvimentoModalOpen, setIsTipoEnvolvimentoModalOpen] = useState(false);
   const [contactSearchTerm, setContactSearchTerm] = useState('');
   const [showContactResults, setShowContactResults] = useState(false);
   const [showTagSelector, setShowTagSelector] = useState(false);
@@ -456,20 +458,30 @@ export default function RecursoModal({ isOpen, onClose, recurso, readOnly: propR
               </div>
 
               <div>
-                <label className="text-xs font-medium text-app-text-muted mb-1 block">Tipo de Envolvimento</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="text-xs font-medium text-app-text-muted block">Tipo de Envolvimento</label>
+                  <button
+                    type="button"
+                    onClick={() => setIsTipoEnvolvimentoModalOpen(true)}
+                    className="text-[11px] font-semibold text-primary hover:underline flex items-center gap-0.5"
+                    title="Cadastrar ou gerenciar tipos de envolvimento"
+                  >
+                    <Plus size={11} /> Gerenciar tipos
+                  </button>
+                </div>
                 <select 
                   className="w-full px-3 py-2 bg-app-surface border border-app-border text-app-text text-sm rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20"
                   value={selectedTipoEnvolvimento}
                   onChange={e => setSelectedTipoEnvolvimento(e.target.value)}
                 >
                   <option value="">Selecione...</option>
-                  {state.tipoEnvolvimentos
+                  {[...state.tipoEnvolvimentos]
                     .sort((a, b) => {
                       const isDefaultA = a.id === 'apelante' || a.id === 'apelado';
                       const isDefaultB = b.id === 'apelante' || b.id === 'apelado';
                       if (isDefaultA && !isDefaultB) return 1;
                       if (!isDefaultA && isDefaultB) return -1;
-                      return a.id.localeCompare(b.id, undefined, { numeric: true, sensitivity: 'base' });
+                      return a.nome.localeCompare(b.nome, 'pt-BR', { sensitivity: 'base' });
                     })
                     .map(t => (
                       <option key={t.id} value={t.nome}>{t.nome}</option>
@@ -586,6 +598,12 @@ export default function RecursoModal({ isOpen, onClose, recurso, readOnly: propR
           )}
         </div>
       </form>
+
+      <TipoEnvolvimentoModal
+        isOpen={isTipoEnvolvimentoModalOpen}
+        onClose={() => setIsTipoEnvolvimentoModalOpen(false)}
+        onSelectCreated={(nome) => setSelectedTipoEnvolvimento(nome)}
+      />
     </Modal>
   );
 }

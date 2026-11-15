@@ -123,7 +123,7 @@ export const fetchAllDataFromSupabase = async (coreOnly = false): Promise<Partia
   // Consulta de todas as 24 tabelas em paralelo
   const [
     escRes, usuRes, procRes, contRes, tarRes, eveRes, movRes, finRes, docRes,
-    varRes, julRes, serRes, recRes, upjRes, forRes, triRes, envRes, modRes,
+    varRes, julRes, serRes, recRes, upjRes, forRes, triRes, envRes, envTipoRes, modRes,
     etiRes, calRes, leaRes, lesRes, logRes, setRes
   ] = await Promise.all([
     supabase.from('escritorios').select('*'),
@@ -143,6 +143,7 @@ export const fetchAllDataFromSupabase = async (coreOnly = false): Promise<Partia
     supabase.from('forums').select('*'),
     supabase.from('tribunais').select('*'),
     supabase.from('envolvidos').select('*'),
+    supabase.from('envolvidos_tipo').select('*').order('nome'),
     supabase.from('modelos').select('*'),
     supabase.from('etiquetas').select('*'),
     supabase.from('calendario').select('*'),
@@ -211,6 +212,20 @@ export const fetchAllDataFromSupabase = async (coreOnly = false): Promise<Partia
     forums: (forRes.data || []).map(mapForumFromDb),
     tribunais: (triRes.data || []).map(mapTribunalFromDb),
     envolvidos: (envRes.data || []).map(mapEnvolvidoFromDb),
+    tipoEnvolvimentos: (() => {
+      const defaults: TipoEnvolvimento[] = [
+        { id: 'apelante', nome: 'Apelante' },
+        { id: 'apelado', nome: 'Apelado' },
+      ];
+      const loaded = (envTipoRes.data || []).map(mapTipoEnvolvimentoFromDb);
+      const merged = [...loaded];
+      defaults.forEach(d => {
+        if (!merged.some(t => t.id.toLowerCase() === d.id || t.nome.toLowerCase() === d.nome.toLowerCase())) {
+          merged.push(d);
+        }
+      });
+      return merged;
+    })(),
     modelos: (modRes.data || []).map(mapModeloFromDb),
     etiquetas: (etiRes.data || []).map(mapEtiquetaFromDb),
     calendario: (calRes.data || []).map(mapCalendarioFromDb),
@@ -522,6 +537,11 @@ const mapEnvolvidoFromDb = (r: any): Envolvido => ({
   recursoId: r.recurso_id || undefined,
   tipoEnvolvimento: r.tipo_envolvimento || '',
   escritorioId: r.escritorio_id || '',
+});
+
+const mapTipoEnvolvimentoFromDb = (r: any): TipoEnvolvimento => ({
+  id: r.id,
+  nome: r.nome || '',
 });
 
 const mapModeloFromDb = (r: any): Modelo => ({

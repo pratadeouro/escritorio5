@@ -202,6 +202,7 @@ export default function Layout({ children, currentView, onNavigate }: LayoutProp
     { id: 'upj' as View, label: 'UPJ', icon: <Building2 size={20} /> },
     { id: 'julgadores' as View, label: 'Julgadores', icon: <Gavel size={20} /> },
     { id: 'servidores' as View, label: 'Servidores', icon: <Users size={20} /> },
+    { id: 'relacionamento' as View, label: 'Relacionamento', icon: <Network size={20} /> },
   ].filter(item => item.id !== 'movimentos' || state.settings.showMovimentos !== false);
 
   const userMenuOrder = currentUser?.menuOrder || state.settings.menuOrder || [];
@@ -218,7 +219,7 @@ export default function Layout({ children, currentView, onNavigate }: LayoutProp
     });
   };
 
-  const locaisIds: View[] = ['varas', 'forum', 'tribunais', 'upj', 'julgadores', 'servidores'];
+  const locaisIds: View[] = ['varas', 'forum', 'tribunais', 'upj', 'julgadores', 'servidores', 'relacionamento'];
   
   const navItems = getSortedItems(allItems.filter(item => !locaisIds.includes(item.id)));
   const locaisItems = getSortedItems(allItems.filter(item => locaisIds.includes(item.id)));
@@ -310,21 +311,24 @@ export default function Layout({ children, currentView, onNavigate }: LayoutProp
               </button>
             ))}
 
-            {/* Submenu Locais */}
+            {/* Submenu Cadastros */}
             {locaisItems.filter(item => canViewMenu(item.id)).length > 0 && (
               <div className="space-y-1">
                 <button
                   onClick={() => setLocaisOpen(!locaisOpen)}
                   className={`
                     w-full flex items-center justify-between px-3 py-2.5 text-sm font-medium rounded-xl transition-all
-                    text-app-text-muted hover:bg-app-secondary hover:text-app-text
+                    ${locaisIds.includes(currentView)
+                      ? 'bg-primary/10 text-primary'
+                      : 'text-app-text-muted hover:bg-app-secondary hover:text-app-text'
+                    }
                   `}
                 >
                   <div className="flex items-center">
-                    <span className="mr-3 text-app-text-muted">
+                    <span className={`mr-3 ${locaisIds.includes(currentView) ? 'text-primary' : 'text-app-text-muted'}`}>
                       <Landmark size={20} />
                     </span>
-                    Locais
+                    Cadastros
                   </div>
                   <ChevronDown 
                     size={16} 

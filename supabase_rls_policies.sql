@@ -91,6 +91,17 @@ ALTER TABLE public.recursos ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.upj ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.forums ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.tribunais ENABLE ROW LEVEL SECURITY;
+CREATE TABLE IF NOT EXISTS public.envolvidos_tipo (
+  id TEXT PRIMARY KEY,
+  nome TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+INSERT INTO public.envolvidos_tipo (id, nome) VALUES
+  ('apelante', 'Apelante'),
+  ('apelado', 'Apelado')
+ON CONFLICT (id) DO NOTHING;
+
+ALTER TABLE public.envolvidos_tipo ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.envolvidos ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.modelos ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.etiquetas ENABLE ROW LEVEL SECURITY;
@@ -136,6 +147,7 @@ DROP POLICY IF EXISTS "RLS_Recursos" ON public.recursos;
 DROP POLICY IF EXISTS "RLS_UPJ" ON public.upj;
 DROP POLICY IF EXISTS "RLS_Forums" ON public.forums;
 DROP POLICY IF EXISTS "RLS_Tribunais" ON public.tribunais;
+DROP POLICY IF EXISTS "RLS_EnvolvidosTipo" ON public.envolvidos_tipo;
 DROP POLICY IF EXISTS "RLS_Envolvidos" ON public.envolvidos;
 DROP POLICY IF EXISTS "RLS_Modelos" ON public.modelos;
 DROP POLICY IF EXISTS "RLS_Etiquetas" ON public.etiquetas;
@@ -266,6 +278,7 @@ CREATE POLICY "RLS_Tribunais" ON public.tribunais FOR ALL TO authenticated USING
 CREATE POLICY "RLS_Forums" ON public.forums FOR ALL TO authenticated USING (public.is_active_user()) WITH CHECK (public.is_admin());
 CREATE POLICY "RLS_UPJ" ON public.upj FOR ALL TO authenticated USING (public.is_active_user()) WITH CHECK (public.is_admin());
 CREATE POLICY "RLS_Recursos" ON public.recursos FOR ALL TO authenticated USING (public.is_active_user()) WITH CHECK (public.is_active_user());
+CREATE POLICY "RLS_EnvolvidosTipo" ON public.envolvidos_tipo FOR ALL TO authenticated USING (public.is_active_user()) WITH CHECK (public.is_active_user());
 CREATE POLICY "RLS_Envolvidos" ON public.envolvidos FOR ALL TO authenticated USING (public.is_active_user()) WITH CHECK (public.is_active_user());
 CREATE POLICY "RLS_Calendario" ON public.calendario FOR ALL TO authenticated USING (public.is_active_user()) WITH CHECK (public.is_active_user());
 CREATE POLICY "RLS_LeadsStatus" ON public.leads_status FOR ALL TO authenticated USING (public.is_active_user()) WITH CHECK (public.is_admin());

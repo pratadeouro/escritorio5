@@ -8,6 +8,7 @@ import { Processo, Vara } from '../types';
 import { generateId } from '../services/googleSheets';
 import { formatDate, calculateDeadline, getTribunalHolidays, formatDateTime } from '../utils/date';
 import { CreateContatoModal, CreateVaraModal, CreateEventoModal } from '../components/CreateModals';
+import TipoEnvolvimentoModal from '../components/TipoEnvolvimentoModal';
 import Pagination from '../components/Pagination';
 import {
   DndContext,
@@ -314,6 +315,7 @@ export default function Processos({
   const [selectedContactToAdd, setSelectedContactToAdd] = useState('');
   const [contactSearchTerm, setContactSearchTerm] = useState('');
   const [selectedTipoEnvolvimento, setSelectedTipoEnvolvimento] = useState('');
+  const [isTipoEnvolvimentoModalOpen, setIsTipoEnvolvimentoModalOpen] = useState(false);
   const [editingEnvolvidoContactId, setEditingEnvolvidoContactId] = useState<string | null>(null);
   const [editingTipoEnvolvimento, setEditingTipoEnvolvimento] = useState<string>('');
   const [showContactResults, setShowContactResults] = useState(false);
@@ -2602,20 +2604,30 @@ export default function Processos({
                 </div>
 
                 <div className="w-full md:w-64">
-                  <label className="text-[10px] font-bold text-app-text-muted uppercase mb-1 block">Tipo de Envolvimento</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-[10px] font-bold text-app-text-muted uppercase block">Tipo de Envolvimento</label>
+                    <button
+                      type="button"
+                      onClick={() => setIsTipoEnvolvimentoModalOpen(true)}
+                      className="text-[10px] font-bold text-primary hover:underline flex items-center gap-0.5"
+                      title="Cadastrar ou gerenciar tipos de envolvimento"
+                    >
+                      <Plus size={11} /> Gerenciar tipos
+                    </button>
+                  </div>
                   <select 
                     className="w-full px-3 py-2 border border-app-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary bg-app-surface text-app-text text-sm"
                     value={selectedTipoEnvolvimento}
                     onChange={e => setSelectedTipoEnvolvimento(e.target.value)}
                   >
                     <option value="">Selecione o tipo...</option>
-                    {state.tipoEnvolvimentos
+                    {[...state.tipoEnvolvimentos]
                       .sort((a, b) => {
                         const isDefaultA = a.id === 'apelante' || a.id === 'apelado';
                         const isDefaultB = b.id === 'apelante' || b.id === 'apelado';
                         if (isDefaultA && !isDefaultB) return 1;
                         if (!isDefaultA && isDefaultB) return -1;
-                        return a.id.localeCompare(b.id, undefined, { numeric: true, sensitivity: 'base' });
+                        return a.nome.localeCompare(b.nome, 'pt-BR', { sensitivity: 'base' });
                       })
                       .map(t => (
                         <option key={t.id} value={t.nome}>{t.nome}</option>
@@ -4414,6 +4426,12 @@ export default function Processos({
           vara={varaForStats}
         />
       )}
+
+      <TipoEnvolvimentoModal
+        isOpen={isTipoEnvolvimentoModalOpen}
+        onClose={() => setIsTipoEnvolvimentoModalOpen(false)}
+        onSelectCreated={(nome) => setSelectedTipoEnvolvimento(nome)}
+      />
     </div>
   );
 }

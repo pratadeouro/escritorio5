@@ -26,6 +26,7 @@ import Recursos from './views/Recursos';
 import UPJ from './views/UPJ';
 import Modelos from './views/Modelos';
 import Etiquetas from './views/Etiquetas';
+import Relacionamento from './views/Relacionamento';
 import Tribunais from './views/Tribunais';
 import Forums from './views/Forums';
 import DJEN from './views/DJEN';
@@ -179,6 +180,7 @@ function AppContent() {
       case 'forum': return <Forums />;
       case 'escritorios': return <Escritorios />;
       case 'etiquetas': return <Etiquetas />;
+      case 'relacionamento': return <Relacionamento />;
       case 'tribunais': return <Tribunais />;
       case 'modelos': return <Modelos />;
       case 'julgadores': return <Julgadores />;

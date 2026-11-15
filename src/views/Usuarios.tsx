@@ -474,6 +474,7 @@ export default function Usuarios() {
     { id: 'tribunais', label: 'Cadastro de Tribunais' },
     { id: 'julgadores', label: 'Cadastro de Julgadores' },
     { id: 'servidores', label: 'Cadastro de Servidores' },
+    { id: 'relacionamento', label: 'Cadastro de Relacionamento (Tipos de Envolvimento)' },
   ];
 
   const allModules = [
@@ -498,6 +499,7 @@ export default function Usuarios() {
     { id: 'etiquetas', label: 'Etiquetas' },
     { id: 'calendario', label: 'Calendário' },
     { id: 'movimentos', label: 'Movimentações Processuais' },
+    { id: 'relacionamento', label: 'Relacionamento' },
   ];
 
   const moduleToMenuMapping: Record<string, View[]> = {
@@ -522,6 +524,7 @@ export default function Usuarios() {
     etiquetas: ['etiquetas'],
     calendario: ['calendario'],
     movimentos: ['movimentos'],
+    relacionamento: ['relacionamento'],
   };
 
   const getVisibleModules = (role: RolePermission) => {

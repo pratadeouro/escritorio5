@@ -21,6 +21,7 @@ export type View =
   | 'tribunais'
   | 'escritorios'
   | 'etiquetas'
+  | 'relacionamento'
   | 'djen'
   | 'api_diario'
   | 'leads'
