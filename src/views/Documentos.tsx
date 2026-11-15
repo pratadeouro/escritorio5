@@ -18,7 +18,8 @@ import {
   AlertCircle,
   Sparkles,
   Download,
-  FileUp
+  FileUp,
+  RefreshCw
 } from 'lucide-react';
 import { formatDate } from '../utils/date';
 import { Documento, Processo, Contato } from '../types';
@@ -236,16 +237,25 @@ export default function Documentos() {
   const [variableSearch, setVariableSearch] = useState('');
   const [copiedVariable, setCopiedVariable] = useState<string | null>(null);
   const [showEditorPreview, setShowEditorPreview] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   // Generation States (Processo)
   const [genProcTemplateId, setGenProcTemplateId] = useState('');
   const [genProcProcessoId, setGenProcProcessoId] = useState('');
+  const [genProcTitle, setGenProcTitle] = useState('');
+  const [genProcRawTemplateHtml, setGenProcRawTemplateHtml] = useState('');
+  const [genProcContent, setGenProcContent] = useState('');
+  const [genProcDocKey, setGenProcDocKey] = useState('proc-init');
   const [procSearchTerm, setProcSearchTerm] = useState('');
   const [showProcDropdown, setShowProcDropdown] = useState(false);
 
   // Generation States (Contrato/Cliente)
   const [genCliTemplateId, setGenCliTemplateId] = useState('');
   const [genCliClienteId, setGenCliClienteId] = useState('');
+  const [genCliTitle, setGenCliTitle] = useState('');
+  const [genCliRawTemplateHtml, setGenCliRawTemplateHtml] = useState('');
+  const [genCliContent, setGenCliContent] = useState('');
+  const [genCliDocKey, setGenCliDocKey] = useState('cli-init');
   const [cliSearchTerm, setCliSearchTerm] = useState('');
   const [showCliDropdown, setShowCliDropdown] = useState(false);
 
@@ -258,6 +268,8 @@ export default function Documentos() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const wordEditorRef = useRef<WordDocumentEditorHandle>(null);
+  const procWordEditorRef = useRef<WordDocumentEditorHandle>(null);
+  const cliWordEditorRef = useRef<WordDocumentEditorHandle>(null);
   const quickImportInputRef = useRef<HTMLInputElement>(null);
 
   // Active office details
@@ -497,91 +509,218 @@ export default function Documentos() {
     }
   };
 
-  const openResolvedInWordEditor = (
-    title: string,
-    tipo: Documento['tipo'],
-    resolvedHtml: string
-  ) => {
-    setEditingId(null);
-    setEditorTitle(title);
-    setEditorType(tipo);
-    setEditorContent(normalizeContentToHtml(resolvedHtml));
-    setEditorDocKey(`resolved-${Date.now()}`);
-    setActiveTab('editor');
-    notify('success', 'Documento aberto no Editor Word para ajustes finais.');
+  const computeProcEditorHtml = (baseTemplateHtml: string, processoObj?: Processo) => {
+    const normalized = normalizeContentToHtml(baseTemplateHtml);
+    if (!processoObj) return normalized;
+    const clientObj = state.contatos.find(c => c.id === processoObj.clienteId);
+    return replaceVariables(normalized, {
+      processo: processoObj,
+      cliente: clientObj,
+      office: activeOffice,
+      varas: state.varas
+    });
+  };
+
+  const handleSelectProcTemplate = (newTemplateId: string) => {
+    setGenProcTemplateId(newTemplateId);
+    const tpl = state.documentos.find(d => d.id === newTemplateId);
+    const baseHtml = tpl ? normalizeContentToHtml(tpl.conteudo) : '';
+    setGenProcRawTemplateHtml(baseHtml);
+
+    if (tpl) {
+      setGenProcTitle(
+        selectedProcessObj ? `${tpl.titulo} - Processo ${selectedProcessObj.numero}` : tpl.titulo
+      );
+      const nextHtml = computeProcEditorHtml(baseHtml, selectedProcessObj);
+      setGenProcContent(nextHtml);
+    } else {
+      setGenProcTitle('');
+      setGenProcContent('');
+    }
+    setGenProcDocKey(`proc-${newTemplateId || 'none'}-${genProcProcessoId || 'none'}-${Date.now()}`);
+  };
+
+  const handleSelectProcesso = (processo: Processo) => {
+    setGenProcProcessoId(processo.id);
+    setProcSearchTerm(processo.numero);
+    setShowProcDropdown(false);
+
+    const baseHtml = selectedTemplateObjForProc
+      ? normalizeContentToHtml(selectedTemplateObjForProc.conteudo)
+      : genProcRawTemplateHtml || procWordEditorRef.current?.getHtmlContent() || genProcContent;
+
+    const baseTitle = selectedTemplateObjForProc
+      ? selectedTemplateObjForProc.titulo
+      : genProcTitle.replace(/\s*-\s*Processo\s+.*$/i, '').trim() || 'Documento';
+
+    setGenProcTitle(`${baseTitle} - Processo ${processo.numero}`);
+
+    if (baseHtml && baseHtml.trim()) {
+      const nextHtml = computeProcEditorHtml(baseHtml, processo);
+      setGenProcContent(nextHtml);
+      setGenProcDocKey(`proc-${genProcTemplateId || 'custom'}-${processo.id}-${Date.now()}`);
+    }
+  };
+
+  const handleReapplyProcVariables = () => {
+    const baseHtml = selectedTemplateObjForProc
+      ? normalizeContentToHtml(selectedTemplateObjForProc.conteudo)
+      : genProcRawTemplateHtml || procWordEditorRef.current?.getHtmlContent() || genProcContent;
+
+    if (!baseHtml) {
+      notify('error', 'Selecione um modelo ou importe um arquivo .docx primeiro.');
+      return;
+    }
+
+    const nextHtml = computeProcEditorHtml(baseHtml, selectedProcessObj);
+    setGenProcContent(nextHtml);
+    setGenProcDocKey(`proc-reapply-${Date.now()}`);
+    notify('success', 'Variáveis do processo reaplicadas na folha do editor.');
+  };
+
+  const computeCliEditorHtml = (baseTemplateHtml: string, clienteObj?: Contato) => {
+    const normalized = normalizeContentToHtml(baseTemplateHtml);
+    if (!clienteObj) return normalized;
+    return replaceVariables(normalized, {
+      cliente: clienteObj,
+      office: activeOffice,
+      varas: state.varas
+    });
+  };
+
+  const handleSelectCliTemplate = (newTemplateId: string) => {
+    setGenCliTemplateId(newTemplateId);
+    const tpl = state.documentos.find(d => d.id === newTemplateId);
+    const baseHtml = tpl ? normalizeContentToHtml(tpl.conteudo) : '';
+    setGenCliRawTemplateHtml(baseHtml);
+
+    if (tpl) {
+      setGenCliTitle(selectedClientObj ? `Contrato - ${selectedClientObj.nome}` : tpl.titulo);
+      const nextHtml = computeCliEditorHtml(baseHtml, selectedClientObj);
+      setGenCliContent(nextHtml);
+    } else {
+      setGenCliTitle('');
+      setGenCliContent('');
+    }
+    setGenCliDocKey(`cli-${newTemplateId || 'none'}-${genCliClienteId || 'none'}-${Date.now()}`);
+  };
+
+  const handleSelectCliente = (cliente: Contato) => {
+    setGenCliClienteId(cliente.id);
+    setCliSearchTerm(cliente.nome);
+    setShowCliDropdown(false);
+
+    const baseHtml = selectedTemplateObjForCli
+      ? normalizeContentToHtml(selectedTemplateObjForCli.conteudo)
+      : genCliRawTemplateHtml || cliWordEditorRef.current?.getHtmlContent() || genCliContent;
+
+    setGenCliTitle(`Contrato - ${cliente.nome}`);
+
+    if (baseHtml && baseHtml.trim()) {
+      const nextHtml = computeCliEditorHtml(baseHtml, cliente);
+      setGenCliContent(nextHtml);
+      setGenCliDocKey(`cli-${genCliTemplateId || 'custom'}-${cliente.id}-${Date.now()}`);
+    }
+  };
+
+  const handleReapplyCliVariables = () => {
+    const baseHtml = selectedTemplateObjForCli
+      ? normalizeContentToHtml(selectedTemplateObjForCli.conteudo)
+      : genCliRawTemplateHtml || cliWordEditorRef.current?.getHtmlContent() || genCliContent;
+
+    if (!baseHtml) {
+      notify('error', 'Selecione um modelo ou importe um arquivo .docx primeiro.');
+      return;
+    }
+
+    const nextHtml = computeCliEditorHtml(baseHtml, selectedClientObj);
+    setGenCliContent(nextHtml);
+    setGenCliDocKey(`cli-reapply-${Date.now()}`);
+    notify('success', 'Variáveis do cliente reaplicadas na folha do editor.');
   };
 
   const handleGenerateForProcess = async () => {
-    if (!genProcTemplateId || !genProcProcessoId) {
-      notify('error', 'Por favor, selecione um modelo e um processo.');
+    if (!genProcProcessoId) {
+      notify('error', 'Por favor, escolha o processo ao qual o documento será vinculado.');
+      return;
+    }
+
+    const process = state.processos.find(p => p.id === genProcProcessoId);
+    if (!process) return;
+
+    const latestHtml = procWordEditorRef.current
+      ? procWordEditorRef.current.getHtmlContent()
+      : genProcContent;
+
+    if (!htmlToPlainText(latestHtml).trim()) {
+      notify('error', 'A folha do editor está vazia. Selecione um modelo, importe um .docx ou digite o texto.');
       return;
     }
 
     const template = state.documentos.find(d => d.id === genProcTemplateId);
-    const process = state.processos.find(p => p.id === genProcProcessoId);
-    if (!template || !process) return;
 
     setIsSaving(true);
     try {
-      const resolvedContent = replaceVariables(normalizeContentToHtml(template.conteudo), {
-        processo: process,
-        cliente: selectedClientForProc,
-        office: activeOffice,
-        varas: state.varas
-      });
+      const finalTitle =
+        genProcTitle.trim() ||
+        `${template?.titulo || 'Documento'} - Processo ${process.numero}`;
 
       const newDoc: Documento = {
         id: `DOC_${Math.random().toString(16).slice(2, 10).toUpperCase()}`,
-        titulo: `${template.titulo} - Processo ${process.numero}`,
-        tipo: template.tipo === 'Outro' ? 'Outro' : template.tipo,
-        conteudo: resolvedContent,
+        titulo: finalTitle,
+        tipo: template ? template.tipo : 'Petição',
+        conteudo: latestHtml,
         processoId: process.id,
         dataCriacao: new Date().toISOString().split('T')[0],
         escritorioId: escritorioAtivoId || 'x'
       };
 
       addDocumento(newDoc);
-      notify('success', 'Novo documento gerado e salvo com sucesso!');
+      notify('success', 'Documento salvo com sucesso!');
       setActiveTab('salvos');
     } catch (err: any) {
-      notify('error', 'Erro ao gerar documento: ' + err.message);
+      notify('error', 'Erro ao salvar documento: ' + err.message);
     } finally {
       setIsSaving(false);
     }
   };
 
   const handleGenerateContract = async () => {
-    if (!genCliTemplateId || !genCliClienteId) {
-      notify('error', 'Por favor, selecione um modelo e um cliente.');
+    if (!genCliClienteId) {
+      notify('error', 'Por favor, escolha o cliente para salvar o contrato.');
       return;
     }
 
-    const template = state.documentos.find(d => d.id === genCliTemplateId);
     const client = state.contatos.find(c => c.id === genCliClienteId);
-    if (!template || !client) return;
+    if (!client) return;
+
+    const latestHtml = cliWordEditorRef.current
+      ? cliWordEditorRef.current.getHtmlContent()
+      : genCliContent;
+
+    if (!htmlToPlainText(latestHtml).trim()) {
+      notify('error', 'A folha do contrato está vazia. Selecione um modelo, importe um .docx ou digite o texto.');
+      return;
+    }
 
     setIsSaving(true);
     try {
-      const resolvedContent = replaceVariables(normalizeContentToHtml(template.conteudo), {
-        cliente: client,
-        office: activeOffice,
-        varas: state.varas
-      });
+      const finalTitle = genCliTitle.trim() || `Contrato - ${client.nome}`;
 
       const newDoc: Documento = {
         id: `DOC_${Math.random().toString(16).slice(2, 10).toUpperCase()}`,
-        titulo: `Contrato - ${client.nome}`,
+        titulo: finalTitle,
         tipo: 'Contrato',
-        conteudo: resolvedContent,
+        conteudo: latestHtml,
         dataCriacao: new Date().toISOString().split('T')[0],
         escritorioId: escritorioAtivoId || 'x'
       };
 
       addDocumento(newDoc);
-      notify('success', 'Contrato gerado e salvo com sucesso!');
+      notify('success', 'Contrato salvo com sucesso!');
       setActiveTab('salvos');
     } catch (err: any) {
-      notify('error', 'Erro ao gerar contrato: ' + err.message);
+      notify('error', 'Erro ao salvar contrato: ' + err.message);
     } finally {
       setIsSaving(false);
     }
@@ -591,27 +730,8 @@ export default function Documentos() {
     printHtmlDocument(doc.titulo || 'Documento', doc.conteudo);
   };
 
-  const resolvedProcHtml =
-    selectedTemplateObjForProc && selectedProcessObj
-      ? replaceVariables(normalizeContentToHtml(selectedTemplateObjForProc.conteudo), {
-          processo: selectedProcessObj,
-          cliente: selectedClientForProc,
-          office: activeOffice,
-          varas: state.varas
-        })
-      : '';
-
-  const resolvedCliHtml =
-    selectedTemplateObjForCli && selectedClientObj
-      ? replaceVariables(normalizeContentToHtml(selectedTemplateObjForCli.conteudo), {
-          cliente: selectedClientObj,
-          office: activeOffice,
-          varas: state.varas
-        })
-      : '';
-
   return (
-    <div className="p-6 max-w-[1440px] mx-auto space-y-6">
+    <div className="flex-1 h-full min-h-0 w-full flex flex-col px-4 sm:px-6 pt-3 pb-1 gap-3 overflow-y-auto xl:overflow-hidden">
       {/* Hidden input for quick .docx import from header */}
       <input
         ref={quickImportInputRef}
@@ -622,14 +742,14 @@ export default function Documentos() {
       />
 
       {/* Header and alerts */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2 shrink-0">
         <div>
-          <h1 className="text-2xl font-bold text-app-text flex items-center">
-            <FileText className="mr-3 text-primary" />
+          <h1 className="text-xl sm:text-2xl font-bold text-app-text flex items-center">
+            <FileText className="mr-2.5 text-primary" size={22} />
             Gerador de Documentos
           </h1>
-          <p className="text-xs text-app-text-muted mt-1">
-            Editor estilo Word em folha A4 com importação e exportação nativa de arquivos .docx e variáveis automáticas.
+          <p className="text-xs text-app-text-muted mt-0.5">
+            Editor estilo Word com paginação A4 real, importação/exportação nativa .docx e variáveis automáticas.
           </p>
         </div>
         {canWrite && activeTab === 'salvos' && (
@@ -637,10 +757,10 @@ export default function Documentos() {
             <button
               type="button"
               onClick={() => quickImportInputRef.current?.click()}
-              className="bg-app-surface hover:bg-app-bg text-app-text border border-app-border px-3.5 py-2 rounded-lg flex items-center gap-2 transition-colors shadow-sm text-sm font-medium"
+              className="bg-app-surface hover:bg-app-bg text-app-text border border-app-border px-3 py-1.5 rounded-lg flex items-center gap-2 transition-colors shadow-sm text-xs sm:text-sm font-medium"
               title="Importar um arquivo .docx do computador para o editor"
             >
-              <FileUp size={16} className="text-primary" />
+              <FileUp size={15} className="text-primary" />
               Importar .docx
             </button>
             <button
@@ -649,9 +769,9 @@ export default function Documentos() {
                 resetEditor();
                 setActiveTab('editor');
               }}
-              className="bg-primary hover:opacity-90 text-white px-4 py-2 rounded-lg flex items-center transition-colors shadow-sm text-sm font-medium"
+              className="bg-primary hover:opacity-90 text-white px-3.5 py-1.5 rounded-lg flex items-center transition-colors shadow-sm text-xs sm:text-sm font-medium"
             >
-              <Plus size={18} className="mr-2" />
+              <Plus size={16} className="mr-1.5" />
               Novo Modelo / Texto
             </button>
           </div>
@@ -660,31 +780,31 @@ export default function Documentos() {
 
       {/* Notifications */}
       {successMessage && (
-        <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 p-4 rounded-xl flex items-start gap-3 animate-fade-in">
-          <CheckCircle2 size={20} className="shrink-0 mt-0.5" />
-          <span className="text-sm font-medium">{successMessage}</span>
+        <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 px-3.5 py-2.5 rounded-xl flex items-center gap-2.5 animate-fade-in shrink-0">
+          <CheckCircle2 size={18} className="shrink-0" />
+          <span className="text-xs sm:text-sm font-medium">{successMessage}</span>
         </div>
       )}
 
       {errorMessage && (
-        <div className="bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 p-4 rounded-xl flex items-start gap-3 animate-fade-in">
-          <AlertCircle size={20} className="shrink-0 mt-0.5" />
-          <span className="text-sm font-medium">{errorMessage}</span>
+        <div className="bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 px-3.5 py-2.5 rounded-xl flex items-center gap-2.5 animate-fade-in shrink-0">
+          <AlertCircle size={18} className="shrink-0" />
+          <span className="text-xs sm:text-sm font-medium">{errorMessage}</span>
         </div>
       )}
 
       {/* Navigation tabs */}
-      <div className="flex overflow-x-auto gap-2 border-b border-app-border pb-px no-scrollbar">
+      <div className="flex overflow-x-auto gap-2 border-b border-app-border pb-px no-scrollbar shrink-0">
         <button
           type="button"
           onClick={() => setActiveTab('salvos')}
-          className={`px-4 py-2.5 font-medium text-sm border-b-2 transition-all flex items-center gap-2 shrink-0 ${
+          className={`px-3.5 py-2 font-medium text-xs sm:text-sm border-b-2 transition-all flex items-center gap-2 shrink-0 ${
             activeTab === 'salvos'
               ? 'border-primary text-primary'
               : 'border-transparent text-app-text-muted hover:text-app-text'
           }`}
         >
-          <FolderOpen size={16} />
+          <FolderOpen size={15} />
           Documentos Salvos
           <span className="text-xs text-app-text-muted tabular-nums">
             ({filteredDocumentos.length})
@@ -693,56 +813,56 @@ export default function Documentos() {
         <button
           type="button"
           onClick={() => setActiveTab('editor')}
-          className={`px-4 py-2.5 font-medium text-sm border-b-2 transition-all flex items-center gap-2 shrink-0 ${
+          className={`px-3.5 py-2 font-medium text-xs sm:text-sm border-b-2 transition-all flex items-center gap-2 shrink-0 ${
             activeTab === 'editor'
               ? 'border-primary text-primary'
               : 'border-transparent text-app-text-muted hover:text-app-text'
           }`}
         >
-          <FileCode size={16} />
+          <FileCode size={15} />
           {editingId ? 'Editar no Word (.docx)' : 'Editor Word (.docx)'}
         </button>
         <button
           type="button"
           onClick={() => setActiveTab('gerar-processo')}
-          className={`px-4 py-2.5 font-medium text-sm border-b-2 transition-all flex items-center gap-2 shrink-0 ${
+          className={`px-3.5 py-2 font-medium text-xs sm:text-sm border-b-2 transition-all flex items-center gap-2 shrink-0 ${
             activeTab === 'gerar-processo'
               ? 'border-primary text-primary'
               : 'border-transparent text-app-text-muted hover:text-app-text'
           }`}
         >
-          <ArrowLeftRight size={16} />
+          <ArrowLeftRight size={15} />
           Gerar p/ Processo
         </button>
         <button
           type="button"
           onClick={() => setActiveTab('gerar-contrato')}
-          className={`px-4 py-2.5 font-medium text-sm border-b-2 transition-all flex items-center gap-2 shrink-0 ${
+          className={`px-3.5 py-2 font-medium text-xs sm:text-sm border-b-2 transition-all flex items-center gap-2 shrink-0 ${
             activeTab === 'gerar-contrato'
               ? 'border-primary text-primary'
               : 'border-transparent text-app-text-muted hover:text-app-text'
           }`}
         >
-          <Sparkles size={16} />
+          <Sparkles size={15} />
           Gerar Contrato (Cliente)
         </button>
       </div>
 
-      {/* Tab contents */}
-      <div className="space-y-6">
+      {/* Tab contents - stretches down to the page footer */}
+      <div className="flex-1 min-h-0 flex flex-col">
         {/* TAB 1: SAVED DOCUMENTS */}
         {activeTab === 'salvos' && (
-          <div className="bg-app-surface rounded-xl shadow-sm border border-app-border overflow-hidden">
-            <div className="p-4 border-b border-app-border flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex-1 min-h-0 bg-app-surface rounded-xl shadow-sm border border-app-border flex flex-col overflow-hidden">
+            <div className="p-3.5 border-b border-app-border flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
               <div className="relative flex-1 max-w-md">
                 <Search
                   className="absolute left-3 top-1/2 transform -translate-y-1/2 text-app-text-muted"
-                  size={18}
+                  size={17}
                 />
                 <input
                   type="text"
                   placeholder="Buscar documentos ou modelos salvos..."
-                  className="w-full pl-10 pr-4 py-2 border border-app-border bg-app-bg text-app-text rounded-lg focus:outline-none focus:ring-1 focus:ring-primary focus:border-transparent text-sm"
+                  className="w-full pl-9 pr-4 py-1.5 border border-app-border bg-app-bg text-app-text rounded-lg focus:outline-none focus:ring-1 focus:ring-primary focus:border-transparent text-sm"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
@@ -752,15 +872,15 @@ export default function Documentos() {
               </span>
             </div>
 
-            <div className="overflow-x-auto">
+            <div className="flex-1 min-h-0 overflow-auto custom-scrollbar">
               <table className="w-full text-left border-collapse text-sm">
-                <thead>
-                  <tr className="border-b border-app-border bg-app-bg/50 text-app-text-muted text-[11px] uppercase tracking-wider font-bold">
-                    <th className="py-3.5 px-4 font-bold">Documento</th>
-                    <th className="py-3.5 px-4 font-bold">Tipo</th>
-                    <th className="py-3.5 px-4 font-bold">Processo Vinculado</th>
-                    <th className="py-3.5 px-4 font-bold">Criado em</th>
-                    <th className="py-3.5 px-4 text-right font-bold">Ações</th>
+                <thead className="sticky top-0 z-10 bg-app-surface">
+                  <tr className="border-b border-app-border bg-app-bg/70 text-app-text-muted text-[11px] uppercase tracking-wider font-bold">
+                    <th className="py-3 px-4 font-bold">Documento</th>
+                    <th className="py-3 px-4 font-bold">Tipo</th>
+                    <th className="py-3 px-4 font-bold">Processo Vinculado</th>
+                    <th className="py-3 px-4 font-bold">Criado em</th>
+                    <th className="py-3 px-4 text-right font-bold">Ações</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-app-border">
@@ -889,15 +1009,16 @@ export default function Documentos() {
 
         {/* TAB 2: EMBEDDED WORD-STYLE A4 EDITOR (OPTION A) */}
         {activeTab === 'editor' && (
-          <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
+          <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-12 gap-4 xl:h-full">
             {/* Left side column: Document settings & Variable picker */}
-            <div className="xl:col-span-3 space-y-5">
-              <div className="bg-app-surface border border-app-border rounded-xl p-4 shadow-sm space-y-4">
-                <div className="flex items-center justify-between pb-2 border-b border-app-border">
-                  <h2 className="text-sm font-semibold text-app-text flex items-center gap-2">
-                    <FilePlus size={16} className="text-primary" />
-                    {editingId ? 'Editando Modelo' : 'Dados do Modelo'}
-                  </h2>
+            {!sidebarCollapsed && (
+              <div className="xl:col-span-3 flex flex-col gap-3 xl:h-full xl:min-h-0 xl:overflow-y-auto custom-scrollbar pr-0.5">
+                <div className="bg-app-surface border border-app-border rounded-xl p-4 shadow-sm space-y-3.5 shrink-0">
+                  <div className="flex items-center justify-between pb-2 border-b border-app-border">
+                    <h2 className="text-sm font-semibold text-app-text flex items-center gap-2">
+                      <FilePlus size={16} className="text-primary" />
+                      {editingId ? 'Editando Modelo' : 'Dados do Modelo'}
+                    </h2>
                   <button
                     type="button"
                     onClick={() => setShowEditorPreview(true)}
@@ -959,8 +1080,8 @@ export default function Documentos() {
                 </form>
               </div>
 
-              {/* Variable library card */}
-              <div className="bg-app-surface border border-app-border rounded-xl p-4 shadow-sm space-y-3 flex flex-col max-h-[485px]">
+                {/* Variable library card */}
+                <div className="bg-app-surface border border-app-border rounded-xl p-4 shadow-sm space-y-3 flex flex-col flex-1 min-h-[260px]">
                 <div>
                   <h3 className="text-sm font-semibold text-app-text flex items-center gap-1.5">
                     <Sparkles size={15} className="text-amber-500" />
@@ -1042,16 +1163,19 @@ export default function Documentos() {
                   )}
                 </div>
               </div>
-            </div>
+              </div>
+            )}
 
             {/* Right side column: Embedded Word-Style A4 Rich Editor */}
-            <div className="xl:col-span-9">
+            <div className={`${sidebarCollapsed ? 'xl:col-span-12' : 'xl:col-span-9'} flex flex-col min-h-[600px] xl:min-h-0 xl:h-full`}>
               <WordDocumentEditor
                 ref={wordEditorRef}
                 value={editorContent}
                 onChange={setEditorContent}
                 documentKey={editorDocKey}
                 documentTitle={editorTitle || 'Modelo_Juridico'}
+                sidebarCollapsed={sidebarCollapsed}
+                onToggleSidebar={() => setSidebarCollapsed(prev => !prev)}
                 onImportDocx={({ fileName }) => {
                   if (!editorTitle.trim()) {
                     const cleanName = fileName
@@ -1067,26 +1191,27 @@ export default function Documentos() {
           </div>
         )}
 
-        {/* TAB 3: GENERATOR BY PROCESSO */}
+        {/* TAB 3: GENERATOR BY PROCESSO WITH EMBEDDED WORD EDITOR */}
         {activeTab === 'gerar-processo' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* Template Selection Column */}
-            <div className="lg:col-span-4 space-y-6">
-              <div className="bg-app-surface border border-app-border rounded-xl p-5 shadow-sm space-y-5">
-                <h2 className="text-sm font-semibold text-app-text flex items-center gap-2 pb-2 border-b border-app-border">
-                  <ArrowLeftRight size={16} className="text-primary" />
-                  Preencher Dados do Processo
-                </h2>
+          <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-12 gap-4 xl:h-full">
+            {/* Left Column: Template & Process Selection */}
+            {!sidebarCollapsed && (
+              <div className="xl:col-span-3 flex flex-col gap-3 xl:h-full xl:min-h-0 xl:overflow-y-auto custom-scrollbar pr-0.5">
+                <div className="bg-app-surface border border-app-border rounded-xl p-4 shadow-sm space-y-3.5 shrink-0">
+                  <h2 className="text-sm font-semibold text-app-text flex items-center gap-2 pb-2 border-b border-app-border">
+                    <ArrowLeftRight size={16} className="text-primary" />
+                    Dados do Processo
+                  </h2>
 
                 {/* 1. Pick Template */}
-                <div className="space-y-1.5">
+                <div className="space-y-1">
                   <label className="text-xs font-semibold text-app-text">
-                    1. Selecione o Modelo Base
+                    1. Modelo Base (ou importe .docx ao lado)
                   </label>
                   <select
                     className="w-full px-3 py-2 border border-app-border bg-app-bg text-app-text rounded-lg focus:outline-none focus:ring-1 focus:ring-primary text-sm"
                     value={genProcTemplateId}
-                    onChange={(e) => setGenProcTemplateId(e.target.value)}
+                    onChange={(e) => handleSelectProcTemplate(e.target.value)}
                   >
                     <option value="">-- Escolha um modelo --</option>
                     {accessibleDocumentos.map(doc => (
@@ -1098,7 +1223,7 @@ export default function Documentos() {
                 </div>
 
                 {/* 2. Search and Pick Process */}
-                <div className="space-y-1.5 relative">
+                <div className="space-y-1 relative">
                   <label className="text-xs font-semibold text-app-text">2. Escolha o Processo</label>
                   <div className="relative">
                     <Search
@@ -1125,11 +1250,7 @@ export default function Documentos() {
                         return (
                           <div
                             key={p.id}
-                            onClick={() => {
-                              setGenProcProcessoId(p.id);
-                              setProcSearchTerm(p.numero);
-                              setShowProcDropdown(false);
-                            }}
+                            onClick={() => handleSelectProcesso(p)}
                             className="p-2 hover:bg-primary/10 cursor-pointer border-b border-app-border last:border-0 transition-colors flex flex-col gap-0.5"
                           >
                             <span className="font-mono text-primary font-bold tabular-nums">
@@ -1174,172 +1295,151 @@ export default function Documentos() {
                   )}
                 </div>
 
-                {/* Confirm generation */}
-                <div className="space-y-2">
+                {/* 3. Editable Document Title */}
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-app-text">
+                    3. Título do Documento Gerado
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Ex: Petição Inicial - Processo..."
+                    className="w-full px-3 py-2 border border-app-border bg-app-bg text-app-text rounded-lg focus:outline-none focus:ring-1 focus:ring-primary text-sm"
+                    value={genProcTitle}
+                    onChange={(e) => setGenProcTitle(e.target.value)}
+                  />
+                </div>
+
+                {/* Actions */}
+                <div className="space-y-2 pt-1">
                   <button
                     type="button"
-                    disabled={isSaving || !genProcTemplateId || !genProcProcessoId || !canWrite}
+                    disabled={isSaving || !genProcProcessoId || !canWrite}
                     onClick={handleGenerateForProcess}
                     className="w-full bg-primary hover:opacity-90 disabled:opacity-50 text-white py-2 px-4 rounded-lg font-medium text-sm transition-all shadow-sm flex items-center justify-center gap-2"
                   >
                     <FilePlus size={16} />
-                    {isSaving ? 'Gerando...' : 'Gerar e Salvar Documento'}
+                    {isSaving ? 'Salvando...' : 'Salvar Documento Gerado'}
                   </button>
 
-                  {selectedTemplateObjForProc && selectedProcessObj && canWrite && (
+                  {(genProcTemplateId || genProcRawTemplateHtml) && (
                     <button
                       type="button"
-                      onClick={() =>
-                        openResolvedInWordEditor(
-                          `${selectedTemplateObjForProc.titulo} - Processo ${selectedProcessObj.numero}`,
-                          selectedTemplateObjForProc.tipo,
-                          resolvedProcHtml
-                        )
-                      }
-                      className="w-full border border-app-border hover:bg-app-bg text-app-text py-2 px-4 rounded-lg font-medium text-xs transition-all flex items-center justify-center gap-2"
+                      onClick={handleReapplyProcVariables}
+                      className="w-full border border-app-border hover:bg-app-bg text-app-text py-1.5 px-3 rounded-lg font-medium text-xs transition-all flex items-center justify-center gap-1.5"
+                      title="Recarregar modelo base e substituir variáveis novamente"
                     >
-                      <Edit2 size={14} className="text-primary" />
-                      Abrir no Editor Word p/ Ajustes Finais
+                      <RefreshCw size={13} className="text-primary" />
+                      Reaplicar Modelo e Variáveis
                     </button>
                   )}
                 </div>
               </div>
 
-              {/* Status Variables preview */}
-              {selectedTemplateObjForProc && (
-                <div className="bg-app-surface border border-app-border rounded-xl p-5 shadow-sm space-y-3">
+              {/* Status Variables & Quick Insert */}
+              <div className="bg-app-surface border border-app-border rounded-xl p-4 shadow-sm space-y-3">
+                <div>
                   <h3 className="text-xs font-bold text-app-text uppercase tracking-wider block border-b border-app-border pb-1.5">
-                    Variáveis Mapeadas para o Documento
+                    Dados Mapeados do Processo
                   </h3>
-                  <div className="space-y-2 max-h-[250px] overflow-y-auto text-xs custom-scrollbar">
-                    <div className="flex justify-between border-b border-app-border py-1">
-                      <span className="font-mono text-primary">%NUMERO_PROCESSO%</span>
-                      <span
-                        className="text-app-text truncate max-w-[150px] tabular-nums"
-                        title={selectedProcessObj?.numero}
-                      >
-                        {selectedProcessObj?.numero || 'Vazio'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between border-b border-app-border py-1">
-                      <span className="font-mono text-primary">%CLIENTE_NOME%</span>
-                      <span
-                        className="text-app-text truncate max-w-[150px]"
-                        title={selectedClientForProc?.nome}
-                      >
-                        {selectedClientForProc?.nome || 'Vazio'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between border-b border-app-border py-1">
-                      <span className="font-mono text-primary">%CLIENTE_CPF_CNPJ%</span>
-                      <span
-                        className="text-app-text truncate max-w-[150px] tabular-nums"
-                        title={selectedClientForProc?.cpfCnpj}
-                      >
-                        {selectedClientForProc?.cpfCnpj || 'Vazio'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between border-b border-app-border py-1">
-                      <span className="font-mono text-primary">%ESCRITORIO_NOME%</span>
-                      <span className="text-app-text truncate max-w-[150px]">
-                        {activeOffice?.nome || 'Vazio'}
-                      </span>
-                    </div>
-                  </div>
+                  <p className="text-[11px] text-app-text-muted mt-1">
+                    Clique em um campo para inserir o valor correspondente na posição do cursor.
+                  </p>
                 </div>
-              )}
-            </div>
-
-            {/* Generated Document Live Preview Sheet */}
-            <div className="lg:col-span-8 flex flex-col gap-4">
-              <div className="bg-app-surface border border-app-border rounded-xl shadow-sm flex flex-col h-[700px] overflow-hidden">
-                <div className="bg-app-bg px-4 py-3 border-b border-app-border flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <FileText className="text-primary" size={18} />
-                    <span className="font-semibold text-app-text text-sm">
-                      Visualização A4 em Tempo Real (Com Variáveis Substituídas)
-                    </span>
-                  </div>
-                  {selectedTemplateObjForProc && selectedProcessObj && (
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        disabled={exportingDocId === 'gen-proc'}
-                        onClick={() =>
-                          handleDownloadDocumentDocx(
-                            'gen-proc',
-                            `${selectedTemplateObjForProc.titulo}_${selectedProcessObj.numero}`,
-                            resolvedProcHtml
-                          )
-                        }
-                        className="px-2.5 py-1 text-xs bg-primary/10 hover:bg-primary/20 border border-primary/20 rounded-lg text-primary font-semibold transition-colors flex items-center gap-1.5"
+                <div className="space-y-1.5 max-h-[260px] overflow-y-auto text-xs custom-scrollbar pr-1">
+                  {[
+                    { label: 'Nº Processo', token: '%NUMERO_PROCESSO%', val: selectedProcessObj?.numero },
+                    { label: 'Ação / Título', token: '%TITULO_PROCESSO%', val: selectedProcessObj?.titulo },
+                    { label: 'Cliente', token: '%CLIENTE_NOME%', val: selectedClientForProc?.nome },
+                    { label: 'CPF/CNPJ', token: '%CLIENTE_CPF_CNPJ%', val: selectedClientForProc?.cpfCnpj },
+                    { label: 'Parte Contrária', token: '%PARTE_CONTRARIA%', val: selectedProcessObj?.parteContraria },
+                    { label: 'Valor da Causa', token: '%VALOR_CAUSA%', val: selectedProcessObj?.valorCausa ? `R$ ${Number(selectedProcessObj.valorCausa).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}` : '' },
+                    { label: 'Escritório', token: '%ESCRITORIO_NOME%', val: activeOffice?.nome }
+                  ].map(field => (
+                    <button
+                      key={field.token}
+                      type="button"
+                      onClick={() =>
+                        procWordEditorRef.current?.insertVariable(field.val || field.token)
+                      }
+                      className="w-full text-left p-1.5 rounded-lg bg-app-bg hover:bg-app-border/60 border border-app-border flex items-center justify-between gap-2 transition-colors"
+                      title={`Inserir "${field.val || field.token}" no cursor`}
+                    >
+                      <span className="font-semibold text-app-text-muted text-[11px] shrink-0">
+                        {field.label}
+                      </span>
+                      <span
+                        className="text-primary font-medium truncate max-w-[140px] tabular-nums text-[11px]"
+                        title={field.val || field.token}
                       >
-                        <Download size={13} />
-                        Baixar .docx
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          printDocument({
-                            titulo: `${selectedTemplateObjForProc.titulo} - ${selectedProcessObj.numero}`,
-                            conteudo: resolvedProcHtml
-                          })
-                        }
-                        className="px-2.5 py-1 text-xs border border-app-border hover:bg-app-surface rounded-lg text-app-text transition-colors flex items-center gap-1.5"
-                      >
-                        <Printer size={13} />
-                        Imprimir / PDF
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex-1 p-6 sm:p-8 bg-zinc-100 dark:bg-zinc-950 overflow-y-auto overflow-x-auto custom-scrollbar flex justify-center">
-                  <div className="w-[21cm] min-h-[29.7cm] bg-white text-zinc-900 shadow-md border border-zinc-300 dark:border-zinc-700 p-[2.5cm] select-text">
-                    {selectedTemplateObjForProc && selectedProcessObj ? (
-                      <div
-                        className="word-page-content"
-                        dangerouslySetInnerHTML={{ __html: resolvedProcHtml }}
-                      />
-                    ) : (
-                      <div className="flex flex-col items-center justify-center py-24 text-zinc-500 gap-3">
-                        <ArrowLeftRight size={36} className="text-primary/40" />
-                        <p className="text-sm font-medium text-zinc-700">
-                          Selecione o modelo e o processo ao lado.
-                        </p>
-                        <p className="text-xs text-center max-w-xs text-zinc-500">
-                          O documento será preenchido automaticamente substituindo os marcadores
-                          %VARIAVEL% em tempo real na folha A4.
-                        </p>
-                      </div>
-                    )}
-                  </div>
+                        {field.val || 'Vazio'}
+                      </span>
+                    </button>
+                  ))}
                 </div>
               </div>
+              </div>
+            )}
+
+            {/* Right Column: Embedded Word-Style A4 Editor */}
+            <div className={`${sidebarCollapsed ? 'xl:col-span-12' : 'xl:col-span-9'} flex flex-col min-h-[600px] xl:min-h-0 xl:h-full`}>
+              <WordDocumentEditor
+                ref={procWordEditorRef}
+                value={genProcContent}
+                onChange={setGenProcContent}
+                documentKey={genProcDocKey}
+                documentTitle={
+                  genProcTitle ||
+                  (selectedProcessObj
+                    ? `Documento_Processo_${selectedProcessObj.numero}`
+                    : 'Documento_Processo')
+                }
+                sidebarCollapsed={sidebarCollapsed}
+                onToggleSidebar={() => setSidebarCollapsed(prev => !prev)}
+                placeholder="Selecione um modelo e um processo ao lado (ou clique em 'Importar .docx') para preencher e editar o documento diretamente nesta folha A4..."
+                onImportDocx={({ fileName, html }) => {
+                  setGenProcTemplateId('');
+                  setGenProcRawTemplateHtml(html);
+                  const cleanName = fileName.replace(/\.docx$/i, '').replace(/[_-]+/g, ' ').trim();
+                  if (cleanName) {
+                    setGenProcTitle(
+                      selectedProcessObj
+                        ? `${cleanName} - Processo ${selectedProcessObj.numero}`
+                        : cleanName
+                    );
+                  }
+                  if (selectedProcessObj) {
+                    const resolved = computeProcEditorHtml(html, selectedProcessObj);
+                    setGenProcContent(resolved);
+                    setGenProcDocKey(`proc-import-${Date.now()}`);
+                  }
+                }}
+                onNotify={notify}
+              />
             </div>
           </div>
         )}
 
-        {/* TAB 4: GENERATOR FOR CLIENT CONTRATO */}
+        {/* TAB 4: GENERATOR FOR CLIENT CONTRATO WITH EMBEDDED WORD EDITOR */}
         {activeTab === 'gerar-contrato' && (
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            {/* Client and Template selection */}
-            <div className="lg:col-span-4 space-y-6">
-              <div className="bg-app-surface border border-app-border rounded-xl p-5 shadow-sm space-y-5">
-                <h2 className="text-sm font-semibold text-app-text flex items-center gap-2 pb-2 border-b border-app-border">
-                  <Sparkles size={16} className="text-amber-500" />
-                  Gerar Contrato (Dados do Cliente)
-                </h2>
+          <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-12 gap-4 xl:h-full">
+            {/* Left Column: Template & Client Selection */}
+            {!sidebarCollapsed && (
+              <div className="xl:col-span-3 flex flex-col gap-3 xl:h-full xl:min-h-0 xl:overflow-y-auto custom-scrollbar pr-0.5">
+                <div className="bg-app-surface border border-app-border rounded-xl p-4 shadow-sm space-y-3.5 shrink-0">
+                  <h2 className="text-sm font-semibold text-app-text flex items-center gap-2 pb-2 border-b border-app-border">
+                    <Sparkles size={16} className="text-amber-500" />
+                    Dados do Contrato
+                  </h2>
 
                 {/* 1. Pick Template */}
-                <div className="space-y-1.5">
+                <div className="space-y-1">
                   <label className="text-xs font-semibold text-app-text">
-                    1. Selecione o Modelo Base
+                    1. Modelo Base (ou importe .docx ao lado)
                   </label>
                   <select
                     className="w-full px-3 py-2 border border-app-border bg-app-bg text-app-text rounded-lg focus:outline-none focus:ring-1 focus:ring-primary text-sm"
                     value={genCliTemplateId}
-                    onChange={(e) => setGenCliTemplateId(e.target.value)}
+                    onChange={(e) => handleSelectCliTemplate(e.target.value)}
                   >
                     <option value="">-- Escolha um modelo --</option>
                     {accessibleDocumentos.map(doc => (
@@ -1351,7 +1451,7 @@ export default function Documentos() {
                 </div>
 
                 {/* 2. Search and Pick Contact/Client */}
-                <div className="space-y-1.5 relative">
+                <div className="space-y-1 relative">
                   <label className="text-xs font-semibold text-app-text">2. Escolha o Cliente</label>
                   <div className="relative">
                     <Search
@@ -1376,11 +1476,7 @@ export default function Documentos() {
                       {filteredClientes.map(c => (
                         <div
                           key={c.id}
-                          onClick={() => {
-                            setGenCliClienteId(c.id);
-                            setCliSearchTerm(c.nome);
-                            setShowCliDropdown(false);
-                          }}
+                          onClick={() => handleSelectCliente(c)}
                           className="p-2 hover:bg-primary/10 cursor-pointer border-b border-app-border last:border-0 transition-colors flex flex-col gap-0.5"
                         >
                           <span className="font-bold text-app-text">{c.nome}</span>
@@ -1420,145 +1516,125 @@ export default function Documentos() {
                   )}
                 </div>
 
+                {/* 3. Editable Contract Title */}
+                <div className="space-y-1">
+                  <label className="text-xs font-semibold text-app-text">
+                    3. Título do Contrato
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Ex: Contrato de Honorários - Cliente..."
+                    className="w-full px-3 py-2 border border-app-border bg-app-bg text-app-text rounded-lg focus:outline-none focus:ring-1 focus:ring-primary text-sm"
+                    value={genCliTitle}
+                    onChange={(e) => setGenCliTitle(e.target.value)}
+                  />
+                </div>
+
                 {/* Confirm contract generation */}
-                <div className="space-y-2">
+                <div className="space-y-2 pt-1">
                   <button
                     type="button"
-                    disabled={isSaving || !genCliTemplateId || !genCliClienteId || !canWrite}
+                    disabled={isSaving || !genCliClienteId || !canWrite}
                     onClick={handleGenerateContract}
                     className="w-full bg-primary hover:opacity-90 disabled:opacity-50 text-white py-2 px-4 rounded-lg font-medium text-sm transition-all shadow-sm flex items-center justify-center gap-2"
                   >
                     <FilePlus size={16} />
-                    {isSaving ? 'Gerando...' : 'Gerar e Salvar Contrato'}
+                    {isSaving ? 'Salvando...' : 'Salvar Contrato Gerado'}
                   </button>
 
-                  {selectedTemplateObjForCli && selectedClientObj && canWrite && (
+                  {(genCliTemplateId || genCliRawTemplateHtml) && (
                     <button
                       type="button"
-                      onClick={() =>
-                        openResolvedInWordEditor(
-                          `Contrato - ${selectedClientObj.nome}`,
-                          'Contrato',
-                          resolvedCliHtml
-                        )
-                      }
-                      className="w-full border border-app-border hover:bg-app-bg text-app-text py-2 px-4 rounded-lg font-medium text-xs transition-all flex items-center justify-center gap-2"
+                      onClick={handleReapplyCliVariables}
+                      className="w-full border border-app-border hover:bg-app-bg text-app-text py-1.5 px-3 rounded-lg font-medium text-xs transition-all flex items-center justify-center gap-1.5"
+                      title="Recarregar modelo base e substituir variáveis do cliente novamente"
                     >
-                      <Edit2 size={14} className="text-primary" />
-                      Abrir Contrato no Editor Word p/ Ajustes
+                      <RefreshCw size={13} className="text-primary" />
+                      Reaplicar Modelo e Variáveis
                     </button>
                   )}
                 </div>
               </div>
 
-              {/* Variable mapped fields */}
-              {selectedTemplateObjForCli && (
-                <div className="bg-app-surface border border-app-border rounded-xl p-5 shadow-sm space-y-3">
+              {/* Variable mapped fields & Quick Insert */}
+              <div className="bg-app-surface border border-app-border rounded-xl p-4 shadow-sm space-y-3">
+                <div>
                   <h3 className="text-xs font-bold text-app-text uppercase tracking-wider block border-b border-app-border pb-1.5">
-                    Substituição de Variáveis Ativas
+                    Dados Mapeados do Cliente
                   </h3>
-                  <div className="space-y-2 max-h-[250px] overflow-y-auto text-xs custom-scrollbar">
-                    <div className="flex justify-between border-b border-app-border py-1">
-                      <span className="font-mono text-primary">%CLIENTE_NOME%</span>
-                      <span
-                        className="text-app-text truncate max-w-[150px]"
-                        title={selectedClientObj?.nome}
-                      >
-                        {selectedClientObj?.nome || 'Vazio'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between border-b border-app-border py-1">
-                      <span className="font-mono text-primary">%CLIENTE_CPF_CNPJ%</span>
-                      <span className="text-app-text truncate max-w-[150px] tabular-nums">
-                        {selectedClientObj?.cpfCnpj || 'Vazio'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between border-b border-app-border py-1">
-                      <span className="font-mono text-primary">%CLIENTE_RG%</span>
-                      <span className="text-app-text truncate max-w-[150px] tabular-nums">
-                        {selectedClientObj?.rg || 'Vazio'}
-                      </span>
-                    </div>
-                    <div className="flex justify-between border-b border-app-border py-1">
-                      <span className="font-mono text-primary">%CLIENTE_ENDERECO%</span>
-                      <span
-                        className="text-app-text truncate max-w-[150px]"
-                        title={selectedClientObj?.endereco}
-                      >
-                        {selectedClientObj?.endereco || 'Vazio'}
-                      </span>
-                    </div>
-                  </div>
+                  <p className="text-[11px] text-app-text-muted mt-1">
+                    Clique em um campo para inserir o valor correspondente na posição do cursor.
+                  </p>
                 </div>
-              )}
-            </div>
-
-            {/* Contract live preview sheet */}
-            <div className="lg:col-span-8 flex flex-col gap-4">
-              <div className="bg-app-surface border border-app-border rounded-xl shadow-sm flex flex-col h-[700px] overflow-hidden">
-                <div className="bg-app-bg px-4 py-3 border-b border-app-border flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2">
-                    <Sparkles className="text-amber-500" size={18} />
-                    <span className="font-semibold text-app-text text-sm">
-                      Contrato Gerado - Visualização em Folha A4
-                    </span>
-                  </div>
-                  {selectedTemplateObjForCli && selectedClientObj && (
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        disabled={exportingDocId === 'gen-cli'}
-                        onClick={() =>
-                          handleDownloadDocumentDocx(
-                            'gen-cli',
-                            `Contrato_${selectedClientObj.nome}`,
-                            resolvedCliHtml
-                          )
-                        }
-                        className="px-2.5 py-1 text-xs bg-primary/10 hover:bg-primary/20 border border-primary/20 rounded-lg text-primary font-semibold transition-colors flex items-center gap-1.5"
+                <div className="space-y-1.5 max-h-[260px] overflow-y-auto text-xs custom-scrollbar pr-1">
+                  {[
+                    { label: 'Nome', token: '%CLIENTE_NOME%', val: selectedClientObj?.nome },
+                    { label: 'CPF/CNPJ', token: '%CLIENTE_CPF_CNPJ%', val: selectedClientObj?.cpfCnpj },
+                    { label: 'RG', token: '%CLIENTE_RG%', val: selectedClientObj?.rg },
+                    { label: 'Estado Civil', token: '%CLIENTE_STATUS_CIVIL%', val: selectedClientObj?.statusCivil },
+                    { label: 'Profissão', token: '%CLIENTE_PROFISSAO%', val: selectedClientObj?.profissao },
+                    { label: 'Endereço', token: '%CLIENTE_ENDERECO%', val: selectedClientObj?.endereco },
+                    { label: 'Telefone', token: '%CLIENTE_TELEFONE%', val: selectedClientObj?.telefone },
+                    { label: 'Escritório', token: '%ESCRITORIO_NOME%', val: activeOffice?.nome }
+                  ].map(field => (
+                    <button
+                      key={field.token}
+                      type="button"
+                      onClick={() =>
+                        cliWordEditorRef.current?.insertVariable(field.val || field.token)
+                      }
+                      className="w-full text-left p-1.5 rounded-lg bg-app-bg hover:bg-app-border/60 border border-app-border flex items-center justify-between gap-2 transition-colors"
+                      title={`Inserir "${field.val || field.token}" no cursor`}
+                    >
+                      <span className="font-semibold text-app-text-muted text-[11px] shrink-0">
+                        {field.label}
+                      </span>
+                      <span
+                        className="text-primary font-medium truncate max-w-[140px] tabular-nums text-[11px]"
+                        title={field.val || field.token}
                       >
-                        <Download size={13} />
-                        Baixar .docx
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          printDocument({
-                            titulo: `Contrato - ${selectedClientObj.nome}`,
-                            conteudo: resolvedCliHtml
-                          })
-                        }
-                        className="px-2.5 py-1 text-xs border border-app-border hover:bg-app-surface rounded-lg text-app-text transition-colors flex items-center gap-1.5"
-                      >
-                        <Printer size={13} />
-                        Imprimir / PDF
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex-1 p-6 sm:p-8 bg-zinc-100 dark:bg-zinc-950 overflow-y-auto overflow-x-auto custom-scrollbar flex justify-center">
-                  <div className="w-[21cm] min-h-[29.7cm] bg-white text-zinc-900 shadow-md border border-zinc-300 dark:border-zinc-700 p-[2.5cm] select-text">
-                    {selectedTemplateObjForCli && selectedClientObj ? (
-                      <div
-                        className="word-page-content"
-                        dangerouslySetInnerHTML={{ __html: resolvedCliHtml }}
-                      />
-                    ) : (
-                      <div className="flex flex-col items-center justify-center py-24 text-zinc-500 gap-3">
-                        <Sparkles size={36} className="text-amber-500/40" />
-                        <p className="text-sm font-medium text-zinc-700">
-                          Selecione o modelo e o cliente ao lado.
-                        </p>
-                        <p className="text-xs text-center max-w-xs text-zinc-500">
-                          O contrato será preenchido substituindo os marcadores de dados do cliente
-                          em tempo real na folha A4.
-                        </p>
-                      </div>
-                    )}
-                  </div>
+                        {field.val || 'Vazio'}
+                      </span>
+                    </button>
+                  ))}
                 </div>
               </div>
+              </div>
+            )}
+
+            {/* Right Column: Embedded Word-Style A4 Editor */}
+            <div className={`${sidebarCollapsed ? 'xl:col-span-12' : 'xl:col-span-9'} flex flex-col min-h-[600px] xl:min-h-0 xl:h-full`}>
+              <WordDocumentEditor
+                ref={cliWordEditorRef}
+                value={genCliContent}
+                onChange={setGenCliContent}
+                documentKey={genCliDocKey}
+                documentTitle={
+                  genCliTitle ||
+                  (selectedClientObj
+                    ? `Contrato_${selectedClientObj.nome}`
+                    : 'Contrato_Cliente')
+                }
+                sidebarCollapsed={sidebarCollapsed}
+                onToggleSidebar={() => setSidebarCollapsed(prev => !prev)}
+                placeholder="Selecione um modelo e um cliente ao lado (ou clique em 'Importar .docx') para preencher e editar o contrato diretamente nesta folha A4..."
+                onImportDocx={({ fileName, html }) => {
+                  setGenCliTemplateId('');
+                  setGenCliRawTemplateHtml(html);
+                  const cleanName = fileName.replace(/\.docx$/i, '').replace(/[_-]+/g, ' ').trim();
+                  if (cleanName) {
+                    setGenCliTitle(
+                      selectedClientObj ? `Contrato - ${selectedClientObj.nome}` : cleanName
+                    );
+                  }
+                  if (selectedClientObj) {
+                    const resolved = computeCliEditorHtml(html, selectedClientObj);
+                    setGenCliContent(resolved);
+                    setGenCliDocKey(`cli-import-${Date.now()}`);
+                  }
+                }}
+                onNotify={notify}
+              />
             </div>
           </div>
         )}

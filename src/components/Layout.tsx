@@ -233,6 +233,7 @@ export default function Layout({ children, currentView, onNavigate }: LayoutProp
     'pendencias',
     'ia',
     'tarefas',
+    'documentos',
     'varas',
     'forum',
     'tribunais',

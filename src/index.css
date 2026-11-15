@@ -119,6 +119,29 @@
   word-wrap: break-word;
 }
 
+.word-page-content.paginated,
+.word-page-content.paginated .ProseMirror {
+  min-height: 0;
+  display: flow-root;
+}
+
+/* Prevent vertical margin-collapsing on top-level ProseMirror nodes so A4 page height calculation is exact */
+.word-page-content.paginated .ProseMirror > * {
+  margin-top: 0 !important;
+}
+
+.word-page-content.paginated .ProseMirror > h1 {
+  padding-top: 0.55em;
+}
+
+.word-page-content.paginated .ProseMirror > h2 {
+  padding-top: 0.5em;
+}
+
+.word-page-content.paginated .ProseMirror > h3 {
+  padding-top: 0.45em;
+}
+
 .word-page-content .ProseMirror p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
   float: left;
@@ -192,11 +215,109 @@
   position: relative;
 }
 
+.word-page-content.paginated hr {
+  border-top: 1px dashed #cbd5e1;
+  margin: 0.35em 0;
+  height: 16px;
+}
+
+.word-page-content.paginated hr::after {
+  content: "Quebra de Página";
+  position: absolute;
+  right: 0;
+  top: -9px;
+  background: #ffffff;
+  padding: 0 6px;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+/* Visual Multi-Page A4 Dividers inside ProseMirror */
+.word-a4-page-break,
+.word-a4-last-page-footer {
+  pointer-events: none;
+  user-select: none;
+  display: block;
+}
+
+.word-a4-page-filler {
+  height: var(--a4-filler-h, 0px);
+  width: 100%;
+}
+
+.word-a4-page-bottom-margin {
+  height: 2.5cm;
+  margin-left: -2.5cm;
+  margin-right: -2.5cm;
+  padding: 0 2.5cm 0.9cm 2.5cm;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  border-bottom: 1px solid #d4d4d8;
+  box-sizing: border-box;
+  background-color: #ffffff;
+}
+
+.word-a4-page-bottom-margin.is-last-page {
+  border-bottom: none;
+}
+
+.dark .word-a4-page-bottom-margin {
+  border-bottom-color: #3f3f46;
+}
+
+.dark .word-a4-page-bottom-margin.is-last-page {
+  border-bottom: none;
+}
+
+.word-a4-page-desk-gap {
+  height: 28px;
+  margin-left: calc(-2.5cm - 2px);
+  margin-right: calc(-2.5cm - 2px);
+  background-color: #f4f4f5;
+  box-shadow: inset 0 4px 6px -4px rgba(0, 0, 0, 0.14), inset 0 -3px 5px -3px rgba(0, 0, 0, 0.1);
+}
+
+.dark .word-a4-page-desk-gap {
+  background-color: #09090b;
+  box-shadow: inset 0 5px 8px -4px rgba(0, 0, 0, 0.65), inset 0 -4px 6px -3px rgba(0, 0, 0, 0.55);
+}
+
+.word-a4-page-top-margin {
+  height: 2.5cm;
+  margin-left: -2.5cm;
+  margin-right: -2.5cm;
+  padding: 0.85cm 2.5cm 0 2.5cm;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  border-top: 1px solid #d4d4d8;
+  box-sizing: border-box;
+  background-color: #ffffff;
+}
+
+.dark .word-a4-page-top-margin {
+  border-top-color: #3f3f46;
+}
+
+.word-a4-page-number,
+.word-a4-page-header-tag {
+  font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: #9ca3af;
+  letter-spacing: 0.02em;
+}
+
 .word-page-content table {
   border-collapse: collapse;
   table-layout: fixed;
   width: 100%;
-  margin: 1em 0;
+  margin: 0 0 1em 0;
   overflow: hidden;
 }
 

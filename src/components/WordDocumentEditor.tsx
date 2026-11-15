@@ -12,6 +12,7 @@ import {
   AlignLeft,
   AlignRight,
   Bold,
+  Columns3,
   Download,
   Eraser,
   FileUp,
@@ -20,14 +21,17 @@ import {
   Link as LinkIcon,
   List,
   ListOrdered,
+  Maximize2,
+  Minimize2,
   Minus,
   Palette,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   Printer,
   Quote,
   Redo2,
   Rows3,
-  Columns3,
   SeparatorHorizontal,
   Strikethrough,
   Table as TableIcon,
@@ -45,6 +49,7 @@ import {
   normalizeContentToHtml,
   printHtmlDocument
 } from '../utils/docxUtils';
+import { A4PaginationExtension } from '../utils/a4PaginationExtension';
 
 export interface WordDocumentEditorHandle {
   insertVariable: (variableName: string) => void;
@@ -58,6 +63,8 @@ interface WordDocumentEditorProps {
   documentKey?: string;
   documentTitle?: string;
   placeholder?: string;
+  sidebarCollapsed?: boolean;
+  onToggleSidebar?: () => void;
   onImportDocx?: (payload: { fileName: string; html: string; warnings: string[] }) => void;
   onNotify?: (type: 'success' | 'error', message: string) => void;
 }
@@ -81,10 +88,10 @@ const LINE_HEIGHTS = [
 ];
 
 const HIGHLIGHT_SWATCHES = [
-  { label: 'Amarelo', color: '#fef08a' },
-  { label: 'Verde', color: '#bbf7d0' },
-  { label: 'Azul', color: '#bfdbfe' },
-  { label: 'Rosa', color: '#fecdd3' }
+  { label: 'Amarelo', color: '#fef08a', swatchClass: 'bg-yellow-200 text-zinc-900 border-yellow-300' },
+  { label: 'Verde', color: '#bbf7d0', swatchClass: 'bg-green-200 text-zinc-900 border-green-300' },
+  { label: 'Azul', color: '#bfdbfe', swatchClass: 'bg-blue-200 text-zinc-900 border-blue-300' },
+  { label: 'Rosa', color: '#fecdd3', swatchClass: 'bg-rose-200 text-zinc-900 border-rose-300' }
 ];
 
 const ZOOM_LEVELS = [
@@ -101,6 +108,8 @@ const WordDocumentEditor = forwardRef<WordDocumentEditorHandle, WordDocumentEdit
       documentKey = 'default',
       documentTitle = 'Documento',
       placeholder = 'Comece a redigir seu modelo jurídico ou clique em "Importar .docx" para carregar um arquivo do Word...',
+      sidebarCollapsed,
+      onToggleSidebar,
       onImportDocx,
       onNotify
     },
@@ -111,12 +120,26 @@ const WordDocumentEditor = forwardRef<WordDocumentEditorHandle, WordDocumentEdit
     const isInternalUpdateRef = useRef(false);
 
     const [zoomIndex, setZoomIndex] = useState<number>(1);
+    const [pageCount, setPageCount] = useState<number>(1);
+    const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
     const [isImporting, setIsImporting] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
     const [showHighlightMenu, setShowHighlightMenu] = useState(false);
     const [showLinkInput, setShowLinkInput] = useState(false);
     const [linkUrl, setLinkUrl] = useState('');
     const [, setSelectionTick] = useState(0);
+
+    // Allow Escape to exit fullscreen mode
+    useEffect(() => {
+      if (!isFullscreen) return;
+      const handleKeyDown = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') {
+          setIsFullscreen(false);
+        }
+      };
+      window.addEventListener('keydown', handleKeyDown);
+      return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [isFullscreen]);
 
     const editor = useEditor({
       extensions: [
@@ -143,6 +166,9 @@ const WordDocumentEditor = forwardRef<WordDocumentEditorHandle, WordDocumentEdit
         }),
         Placeholder.configure({
           placeholder
+        }),
+        A4PaginationExtension.configure({
+          onPageCountChange: (pages) => setPageCount(pages)
         })
       ],
       content: normalizeContentToHtml(value),
@@ -308,7 +334,13 @@ const WordDocumentEditor = forwardRef<WordDocumentEditorHandle, WordDocumentEdit
     };
 
     return (
-      <div className="bg-app-surface border border-app-border rounded-xl shadow-sm overflow-hidden flex flex-col h-[760px]">
+      <div
+        className={`bg-app-surface border border-app-border rounded-xl shadow-sm overflow-hidden flex flex-col ${
+          isFullscreen
+            ? 'fixed inset-3 z-50 shadow-2xl'
+            : 'flex-1 h-full min-h-[600px] xl:min-h-0'
+        }`}
+      >
         {/* Hidden .docx input */}
         <input
           ref={fileInputRef}
@@ -319,13 +351,24 @@ const WordDocumentEditor = forwardRef<WordDocumentEditorHandle, WordDocumentEdit
         />
 
         {/* WORD RIBBON - ROW 1: File Actions (.docx) & Typography */}
-        <div className="bg-app-bg px-3 py-2 border-b border-app-border flex flex-wrap items-center justify-between gap-2">
+        <div className="bg-app-bg px-3 py-1.5 border-b border-app-border flex flex-wrap items-center justify-between gap-2 shrink-0">
           <div className="flex flex-wrap items-center gap-1.5">
+            {onToggleSidebar && !isFullscreen && (
+              <button
+                type="button"
+                onClick={onToggleSidebar}
+                className="hidden xl:flex p-1.5 bg-app-surface hover:bg-app-border text-app-text-muted hover:text-app-text border border-app-border rounded-lg transition-colors"
+                title={sidebarCollapsed ? 'Mostrar painel lateral' : 'Ocultar painel lateral para ampliar a área de edição'}
+              >
+                {sidebarCollapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
+              </button>
+            )}
+
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
               disabled={isImporting}
-              className="px-2.5 py-1.5 bg-app-surface hover:bg-primary/10 text-app-text hover:text-primary border border-app-border rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors disabled:opacity-50"
+              className="px-2.5 py-1 bg-app-surface hover:bg-primary/10 text-app-text hover:text-primary border border-app-border rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors disabled:opacity-50"
               title="Carregar um arquivo Microsoft Word (.docx) para editar"
             >
               <FileUp size={14} className="text-primary" />
@@ -336,7 +379,7 @@ const WordDocumentEditor = forwardRef<WordDocumentEditorHandle, WordDocumentEdit
               type="button"
               onClick={handleDownloadDocx}
               disabled={isExporting}
-              className="px-2.5 py-1.5 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors disabled:opacity-50"
+              className="px-2.5 py-1 bg-primary/10 hover:bg-primary/20 text-primary border border-primary/20 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors disabled:opacity-50"
               title="Exportar documento atual no formato Microsoft Word (.docx)"
             >
               <Download size={14} />
@@ -346,14 +389,14 @@ const WordDocumentEditor = forwardRef<WordDocumentEditorHandle, WordDocumentEdit
             <button
               type="button"
               onClick={handlePrint}
-              className="px-2.5 py-1.5 bg-app-surface hover:bg-app-border text-app-text border border-app-border rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors"
+              className="px-2.5 py-1 bg-app-surface hover:bg-app-border text-app-text border border-app-border rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors"
               title="Imprimir folha A4 ou salvar como PDF"
             >
               <Printer size={14} />
               <span className="hidden sm:inline">Imprimir / PDF</span>
             </button>
 
-            <div className="h-5 w-px bg-app-border mx-0.5 hidden sm:block" />
+            <div className="h-4 w-px bg-app-border mx-0.5 hidden sm:block" />
 
             {/* Undo / Redo */}
             <button
@@ -363,7 +406,7 @@ const WordDocumentEditor = forwardRef<WordDocumentEditorHandle, WordDocumentEdit
               className="p-1.5 rounded-md text-app-text-muted hover:text-app-text hover:bg-app-surface disabled:opacity-35 transition-colors"
               title="Desfazer (Ctrl+Z)"
             >
-              <Undo2 size={15} />
+              <Undo2 size={14} />
             </button>
             <button
               type="button"
@@ -372,7 +415,7 @@ const WordDocumentEditor = forwardRef<WordDocumentEditorHandle, WordDocumentEdit
               className="p-1.5 rounded-md text-app-text-muted hover:text-app-text hover:bg-app-surface disabled:opacity-35 transition-colors"
               title="Refazer (Ctrl+Y)"
             >
-              <Redo2 size={15} />
+              <Redo2 size={14} />
             </button>
           </div>
 
@@ -395,7 +438,7 @@ const WordDocumentEditor = forwardRef<WordDocumentEditorHandle, WordDocumentEdit
               aria-label="Família da fonte"
               value={currentFontFamily}
               onChange={(e) => editor?.chain().focus().setFontFamily(e.target.value).run()}
-              className="px-2 py-1 bg-app-surface border border-app-border rounded-md text-xs text-app-text focus:outline-none focus:ring-1 focus:ring-primary max-w-[145px]"
+              className="px-2 py-1 bg-app-surface border border-app-border rounded-md text-xs text-app-text focus:outline-none focus:ring-1 focus:ring-primary max-w-[140px]"
             >
               {FONT_FAMILIES.map(f => (
                 <option key={f.label} value={f.value}>
@@ -434,7 +477,7 @@ const WordDocumentEditor = forwardRef<WordDocumentEditorHandle, WordDocumentEdit
         </div>
 
         {/* WORD RIBBON - ROW 2: Formatting, Alignment, Lists, Tables & Zoom */}
-        <div className="bg-app-surface px-3 py-1.5 border-b border-app-border flex flex-wrap items-center justify-between gap-2 relative">
+        <div className="bg-app-surface px-3 py-1 border-b border-app-border flex flex-wrap items-center justify-between gap-2 relative shrink-0">
           <div className="flex flex-wrap items-center gap-0.5">
             {/* Inline Marks */}
             <button
@@ -447,7 +490,7 @@ const WordDocumentEditor = forwardRef<WordDocumentEditorHandle, WordDocumentEdit
               }`}
               title="Negrito (Ctrl+B)"
             >
-              <Bold size={15} />
+              <Bold size={14} />
             </button>
             <button
               type="button"
@@ -459,7 +502,7 @@ const WordDocumentEditor = forwardRef<WordDocumentEditorHandle, WordDocumentEdit
               }`}
               title="Itálico (Ctrl+I)"
             >
-              <Italic size={15} />
+              <Italic size={14} />
             </button>
             <button
               type="button"
@@ -471,7 +514,7 @@ const WordDocumentEditor = forwardRef<WordDocumentEditorHandle, WordDocumentEdit
               }`}
               title="Sublinhado (Ctrl+U)"
             >
-              <UnderlineIcon size={15} />
+              <UnderlineIcon size={14} />
             </button>
             <button
               type="button"
@@ -483,7 +526,7 @@ const WordDocumentEditor = forwardRef<WordDocumentEditorHandle, WordDocumentEdit
               }`}
               title="Tachado"
             >
-              <Strikethrough size={15} />
+              <Strikethrough size={14} />
             </button>
 
             {/* Text Color */}
@@ -491,7 +534,7 @@ const WordDocumentEditor = forwardRef<WordDocumentEditorHandle, WordDocumentEdit
               className="p-1.5 rounded-md text-app-text-muted hover:text-app-text hover:bg-app-bg transition-colors cursor-pointer flex items-center relative"
               title="Cor da fonte"
             >
-              <Palette size={15} />
+              <Palette size={14} />
               <input
                 type="color"
                 value={currentColor.startsWith('#') ? currentColor : '#111827'}
@@ -512,7 +555,7 @@ const WordDocumentEditor = forwardRef<WordDocumentEditorHandle, WordDocumentEdit
                 }`}
                 title="Realce de texto (Marca-texto)"
               >
-                <Highlighter size={15} />
+                <Highlighter size={14} />
               </button>
               {showHighlightMenu && (
                 <div className="absolute left-0 top-full mt-1 z-30 bg-app-surface border border-app-border rounded-lg shadow-lg p-2 flex items-center gap-1.5">
@@ -524,7 +567,7 @@ const WordDocumentEditor = forwardRef<WordDocumentEditorHandle, WordDocumentEdit
                         editor?.chain().focus().toggleHighlight({ color: sw.color }).run();
                         setShowHighlightMenu(false);
                       }}
-                      className="px-2 py-1 rounded text-[11px] font-medium text-zinc-900 border border-zinc-300 hover:opacity-85"
+                      className={`px-2 py-1 rounded text-[11px] font-medium border hover:opacity-85 ${sw.swatchClass}`}
                       title={sw.label}
                     >
                       {sw.label}
@@ -550,7 +593,7 @@ const WordDocumentEditor = forwardRef<WordDocumentEditorHandle, WordDocumentEdit
               className="p-1.5 rounded-md text-app-text-muted hover:text-app-text hover:bg-app-bg transition-colors"
               title="Limpar formatação selecionada"
             >
-              <Eraser size={15} />
+              <Eraser size={14} />
             </button>
 
             <div className="h-4 w-px bg-app-border mx-1" />
@@ -566,7 +609,7 @@ const WordDocumentEditor = forwardRef<WordDocumentEditorHandle, WordDocumentEdit
               }`}
               title="Alinhar à esquerda"
             >
-              <AlignLeft size={15} />
+              <AlignLeft size={14} />
             </button>
             <button
               type="button"
@@ -578,7 +621,7 @@ const WordDocumentEditor = forwardRef<WordDocumentEditorHandle, WordDocumentEdit
               }`}
               title="Centralizar"
             >
-              <AlignCenter size={15} />
+              <AlignCenter size={14} />
             </button>
             <button
               type="button"
@@ -590,7 +633,7 @@ const WordDocumentEditor = forwardRef<WordDocumentEditorHandle, WordDocumentEdit
               }`}
               title="Alinhar à direita"
             >
-              <AlignRight size={15} />
+              <AlignRight size={14} />
             </button>
             <button
               type="button"
@@ -602,7 +645,7 @@ const WordDocumentEditor = forwardRef<WordDocumentEditorHandle, WordDocumentEdit
               }`}
               title="Justificar texto (Padrão Jurídico)"
             >
-              <AlignJustify size={15} />
+              <AlignJustify size={14} />
             </button>
 
             <div className="h-4 w-px bg-app-border mx-1" />
@@ -618,7 +661,7 @@ const WordDocumentEditor = forwardRef<WordDocumentEditorHandle, WordDocumentEdit
               }`}
               title="Lista com marcadores"
             >
-              <List size={15} />
+              <List size={14} />
             </button>
             <button
               type="button"
@@ -630,7 +673,7 @@ const WordDocumentEditor = forwardRef<WordDocumentEditorHandle, WordDocumentEdit
               }`}
               title="Lista numerada"
             >
-              <ListOrdered size={15} />
+              <ListOrdered size={14} />
             </button>
             <button
               type="button"
@@ -642,15 +685,16 @@ const WordDocumentEditor = forwardRef<WordDocumentEditorHandle, WordDocumentEdit
               }`}
               title="Recuo de citação jurídica (ABNT)"
             >
-              <Quote size={15} />
+              <Quote size={14} />
             </button>
             <button
               type="button"
               onClick={() => editor?.chain().focus().setHorizontalRule().run()}
-              className="p-1.5 rounded-md text-app-text-muted hover:text-app-text hover:bg-app-bg transition-colors"
-              title="Inserir quebra de página / separador"
+              className="px-1.5 py-1 rounded-md text-xs text-app-text-muted hover:text-app-text hover:bg-app-bg transition-colors flex items-center gap-1"
+              title="Inserir quebra de página manual"
             >
-              <SeparatorHorizontal size={15} />
+              <SeparatorHorizontal size={14} />
+              <span className="hidden 2xl:inline text-[11px]">Quebra Pág.</span>
             </button>
 
             {/* Link Popover */}
@@ -668,7 +712,7 @@ const WordDocumentEditor = forwardRef<WordDocumentEditorHandle, WordDocumentEdit
               }`}
               title="Inserir ou editar hiperlink"
             >
-              <LinkIcon size={15} />
+              <LinkIcon size={14} />
             </button>
             {editor?.isActive('link') && (
               <button
@@ -677,7 +721,7 @@ const WordDocumentEditor = forwardRef<WordDocumentEditorHandle, WordDocumentEdit
                 className="p-1.5 rounded-md text-rose-500 hover:bg-rose-500/10 transition-colors"
                 title="Remover link"
               >
-                <Unlink size={14} />
+                <Unlink size={13} />
               </button>
             )}
 
@@ -750,10 +794,13 @@ const WordDocumentEditor = forwardRef<WordDocumentEditorHandle, WordDocumentEdit
             )}
           </div>
 
-          {/* Zoom & Word/Char Counters */}
+          {/* Page Count, Word/Char Counters, Zoom & Fullscreen */}
           <div className="flex items-center gap-2 text-xs text-app-text-muted ml-auto">
-            <span className="hidden sm:inline tabular-nums text-[11px]">
-              {wordCount} {wordCount === 1 ? 'palavra' : 'palavras'} · {charCount} caract.
+            <span className="hidden md:inline tabular-nums text-[11px]">
+              <strong className="text-app-text font-semibold">
+                {pageCount} {pageCount === 1 ? 'página' : 'páginas'}
+              </strong>{' '}
+              · {wordCount} {wordCount === 1 ? 'palavra' : 'palavras'} · {charCount} caract.
             </span>
             <div className="flex items-center border border-app-border rounded-md bg-app-bg">
               <button
@@ -778,6 +825,14 @@ const WordDocumentEditor = forwardRef<WordDocumentEditorHandle, WordDocumentEdit
                 <ZoomIn size={13} />
               </button>
             </div>
+            <button
+              type="button"
+              onClick={() => setIsFullscreen(prev => !prev)}
+              className="p-1.5 border border-app-border rounded-md bg-app-bg hover:bg-app-border text-app-text-muted hover:text-app-text transition-colors"
+              title={isFullscreen ? 'Restaurar tamanho padrão (Esc)' : 'Expandir editor em tela cheia'}
+            >
+              {isFullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+            </button>
           </div>
 
           {/* Inline Link Input Bar (No window.prompt) */}
@@ -818,7 +873,7 @@ const WordDocumentEditor = forwardRef<WordDocumentEditorHandle, WordDocumentEdit
         </div>
 
         {/* Horizontal A4 Ruler Strip */}
-        <div className="bg-zinc-200/70 dark:bg-zinc-900 border-b border-app-border px-4 py-1 flex justify-center select-none overflow-hidden">
+        <div className="bg-zinc-200/70 dark:bg-zinc-900 border-b border-app-border px-4 py-1 flex justify-center select-none overflow-hidden shrink-0">
           <div className="w-full max-w-[21cm] flex items-center justify-between text-[9px] font-mono text-zinc-500 dark:text-zinc-400 tabular-nums">
             <span className="text-zinc-400">| 2,5cm</span>
             <span>| 4</span>
@@ -832,9 +887,9 @@ const WordDocumentEditor = forwardRef<WordDocumentEditorHandle, WordDocumentEdit
           </div>
         </div>
 
-        {/* WORKSPACE DESK + A4 WHITE SHEET */}
+        {/* WORKSPACE DESK + PAGINATED A4 SHEETS */}
         <div
-          className="flex-1 bg-zinc-100 dark:bg-zinc-950 overflow-y-auto overflow-x-auto custom-scrollbar p-4 sm:p-8 flex justify-center cursor-text"
+          className="flex-1 min-h-0 bg-zinc-100 dark:bg-zinc-950 overflow-y-auto overflow-x-auto custom-scrollbar py-6 px-4 sm:px-8 flex justify-center cursor-text"
           onClick={(e) => {
             if (e.target === e.currentTarget) {
               editor?.commands.focus('end');
@@ -842,7 +897,14 @@ const WordDocumentEditor = forwardRef<WordDocumentEditorHandle, WordDocumentEdit
           }}
         >
           <div className={`transition-transform duration-150 ${ZOOM_LEVELS[zoomIndex].scaleClass}`}>
-            <div className="w-[21cm] min-h-[29.7cm] bg-white text-zinc-900 shadow-md border border-zinc-300 dark:border-zinc-700 p-[2.5cm] word-page-content select-text">
+            <div className="w-[21cm] bg-white text-zinc-900 shadow-md border border-zinc-300 dark:border-zinc-700 px-[2.5cm] pb-0 word-page-content paginated select-text">
+              {/* Top 2.5cm margin of Page 1 */}
+              <div
+                className="h-[2.5cm] -mx-[2.5cm] px-[2.5cm] pt-[0.85cm] flex items-start justify-end pointer-events-none select-none"
+                aria-hidden="true"
+              >
+                <span className="word-a4-page-header-tag">Folha 1</span>
+              </div>
               <EditorContent editor={editor} />
             </div>
           </div>
