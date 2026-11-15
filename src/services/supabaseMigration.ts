@@ -472,12 +472,29 @@ export const SUPABASE_RLS_SQL = `-- ============================================
 -- ==============================================================================
 
 -- 1. FUNÇÕES AUXILIARES DE SEGURANÇA (SECURITY DEFINER)
+CREATE OR REPLACE FUNCTION public.is_active_user()
+RETURNS BOOLEAN AS $$
+  SELECT COALESCE(
+    (SELECT (
+        lower(trim(email)) = 'pratadeouro@gmail.com'
+        OR lower(trim(COALESCE(status, 'Ativo'))) <> 'inativo'
+      )
+     FROM public.usuarios
+     WHERE lower(trim(email)) = lower(trim(auth.jwt() ->> 'email')) OR id = auth.uid()::text
+     LIMIT 1),
+    true
+  );
+$$ LANGUAGE sql STABLE SECURITY DEFINER;
+
 CREATE OR REPLACE FUNCTION public.is_admin()
 RETURNS BOOLEAN AS $$
   SELECT COALESCE(
-    (SELECT (permissao ILIKE '%admin%' OR permissao ILIKE '%gestor%' OR email = 'pratadeouro@gmail.com' OR email ILIKE '%walber%')
+    (SELECT (
+        (permissao ILIKE '%admin%' OR permissao ILIKE '%gestor%' OR lower(trim(email)) = 'pratadeouro@gmail.com' OR email ILIKE '%walber%')
+        AND (lower(trim(email)) = 'pratadeouro@gmail.com' OR lower(trim(COALESCE(status, 'Ativo'))) <> 'inativo')
+      )
      FROM public.usuarios 
-     WHERE email = lower(trim(auth.jwt() ->> 'email')) OR id = auth.uid()::text
+     WHERE lower(trim(email)) = lower(trim(auth.jwt() ->> 'email')) OR id = auth.uid()::text
      LIMIT 1),
     (lower(trim(auth.jwt() ->> 'email')) = 'pratadeouro@gmail.com' OR lower(trim(auth.jwt() ->> 'email')) ILIKE '%walber%'),
     false
@@ -488,12 +505,17 @@ CREATE OR REPLACE FUNCTION public.current_user_escritorios()
 RETURNS TEXT[] AS $$
 DECLARE
   v_json jsonb;
+  v_status text;
   v_arr text[];
 BEGIN
-  SELECT escritorios_ids INTO v_json
+  SELECT escritorios_ids, status INTO v_json, v_status
   FROM public.usuarios 
-  WHERE email = lower(auth.jwt() ->> 'email') OR id = auth.uid()::text
+  WHERE lower(trim(email)) = lower(trim(auth.jwt() ->> 'email')) OR id = auth.uid()::text
   LIMIT 1;
+
+  IF lower(trim(COALESCE(v_status, 'Ativo'))) = 'inativo' AND lower(trim(COALESCE(auth.jwt() ->> 'email', ''))) <> 'pratadeouro@gmail.com' THEN
+    RETURN ARRAY[]::TEXT[];
+  END IF;
 
   IF v_json IS NULL OR jsonb_typeof(v_json) != 'array' THEN
     RETURN ARRAY[]::TEXT[];
@@ -575,7 +597,7 @@ DROP POLICY IF EXISTS "RLS_AppSettings_Mod" ON public.app_settings;
 -- 4. POLÍTICAS DE ACESSO DEFINITIVAS
 CREATE POLICY "RLS_Escritorios_Select" ON public.escritorios
   FOR SELECT TO authenticated
-  USING (public.is_admin() OR id = ANY(public.current_user_escritorios()));
+  USING (public.is_active_user() AND (public.is_admin() OR id = ANY(public.current_user_escritorios())));
 
 CREATE POLICY "RLS_Escritorios_Mod" ON public.escritorios
   FOR ALL TO authenticated
@@ -594,12 +616,13 @@ CREATE POLICY "RLS_Usuarios_Update" ON public.usuarios
   FOR UPDATE TO authenticated
   USING (
     public.is_admin() 
-    OR email = lower(trim(auth.jwt() ->> 'email')) 
+    OR lower(trim(email)) = lower(trim(auth.jwt() ->> 'email')) 
     OR id = auth.uid()::text
     OR EXISTS (
       SELECT 1 FROM public.usuarios u
-      WHERE (u.email = lower(trim(auth.jwt() ->> 'email')) OR u.id = auth.uid()::text)
-      AND (u.permissao ILIKE '%admin%' OR u.permissao ILIKE '%gestor%' OR u.email = 'pratadeouro@gmail.com')
+      WHERE (lower(trim(u.email)) = lower(trim(auth.jwt() ->> 'email')) OR u.id = auth.uid()::text)
+      AND lower(trim(COALESCE(u.status, 'Ativo'))) <> 'inativo'
+      AND (u.permissao ILIKE '%admin%' OR u.permissao ILIKE '%gestor%' OR lower(trim(u.email)) = 'pratadeouro@gmail.com')
     )
   )
   WITH CHECK (true);
@@ -610,83 +633,84 @@ CREATE POLICY "RLS_Usuarios_Delete" ON public.usuarios
     public.is_admin()
     OR EXISTS (
       SELECT 1 FROM public.usuarios u
-      WHERE (u.email = lower(trim(auth.jwt() ->> 'email')) OR u.id = auth.uid()::text)
-      AND (u.permissao ILIKE '%admin%' OR u.permissao ILIKE '%gestor%' OR u.email = 'pratadeouro@gmail.com')
+      WHERE (lower(trim(u.email)) = lower(trim(auth.jwt() ->> 'email')) OR u.id = auth.uid()::text)
+      AND lower(trim(COALESCE(u.status, 'Ativo'))) <> 'inativo'
+      AND (u.permissao ILIKE '%admin%' OR u.permissao ILIKE '%gestor%' OR lower(trim(u.email)) = 'pratadeouro@gmail.com')
     )
   );
 
 CREATE POLICY "RLS_Processos" ON public.processos
   FOR ALL TO authenticated
-  USING (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios()))
-  WITH CHECK (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios()));
+  USING (public.is_active_user() AND (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios())))
+  WITH CHECK (public.is_active_user() AND (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios())));
 
 CREATE POLICY "RLS_Contatos" ON public.contatos
   FOR ALL TO authenticated
-  USING (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios()))
-  WITH CHECK (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios()));
+  USING (public.is_active_user() AND (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios())))
+  WITH CHECK (public.is_active_user() AND (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios())));
 
 CREATE POLICY "RLS_Tarefas" ON public.tarefas
   FOR ALL TO authenticated
-  USING (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios()))
-  WITH CHECK (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios()));
+  USING (public.is_active_user() AND (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios())))
+  WITH CHECK (public.is_active_user() AND (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios())));
 
 CREATE POLICY "RLS_Eventos" ON public.eventos
   FOR ALL TO authenticated
-  USING (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios()))
-  WITH CHECK (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios()));
+  USING (public.is_active_user() AND (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios())))
+  WITH CHECK (public.is_active_user() AND (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios())));
 
 CREATE POLICY "RLS_Financeiro" ON public.financeiro
   FOR ALL TO authenticated
-  USING (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios()))
-  WITH CHECK (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios()));
+  USING (public.is_active_user() AND (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios())))
+  WITH CHECK (public.is_active_user() AND (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios())));
 
 CREATE POLICY "RLS_Movimentos" ON public.movimentos
   FOR ALL TO authenticated
-  USING (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios()))
-  WITH CHECK (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios()));
+  USING (public.is_active_user() AND (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios())))
+  WITH CHECK (public.is_active_user() AND (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios())));
 
 CREATE POLICY "RLS_Documentos" ON public.documentos
   FOR ALL TO authenticated
-  USING (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios()))
-  WITH CHECK (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios()));
+  USING (public.is_active_user() AND (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios())))
+  WITH CHECK (public.is_active_user() AND (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios())));
 
 CREATE POLICY "RLS_Varas" ON public.varas
   FOR ALL TO authenticated
-  USING (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios()))
-  WITH CHECK (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios()));
+  USING (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios())))
+  WITH CHECK (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios())));
 
 CREATE POLICY "RLS_Julgadores" ON public.julgadores
   FOR ALL TO authenticated
-  USING (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios()))
-  WITH CHECK (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios()));
+  USING (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios())))
+  WITH CHECK (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios())));
 
 CREATE POLICY "RLS_Servidores" ON public.servidores
   FOR ALL TO authenticated
-  USING (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios()))
-  WITH CHECK (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios()));
+  USING (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios())))
+  WITH CHECK (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios())));
 
 CREATE POLICY "RLS_Modelos" ON public.modelos
   FOR ALL TO authenticated
-  USING (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios()))
-  WITH CHECK (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios()));
+  USING (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios())))
+  WITH CHECK (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios())));
 
 CREATE POLICY "RLS_Etiquetas" ON public.etiquetas
   FOR ALL TO authenticated
-  USING (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios()))
-  WITH CHECK (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios()));
+  USING (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios())))
+  WITH CHECK (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios())));
 
 CREATE POLICY "RLS_Leads" ON public.leads
   FOR ALL TO authenticated
-  USING (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios()))
-  WITH CHECK (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios()));
+  USING (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios())))
+  WITH CHECK (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios())));
 
-CREATE POLICY "RLS_Tribunais" ON public.tribunais FOR ALL TO authenticated USING (true) WITH CHECK (public.is_admin());
-CREATE POLICY "RLS_Forums" ON public.forums FOR ALL TO authenticated USING (true) WITH CHECK (public.is_admin());
-CREATE POLICY "RLS_UPJ" ON public.upj FOR ALL TO authenticated USING (true) WITH CHECK (public.is_admin());
-CREATE POLICY "RLS_Recursos" ON public.recursos FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "RLS_Envolvidos" ON public.envolvidos FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "RLS_Calendario" ON public.calendario FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "RLS_LeadsStatus" ON public.leads_status FOR ALL TO authenticated USING (true) WITH CHECK (public.is_admin());
+CREATE POLICY "RLS_Tribunais" ON public.tribunais FOR ALL TO authenticated USING (public.is_active_user()) WITH CHECK (public.is_admin());
+CREATE POLICY "RLS_Forums" ON public.forums FOR ALL TO authenticated USING (public.is_active_user()) WITH CHECK (public.is_admin());
+CREATE POLICY "RLS_UPJ" ON public.upj FOR ALL TO authenticated USING (public.is_active_user()) WITH CHECK (public.is_admin());
+CREATE POLICY "RLS_Recursos" ON public.recursos FOR ALL TO authenticated USING (public.is_active_user()) WITH CHECK (public.is_active_user());
+CREATE POLICY "RLS_Envolvidos" ON public.envolvidos FOR ALL TO authenticated USING (public.is_active_user()) WITH CHECK (public.is_active_user());
+CREATE POLICY "RLS_Calendario" ON public.calendario FOR ALL TO authenticated USING (public.is_active_user()) WITH CHECK (public.is_active_user());
+CREATE POLICY "RLS_LeadsStatus" ON public.leads_status FOR ALL TO authenticated USING (public.is_active_user()) WITH CHECK (public.is_admin());
 
 CREATE POLICY "RLS_Logs_Insert" ON public.logs
   FOR INSERT TO authenticated
@@ -699,7 +723,7 @@ CREATE POLICY "RLS_Logs_Update" ON public.logs
 
 CREATE POLICY "RLS_Logs_Select" ON public.logs
   FOR SELECT TO authenticated
-  USING (public.is_admin() OR id_escritorio IS NULL OR id_escritorio = ANY(public.current_user_escritorios()));
+  USING (public.is_active_user() AND (public.is_admin() OR id_escritorio IS NULL OR id_escritorio = ANY(public.current_user_escritorios())));
 
 CREATE POLICY "RLS_AppSettings_Select" ON public.app_settings
   FOR SELECT TO authenticated
@@ -740,13 +764,89 @@ BEGIN
     cpf = EXCLUDED.cpf,
     permissao = EXCLUDED.permissao,
     escritorios_ids = EXCLUDED.escritorios_ids,
-    status = EXCLUDED.status;
+    status = EXCLUDED.status,
+    updated_at = NOW();
 
   RETURN json_build_object('success', true, 'id', p_id);
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
 GRANT EXECUTE ON FUNCTION public.admin_upsert_usuario TO authenticated, anon;
+
+CREATE OR REPLACE FUNCTION public.admin_toggle_usuario_status(
+  p_id text,
+  p_status text,
+  p_email text DEFAULT ''
+)
+RETURNS jsonb AS $$
+DECLARE
+  v_status text;
+  v_caller_email text;
+  v_target_email text;
+  v_updated_count integer := 0;
+  v_ban_until timestamptz;
+BEGIN
+  IF auth.role() <> 'authenticated' AND auth.uid() IS NULL THEN
+    RETURN json_build_object('success', false, 'error', 'Usuário não autenticado.')::jsonb;
+  END IF;
+
+  v_status := CASE
+    WHEN lower(trim(COALESCE(p_status, 'Ativo'))) = 'inativo' THEN 'Inativo'
+    ELSE 'Ativo'
+  END;
+
+  v_caller_email := lower(trim(COALESCE(auth.jwt() ->> 'email', '')));
+  v_target_email := lower(trim(COALESCE(p_email, '')));
+
+  IF v_target_email = '' THEN
+    SELECT lower(trim(email)) INTO v_target_email
+    FROM public.usuarios
+    WHERE id = p_id
+    LIMIT 1;
+  END IF;
+
+  IF v_target_email = 'pratadeouro@gmail.com' AND v_status = 'Inativo' THEN
+    RETURN json_build_object('success', false, 'error', 'O administrador principal não pode ser inativado.')::jsonb;
+  END IF;
+
+  IF v_target_email <> '' AND v_target_email = v_caller_email AND v_status = 'Inativo' THEN
+    RETURN json_build_object('success', false, 'error', 'Você não pode inativar sua própria conta.')::jsonb;
+  END IF;
+
+  UPDATE public.usuarios
+  SET status = v_status,
+      updated_at = NOW()
+  WHERE id = p_id
+     OR (v_target_email <> '' AND lower(trim(email)) = v_target_email);
+
+  GET DIAGNOSTICS v_updated_count = ROW_COUNT;
+
+  v_ban_until := CASE
+    WHEN v_status = 'Inativo' THEN NOW() + INTERVAL '100 years'
+    ELSE NULL
+  END;
+
+  BEGIN
+    UPDATE auth.users
+    SET banned_until = v_ban_until,
+        raw_user_meta_data = COALESCE(raw_user_meta_data, '{}'::jsonb) || jsonb_build_object('status', v_status),
+        updated_at = NOW()
+    WHERE id::text = p_id
+       OR (v_target_email <> '' AND lower(trim(email)) = v_target_email);
+  EXCEPTION WHEN OTHERS THEN
+    NULL;
+  END;
+
+  RETURN json_build_object(
+    'success', true,
+    'status', v_status,
+    'updated', v_updated_count
+  )::jsonb;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+REVOKE ALL ON FUNCTION public.admin_toggle_usuario_status(text, text, text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.admin_toggle_usuario_status(text, text, text) TO authenticated;
 
 CREATE OR REPLACE FUNCTION public.admin_delete_usuario(
   p_id text,
@@ -768,7 +868,14 @@ CREATE OR REPLACE FUNCTION public.get_user_by_email_for_login(p_email text)
 RETURNS jsonb AS $$
 DECLARE
   v_user jsonb;
+  v_is_banned boolean := false;
 BEGIN
+  SELECT (a.banned_until IS NOT NULL AND a.banned_until > NOW())
+  INTO v_is_banned
+  FROM auth.users a
+  WHERE lower(trim(a.email)) = lower(trim(p_email))
+  LIMIT 1;
+
   SELECT json_build_object(
     'id', u.id,
     'nome', u.nome,
@@ -778,7 +885,10 @@ BEGIN
     'oab', u.oab,
     'permissao', u.permissao,
     'escritorios_ids', u.escritorios_ids,
-    'status', u.status
+    'status', CASE
+      WHEN COALESCE(v_is_banned, false) OR lower(trim(COALESCE(u.status, 'Ativo'))) = 'inativo' THEN 'Inativo'
+      ELSE 'Ativo'
+    END
   )::jsonb
   INTO v_user
   FROM public.usuarios u
@@ -798,7 +908,10 @@ BEGIN
     'oab', COALESCE(a.raw_user_meta_data->>'oab', ''),
     'permissao', COALESCE(a.raw_user_meta_data->>'permissao', 'user'),
     'escritorios_ids', COALESCE(a.raw_user_meta_data->'escritorios_ids', '[]'::jsonb),
-    'status', COALESCE(a.raw_user_meta_data->>'status', 'Ativo')
+    'status', CASE
+      WHEN (a.banned_until IS NOT NULL AND a.banned_until > NOW()) OR lower(trim(COALESCE(a.raw_user_meta_data->>'status', 'Ativo'))) = 'inativo' THEN 'Inativo'
+      ELSE 'Ativo'
+    END
   )::jsonb
   INTO v_user
   FROM auth.users a

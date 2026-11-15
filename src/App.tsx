@@ -6,7 +6,7 @@
 import React, { useState, useEffect } from 'react';
 import { AppProvider, useAppContext } from './context';
 import { View } from './types';
-import { Loader2, Save } from 'lucide-react';
+import { Loader2, Save, Ban, LogOut, RefreshCw } from 'lucide-react';
 import Layout from './components/Layout';
 import Login from './views/Login';
 import Dashboard from './views/Dashboard';
@@ -76,6 +76,56 @@ function LogoutLoading() {
   );
 }
 
+function ContaInativa() {
+  const { currentUser, logout, forceLoad, refreshAuthUsers } = useAppContext();
+  const [isChecking, setIsChecking] = useState(false);
+
+  const handleRefresh = async () => {
+    setIsChecking(true);
+    try {
+      await refreshAuthUsers();
+      await forceLoad();
+    } finally {
+      setIsChecking(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-app-bg flex items-center justify-center p-4">
+      <div className="max-w-md w-full bg-app-surface border border-app-border rounded-3xl shadow-2xl p-8 text-center space-y-6">
+        <div className="mx-auto w-16 h-16 rounded-2xl bg-red-500/10 text-red-500 flex items-center justify-center">
+          <Ban size={32} />
+        </div>
+        <div className="space-y-2">
+          <h1 className="text-2xl font-bold text-app-text">Conta Inativa</h1>
+          <p className="text-sm text-app-text-muted leading-relaxed">
+            O acesso de <strong className="text-app-text">{currentUser?.nome || currentUser?.email}</strong> está temporariamente inativo no sistema. Entre em contato com o administrador do escritório para reativação.
+          </p>
+        </div>
+        <div className="flex flex-col sm:flex-row gap-3 pt-2">
+          <button
+            type="button"
+            onClick={handleRefresh}
+            disabled={isChecking}
+            className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-app-border text-sm font-semibold text-app-text hover:bg-app-secondary/50 transition-colors disabled:opacity-50 cursor-pointer"
+          >
+            <RefreshCw size={16} className={isChecking ? 'animate-spin' : ''} />
+            Verificar Status
+          </button>
+          <button
+            type="button"
+            onClick={() => logout()}
+            className="flex-1 inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-red-500 hover:bg-red-600 text-white text-sm font-semibold transition-colors shadow-sm cursor-pointer"
+          >
+            <LogOut size={16} />
+            Sair da Conta
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AppContent() {
   const { currentUser, isLoggingOut, isAdmin } = useAppContext();
   const [currentView, setCurrentView] = useState<View>('dashboard');
@@ -96,6 +146,14 @@ function AppContent() {
 
   if (!currentUser) {
     return <Login />;
+  }
+
+  const isUserInactive =
+    (currentUser.email || '').trim().toLowerCase() !== 'pratadeouro@gmail.com' &&
+    String(currentUser.status || 'Ativo').trim().toLowerCase() === 'inativo';
+
+  if (isUserInactive) {
+    return <ContaInativa />;
   }
 
   // Fallback para usuários sem escritório associado (exceto admins)

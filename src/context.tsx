@@ -40,6 +40,7 @@ import {
   fetchAuthUsersAdmin,
   createAuthUserAdmin,
   updateAuthUserAdmin,
+  toggleAuthUserStatusAdmin,
   deleteAuthUserAdmin
 } from './services/supabaseAuth';
 
@@ -159,6 +160,7 @@ interface AppContextType {
   deleteUPJ: (id: string) => void;
   addUsuario: (usuario: Usuario) => Promise<{ success: boolean; user?: Usuario; error?: string }>;
   updateUsuario: (usuario: Usuario) => Promise<{ success: boolean; user?: Usuario; error?: string }>;
+  toggleUsuarioStatus: (id: string, status: 'Ativo' | 'Inativo') => Promise<{ success: boolean; error?: string }>;
   deleteUsuario: (id: string) => Promise<{ success: boolean; error?: string }>;
   addModelo: (modelo: Modelo) => void;
   updateModelo: (modelo: Modelo) => void;
@@ -514,6 +516,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (isSupabaseConfigured()) {
         try {
           const hybridRes = await signInHybrid(normalizedEmail, normalizedSenha);
+          if (hybridRes.banned) {
+            await signOutSupabase();
+            throw new Error(hybridRes.error || 'Este usuário está inativo no sistema. Entre em contato com o administrador do escritório.');
+          }
           if (hybridRes.success) {
             authSuccess = true;
             // Busca pontualmente apenas o perfil deste usuário logado no Supabase (case-insensitive)
@@ -579,7 +585,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               }
             }
           }
-        } catch (authErr) {
+        } catch (authErr: any) {
+          if (authErr?.message?.toLowerCase().includes('inativo')) {
+            throw authErr;
+          }
           console.warn('[Login Híbrido] Exceção:', authErr);
         }
       }
@@ -615,6 +624,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
 
       if (authSuccess && user) {
+        const isInactive = normalizedEmail !== 'pratadeouro@gmail.com' &&
+          String(user.status || 'Ativo').trim().toLowerCase() === 'inativo';
+        if (isInactive) {
+          await signOutSupabase();
+          throw new Error('Este usuário está inativo no sistema. Entre em contato com o administrador do escritório.');
+        }
+
         // Remove senha em texto da memória para reforçar a segurança
         const safeUser: Usuario = { ...user, senha: '' };
 
@@ -767,6 +783,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           }
           console.log('[Login Google] Sessão autenticada via Supabase signInWithIdToken:', normalizedEmail);
         } else if (idTokenErr) {
+          const errLower = (idTokenErr.message || '').toLowerCase();
+          if (errLower.includes('banned') || errLower.includes('user is banned')) {
+            return {
+              success: false,
+              error: 'Este usuário está inativo no sistema. Entre em contato com o administrador do escritório.'
+            };
+          }
           console.warn('[Login Google] Aviso no signInWithIdToken:', idTokenErr.message);
         }
       } catch (idTokErr) {
@@ -828,6 +851,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     if (user) {
+      const isInactive = normalizedEmail !== 'pratadeouro@gmail.com' &&
+        String(user.status || 'Ativo').trim().toLowerCase() === 'inativo';
+      if (isInactive) {
+        await signOutSupabase();
+        return {
+          success: false,
+          error: 'Este usuário está inativo no sistema. Entre em contato com o administrador do escritório.'
+        };
+      }
+
       const safeUser: Usuario = { ...user, senha: '' };
 
       // Injeta imediatamente o usuário do Supabase no estado para que currentUser já o resolva
@@ -2901,6 +2934,93 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   }, [saveAndLog, refreshAuthUsers]);
 
+  const toggleUsuarioStatus = useCallback(async (id: string, status: 'Ativo' | 'Inativo'): Promise<{ success: boolean; error?: string }> => {
+    const isSupabase = getActiveDataSource() === 'supabase' && isSupabaseConfigured();
+    const normalizedStatus: 'Ativo' | 'Inativo' =
+      String(status || 'Ativo').trim().toLowerCase() === 'inativo' ? 'Inativo' : 'Ativo';
+    const targetUser = stateRef.current.usuarios.find(u => u.id === id);
+    const targetEmail = (targetUser?.email || '').trim().toLowerCase();
+    const callerEmail = (authenticatedUserEmail || '').trim().toLowerCase();
+
+    if (normalizedStatus === 'Inativo') {
+      if (targetEmail === 'pratadeouro@gmail.com') {
+        return { success: false, error: 'O administrador principal não pode ser inativado.' };
+      }
+      if (targetUser && ((callerEmail && targetEmail === callerEmail) || (currentUser?.id && targetUser.id === currentUser.id))) {
+        return { success: false, error: 'Você não pode inativar sua própria conta.' };
+      }
+    }
+
+    if (isSupabase) {
+      try {
+        const res = await toggleAuthUserStatusAdmin(id, normalizedStatus, targetUser?.email);
+        if (!res.success) {
+          return { success: false, error: res.error || 'Erro ao alterar status do usuário no Supabase.' };
+        }
+
+        const updatedUser: Usuario | undefined = targetUser
+          ? { ...targetUser, status: normalizedStatus }
+          : undefined;
+
+        setState(s => ({
+          ...s,
+          usuarios: s.usuarios.map(u =>
+            (u.id === id || (targetEmail && (u.email || '').trim().toLowerCase() === targetEmail))
+              ? { ...u, status: normalizedStatus }
+              : u
+          )
+        }));
+
+        const acaoLog = normalizedStatus === 'Inativo' ? 'INATIVAR_USUARIO' : 'ATIVAR_USUARIO';
+        const detalhesLog = normalizedStatus === 'Inativo'
+          ? `Usuário inativado: ${targetUser?.nome || id} (${targetUser?.email || ''})`
+          : `Usuário reativado: ${targetUser?.nome || id} (${targetUser?.email || ''})`;
+
+        const logEntry: LogRegistro = {
+          id: generateId('default'),
+          data: new Date().toLocaleString('pt-BR'),
+          usuario: authenticatedUserEmail || 'Sistema',
+          acao: acaoLog,
+          idEscritorio: updatedUser?.escritoriosIds?.[0] || escritorioAtivoId || '',
+          detalhes: detalhesLog
+        };
+        saveLogSupabase(logEntry);
+        setState(s => ({
+          ...s,
+          logs: [logEntry, ...(s.logs || [])].slice(0, 200)
+        }));
+
+        setTimeout(() => {
+          refreshAuthUsers().catch(() => {});
+        }, 300);
+
+        return { success: true };
+      } catch (err: any) {
+        console.error('Erro ao alterar status do usuário:', err);
+        return { success: false, error: err.message || 'Erro inesperado ao alterar status do usuário' };
+      }
+    } else {
+      if (!targetUser) return { success: false, error: 'Usuário não encontrado.' };
+      const updatedUser: Usuario = { ...targetUser, status: normalizedStatus };
+      setState(s => {
+        const newState = {
+          ...s,
+          usuarios: s.usuarios.map(u => u.id === id ? updatedUser : u)
+        };
+        saveAndLog(
+          newState,
+          'UPDATE_USUARIO',
+          normalizedStatus === 'Inativo'
+            ? `Usuário inativado: ${updatedUser.nome}`
+            : `Usuário reativado: ${updatedUser.nome}`,
+          updatedUser
+        );
+        return newState;
+      });
+      return { success: true };
+    }
+  }, [authenticatedUserEmail, currentUser?.id, escritorioAtivoId, refreshAuthUsers, saveAndLog]);
+
   const deleteUsuario = useCallback(async (id: string): Promise<{ success: boolean; error?: string }> => {
     const isSupabase = getActiveDataSource() === 'supabase' && isSupabaseConfigured();
     const itemToDelete = stateRef.current.usuarios.find(u => u.id === id);
@@ -3492,6 +3612,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     deleteUPJ,
     addUsuario, 
     updateUsuario,
+    toggleUsuarioStatus,
     deleteUsuario,
     addModelo,
     updateModelo,
@@ -3586,6 +3707,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     deleteUPJ,
     addUsuario, 
     updateUsuario,
+    toggleUsuarioStatus,
     deleteUsuario,
     addModelo,
     updateModelo,

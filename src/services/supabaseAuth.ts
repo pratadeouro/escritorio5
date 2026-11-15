@@ -60,6 +60,7 @@ export interface HybridAuthResult {
   success: boolean;
   user?: any;
   error?: string;
+  banned?: boolean;
   firstLoginMigrated?: boolean;
   needsEmailConfirm?: boolean;
   fallbackUsed?: boolean;
@@ -86,6 +87,14 @@ export const signInHybrid = async (
   const normalizedEmail = email.trim().toLowerCase();
   const normalizedSenha = senha.trim();
 
+  if (localUser && String(localUser.status || 'Ativo').trim().toLowerCase() === 'inativo' && normalizedEmail !== 'pratadeouro@gmail.com') {
+    return {
+      success: false,
+      banned: true,
+      error: 'Este usuário está inativo no sistema. Entre em contato com o administrador do escritório.',
+    };
+  }
+
   try {
     // 1. Tenta autenticação nativa no Supabase Auth com a senha digitada ou versão com padding (min 6 dígitos)
     const safePass = normalizedSenha.length >= 6 ? normalizedSenha : normalizedSenha.padEnd(6, '0');
@@ -102,6 +111,17 @@ export const signInHybrid = async (
       });
       if (!retryRes.error) {
         signInRes = retryRes;
+      }
+    }
+
+    if (signInRes.error) {
+      const errLower = (signInRes.error.message || '').toLowerCase();
+      if (errLower.includes('banned') || errLower.includes('user is banned')) {
+        return {
+          success: false,
+          banned: true,
+          error: 'Este usuário está inativo no sistema. Entre em contato com o administrador do escritório.',
+        };
       }
     }
 
@@ -714,6 +734,112 @@ export const updateAuthUserAdmin = async (id: string, user: Partial<Usuario>): P
 };
 
 /**
+ * Alterna o status do usuário (Ativo / Inativo) em auth.users e public.usuarios
+ */
+export const toggleAuthUserStatusAdmin = async (
+  id: string,
+  status: 'Ativo' | 'Inativo',
+  email?: string
+): Promise<{ success: boolean; status?: 'Ativo' | 'Inativo'; error?: string }> => {
+  const normalizedStatus: 'Ativo' | 'Inativo' =
+    String(status || 'Ativo').trim().toLowerCase() === 'inativo' ? 'Inativo' : 'Ativo';
+  const normalizedEmail = email ? email.trim().toLowerCase() : undefined;
+
+  if (normalizedEmail === 'pratadeouro@gmail.com' && normalizedStatus === 'Inativo') {
+    return { success: false, error: 'O administrador principal não pode ser inativado.' };
+  }
+
+  // 1. Tenta via servidor se disponível e retornar JSON válido
+  try {
+    let headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (isSupabaseConfigured()) {
+      try {
+        const supabase = getSupabase();
+        const { data: sess } = await supabase.auth.getSession();
+        if (sess?.session?.access_token) {
+          headers.Authorization = `Bearer ${sess.session.access_token}`;
+        }
+      } catch {
+        // prossegue sem header Bearer
+      }
+    }
+
+    const res = await safeFetchJson<{ success: boolean; status?: 'Ativo' | 'Inativo'; error?: string }>(
+      `/api/supabase/admin/users/${encodeURIComponent(id)}/status`,
+      {
+        method: 'PATCH',
+        headers,
+        body: JSON.stringify({ status: normalizedStatus, email: normalizedEmail })
+      }
+    );
+
+    if (!res.isHtmlOrNotJson) {
+      if (res.ok && res.data?.success) {
+        return { success: true, status: res.data.status || normalizedStatus };
+      }
+      if (res.data?.error) {
+        return { success: false, error: res.data.error };
+      }
+    }
+  } catch (err) {
+    console.warn('[Supabase Auth Admin] Servidor indisponível para alterar status:', err);
+  }
+
+  // 2. Fallback direto no Supabase (RPC SECURITY DEFINER + atualização direta em public.usuarios)
+  if (!isSupabaseConfigured()) {
+    return { success: false, error: 'Supabase não está configurado.' };
+  }
+
+  try {
+    const supabase = getSupabase();
+
+    // Tentativa 1: RPC admin_toggle_usuario_status (atualiza public.usuarios e auth.users.banned_until)
+    try {
+      const { data: rpcData, error: rpcErr } = await supabase.rpc('admin_toggle_usuario_status', {
+        p_id: id,
+        p_status: normalizedStatus,
+        p_email: normalizedEmail || ''
+      });
+      if (!rpcErr) {
+        if (rpcData && typeof rpcData === 'object' && rpcData.success === false) {
+          return { success: false, error: rpcData.error || 'Operação não permitida.' };
+        }
+        return { success: true, status: normalizedStatus };
+      }
+      console.warn('[Supabase Auth Admin] RPC admin_toggle_usuario_status indisponível:', rpcErr.message);
+    } catch {
+      // prossegue para update direto em public.usuarios
+    }
+
+    // Tentativa 2: Update direto na tabela public.usuarios respeitando RLS
+    const payload = { status: normalizedStatus, updated_at: new Date().toISOString() };
+    const { data: updatedById, error: errById } = await supabase
+      .from('usuarios')
+      .update(payload)
+      .eq('id', id)
+      .select('id');
+
+    if (errById) {
+      return { success: false, error: errById.message || 'Erro ao atualizar status do usuário.' };
+    }
+
+    if ((!updatedById || updatedById.length === 0) && normalizedEmail) {
+      const { error: errByEmail } = await supabase
+        .from('usuarios')
+        .update(payload)
+        .ilike('email', normalizedEmail);
+      if (errByEmail) {
+        return { success: false, error: errByEmail.message || 'Erro ao atualizar status do usuário por e-mail.' };
+      }
+    }
+
+    return { success: true, status: normalizedStatus };
+  } catch (err: any) {
+    return { success: false, error: err.message || String(err) };
+  }
+};
+
+/**
  * Exclui um usuário diretamente de auth.users e de public.usuarios
  */
 export const deleteAuthUserAdmin = async (id: string, email?: string): Promise<{ success: boolean; error?: string }> => {
@@ -765,4 +891,5 @@ export const deleteAuthUserAdmin = async (id: string, email?: string): Promise<{
     return { success: false, error: err.message || String(err) };
   }
 };
+
 

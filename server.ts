@@ -784,6 +784,11 @@ async function startServer() {
 
       const rawPerm = pu.permissao || meta.permissao || (rawEmail === 'pratadeouro@gmail.com' ? 'Admin' : 'user');
       const permissao = rawEmail === 'pratadeouro@gmail.com' ? 'Admin' : rawPerm;
+      const isBanned = !!(au?.banned_until && new Date(au.banned_until).getTime() > Date.now());
+      const rawStatus = pu.status || meta.status || (isBanned ? 'Inativo' : 'Ativo');
+      const status = (rawEmail !== 'pratadeouro@gmail.com' && (String(rawStatus).trim().toLowerCase() === 'inativo' || isBanned))
+        ? 'Inativo'
+        : 'Ativo';
 
       const user = {
         id: pu.id || au?.id || `user-${Date.now()}`,
@@ -797,7 +802,7 @@ async function startServer() {
         oab: pu.oab || meta.oab || '',
         permissao,
         escritoriosIds: safeEscritoriosIds,
-        status: pu.status || meta.status || (au?.banned_until ? 'Inativo' : 'Ativo'),
+        status,
         fotoUrl: meta.avatar_url || pu.foto_url,
         theme: pu.theme,
         itemsPerPage: pu.items_per_page,
@@ -808,9 +813,9 @@ async function startServer() {
       };
 
       // Se solicitado, gera um token de sessão real no Supabase Auth (magiclink sem envio de e-mail)
-      // para que o cliente autenticado via Google também tenha JWT válido para o RLS do PostgreSQL
+      // apenas se o usuário NÃO estiver inativo
       let hashedToken: string | undefined;
-      if (withSession && au?.email) {
+      if (withSession && au?.email && status !== 'Inativo') {
         try {
           const linkResp = await fetch(`${supabaseUrl}/auth/v1/admin/generate_link`, {
             method: "POST",
@@ -895,6 +900,11 @@ async function startServer() {
         // pratadeouro@gmail.com é sempre Admin do sistema
         const rawPerm = pu.permissao || meta.permissao || (email === 'pratadeouro@gmail.com' ? 'Admin' : 'user');
         const permissao = email === 'pratadeouro@gmail.com' ? 'Admin' : rawPerm;
+        const isBanned = !!(au.banned_until && new Date(au.banned_until).getTime() > Date.now());
+        const rawStatus = pu.status || meta.status || (isBanned ? 'Inativo' : 'Ativo');
+        const status = (email !== 'pratadeouro@gmail.com' && (String(rawStatus).trim().toLowerCase() === 'inativo' || isBanned))
+          ? 'Inativo'
+          : 'Ativo';
 
         return {
           id: pu.id || au.id,
@@ -908,7 +918,7 @@ async function startServer() {
           oab: pu.oab || meta.oab || '',
           permissao,
           escritoriosIds: safeEscritoriosIds,
-          status: pu.status || meta.status || (au.banned_until ? 'Inativo' : 'Ativo'),
+          status,
           fotoUrl: meta.avatar_url || pu.foto_url,
           theme: pu.theme,
           itemsPerPage: pu.items_per_page,
@@ -1052,6 +1062,11 @@ async function startServer() {
     try {
       let targetAuthId = id;
       const normalizedEmail = email ? email.trim().toLowerCase() : undefined;
+      const normalizedStatus = String(status || 'Ativo').trim().toLowerCase() === 'inativo' ? 'Inativo' : 'Ativo';
+
+      if (normalizedEmail === 'pratadeouro@gmail.com' && normalizedStatus === 'Inativo') {
+        return res.status(400).json({ success: false, error: "O administrador principal não pode ser inativado." });
+      }
 
       const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
       if (!isUUID && normalizedEmail) {
@@ -1064,6 +1079,7 @@ async function startServer() {
 
       // Monta payload de atualização para auth.users
       const authUpdatePayload: any = {
+        ban_duration: normalizedStatus === 'Inativo' ? '876000h' : 'none',
         user_metadata: {
           nome: nome?.trim(),
           display_name: nome?.trim(),
@@ -1075,7 +1091,7 @@ async function startServer() {
           oab: oab || '',
           cpf: cpf || '',
           contato: contato || '',
-          status: status || 'Ativo'
+          status: normalizedStatus
         }
       };
 
@@ -1105,9 +1121,8 @@ async function startServer() {
         return res.status(updateAuthResp.status).json({ success: false, error: errJson.msg || errJson.message || JSON.stringify(errJson) });
       }
 
-      // 2. Sincroniza em public.usuarios
+      // 2. Sincroniza em public.usuarios (atualiza registro existente por id ou e-mail antes de upsert)
       const pubPayload: any = {
-        id: targetAuthId,
         nome: nome?.trim(),
         cargo: cargo || '',
         contato: contato || '',
@@ -1115,25 +1130,234 @@ async function startServer() {
         cpf: cpf || '',
         permissao: permissao || 'user',
         escritorios_ids: escritoriosIds || [],
-        status: status || 'Ativo'
+        status: normalizedStatus,
+        updated_at: new Date().toISOString()
       };
       if (normalizedEmail) pubPayload.email = normalizedEmail;
       if (password && password.trim().length >= 6) pubPayload.senha = password.trim();
 
-      await fetch(`${supabaseUrl}/rest/v1/usuarios`, {
-        method: "POST",
+      let patched = false;
+      const patchByIdResp = await fetch(`${supabaseUrl}/rest/v1/usuarios?id=eq.${encodeURIComponent(id)}`, {
+        method: "PATCH",
         headers: {
           "apikey": supabaseKey,
           "Authorization": `Bearer ${supabaseKey}`,
           "Content-Type": "application/json",
-          "Prefer": "resolution=merge-duplicates"
+          "Prefer": "return=representation"
         },
         body: JSON.stringify(pubPayload)
       });
+      if (patchByIdResp.ok) {
+        const patchedRows = await patchByIdResp.json().catch(() => []);
+        if (Array.isArray(patchedRows) && patchedRows.length > 0) patched = true;
+      }
+
+      if (!patched && normalizedEmail) {
+        const patchByEmailResp = await fetch(`${supabaseUrl}/rest/v1/usuarios?email=ilike.${encodeURIComponent(normalizedEmail)}`, {
+          method: "PATCH",
+          headers: {
+            "apikey": supabaseKey,
+            "Authorization": `Bearer ${supabaseKey}`,
+            "Content-Type": "application/json",
+            "Prefer": "return=representation"
+          },
+          body: JSON.stringify(pubPayload)
+        });
+        if (patchByEmailResp.ok) {
+          const patchedRows = await patchByEmailResp.json().catch(() => []);
+          if (Array.isArray(patchedRows) && patchedRows.length > 0) patched = true;
+        }
+      }
+
+      if (!patched) {
+        await fetch(`${supabaseUrl}/rest/v1/usuarios?on_conflict=email`, {
+          method: "POST",
+          headers: {
+            "apikey": supabaseKey,
+            "Authorization": `Bearer ${supabaseKey}`,
+            "Content-Type": "application/json",
+            "Prefer": "resolution=merge-duplicates"
+          },
+          body: JSON.stringify({ id: targetAuthId, ...pubPayload })
+        });
+      }
 
       return res.json({ success: true, updated: true });
     } catch (err: any) {
       console.error("[Server Supabase Admin Update User] Exceção:", err);
+      return res.status(500).json({ success: false, error: err.message || String(err) });
+    }
+  });
+
+  // 3.1. ATIVAR / INATIVAR USUÁRIO DIRETAMENTE EM AUTH.USERS E PUBLIC.USUARIOS
+  app.patch("/api/supabase/admin/users/:id/status", async (req, res) => {
+    const { id } = req.params;
+    const { status, email } = req.body || {};
+
+    const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca')) ? process.env.SUPABASE_URL : 'https://qhxdujbsipgwthrgvncl.supabase.co';
+    const supabaseKey = (process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi')) ? process.env.SUPABASE_SECRET_KEY : (process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL');
+    const hasServiceRole = !!(process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi'));
+
+    if (!hasServiceRole) {
+      return res.status(500).json({ success: false, error: "Chave administrativa não configurada para alterar status em auth.users." });
+    }
+
+    const normalizedStatus = String(status || 'Ativo').trim().toLowerCase() === 'inativo' ? 'Inativo' : 'Ativo';
+    let resolvedEmail = email ? String(email).trim().toLowerCase() : undefined;
+
+    try {
+      // Verifica se o chamador enviou JWT para impedir auto-inativação
+      const authHeader = req.headers.authorization;
+      if (authHeader && authHeader.startsWith('Bearer ') && normalizedStatus === 'Inativo') {
+        const callerToken = authHeader.slice(7).trim();
+        if (callerToken) {
+          try {
+            const callerResp = await fetch(`${supabaseUrl}/auth/v1/user`, {
+              headers: { apikey: supabaseKey, Authorization: `Bearer ${callerToken}` }
+            });
+            if (callerResp.ok) {
+              const callerUser = await callerResp.json().catch(() => null);
+              const callerEmail = callerUser?.email ? String(callerUser.email).trim().toLowerCase() : '';
+              if (callerUser?.id === id || (callerEmail && resolvedEmail && callerEmail === resolvedEmail)) {
+                return res.status(400).json({ success: false, error: "Você não pode inativar sua própria conta." });
+              }
+            }
+          } catch {
+            // prossegue se validação de token falhar por rede
+          }
+        }
+      }
+
+      // Resolve registro atual em public.usuarios caso email não tenha sido informado
+      if (!resolvedEmail) {
+        const pubLookup = await fetch(`${supabaseUrl}/rest/v1/usuarios?id=eq.${encodeURIComponent(id)}&select=id,email`, {
+          headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+        }).then(r => r.json()).catch(() => []);
+        if (Array.isArray(pubLookup) && pubLookup[0]?.email) {
+          resolvedEmail = String(pubLookup[0].email).trim().toLowerCase();
+        }
+      }
+
+      if (resolvedEmail === 'pratadeouro@gmail.com' && normalizedStatus === 'Inativo') {
+        return res.status(400).json({ success: false, error: "O administrador principal não pode ser inativado." });
+      }
+
+      // Localiza UUID em auth.users
+      let targetAuthUser: any = null;
+      const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+      if (isUUID) {
+        const uResp = await fetch(`${supabaseUrl}/auth/v1/admin/users/${encodeURIComponent(id)}`, {
+          headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+        });
+        if (uResp.ok) {
+          targetAuthUser = await uResp.json().catch(() => null);
+        }
+      }
+
+      if (!targetAuthUser && resolvedEmail) {
+        const listRes = await fetch(`${supabaseUrl}/auth/v1/admin/users?per_page=1000`, {
+          headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+        }).then(r => r.json()).catch(() => ({ users: [] }));
+        targetAuthUser = (listRes.users || []).find((u: any) => (u.email || "").toLowerCase().trim() === resolvedEmail) || null;
+      }
+
+      const targetAuthId = targetAuthUser?.id || (isUUID ? id : undefined);
+      if (!resolvedEmail && targetAuthUser?.email) {
+        resolvedEmail = String(targetAuthUser.email).trim().toLowerCase();
+      }
+
+      // 1. Atualiza ban_duration e user_metadata em auth.users
+      if (targetAuthId) {
+        const existingMeta = targetAuthUser?.user_metadata || {};
+        const authResp = await fetch(`${supabaseUrl}/auth/v1/admin/users/${encodeURIComponent(targetAuthId)}`, {
+          method: "PUT",
+          headers: {
+            "apikey": supabaseKey,
+            "Authorization": `Bearer ${supabaseKey}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            ban_duration: normalizedStatus === 'Inativo' ? '876000h' : 'none',
+            user_metadata: {
+              ...existingMeta,
+              status: normalizedStatus
+            }
+          })
+        });
+
+        if (!authResp.ok) {
+          const errJson = await authResp.json().catch(() => ({}));
+          return res.status(authResp.status).json({
+            success: false,
+            error: errJson.msg || errJson.message || "Erro ao atualizar status no Supabase Auth."
+          });
+        }
+      }
+
+      // 2. Atualiza status em public.usuarios
+      const patchBody = {
+        status: normalizedStatus,
+        updated_at: new Date().toISOString()
+      };
+
+      let updatedPub = false;
+      const patchIdResp = await fetch(`${supabaseUrl}/rest/v1/usuarios?id=eq.${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        headers: {
+          "apikey": supabaseKey,
+          "Authorization": `Bearer ${supabaseKey}`,
+          "Content-Type": "application/json",
+          "Prefer": "return=representation"
+        },
+        body: JSON.stringify(patchBody)
+      });
+      if (patchIdResp.ok) {
+        const rows = await patchIdResp.json().catch(() => []);
+        if (Array.isArray(rows) && rows.length > 0) updatedPub = true;
+      }
+
+      if (resolvedEmail) {
+        const patchEmailResp = await fetch(`${supabaseUrl}/rest/v1/usuarios?email=ilike.${encodeURIComponent(resolvedEmail)}`, {
+          method: "PATCH",
+          headers: {
+            "apikey": supabaseKey,
+            "Authorization": `Bearer ${supabaseKey}`,
+            "Content-Type": "application/json",
+            "Prefer": "return=representation"
+          },
+          body: JSON.stringify(patchBody)
+        });
+        if (patchEmailResp.ok) {
+          const rows = await patchEmailResp.json().catch(() => []);
+          if (Array.isArray(rows) && rows.length > 0) updatedPub = true;
+        }
+      }
+
+      if (!updatedPub && resolvedEmail) {
+        const meta = targetAuthUser?.user_metadata || {};
+        await fetch(`${supabaseUrl}/rest/v1/usuarios?on_conflict=email`, {
+          method: "POST",
+          headers: {
+            "apikey": supabaseKey,
+            "Authorization": `Bearer ${supabaseKey}`,
+            "Content-Type": "application/json",
+            "Prefer": "resolution=merge-duplicates"
+          },
+          body: JSON.stringify({
+            id: targetAuthId || id,
+            email: resolvedEmail,
+            nome: meta.nome || meta.full_name || meta.display_name || resolvedEmail,
+            permissao: meta.permissao || 'user',
+            escritorios_ids: meta.escritorios_ids || [],
+            status: normalizedStatus,
+            enable_notifications: true
+          })
+        });
+      }
+
+      return res.json({ success: true, status: normalizedStatus });
+    } catch (err: any) {
+      console.error("[Server Supabase Admin Status] Exceção:", err);
       return res.status(500).json({ success: false, error: err.message || String(err) });
     }
   });

@@ -285,6 +285,8 @@ export const mapUsuarioFromDb = (r: any): Usuario => {
 
   const emailNorm = (r.email || '').trim().toLowerCase();
   const permissao = emailNorm === 'pratadeouro@gmail.com' ? 'Admin' : (r.permissao || 'user');
+  const rawStatus = String(r.status || 'Ativo').trim().toLowerCase();
+  const status = rawStatus === 'inativo' ? 'Inativo' : 'Ativo';
 
   return {
     id: r.id,
@@ -297,7 +299,7 @@ export const mapUsuarioFromDb = (r: any): Usuario => {
     cpf: r.cpf || '',
     permissao,
     escritoriosIds: safeEscritorios,
-    status: r.status || 'Ativo',
+    status,
     fotoUrl: r.foto_url || undefined,
     theme: r.theme || undefined,
     itemsPerPage: r.items_per_page || undefined,

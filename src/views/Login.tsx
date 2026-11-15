@@ -291,8 +291,8 @@ export default function Login() {
       if (!success) {
         setError('E-mail ou senha incorretos.');
       }
-    } catch (err) {
-      setError('E-mail ou senha incorretos.');
+    } catch (err: any) {
+      setError(err?.message || 'E-mail ou senha incorretos.');
     } finally {
       setIsLoading(false);
     }

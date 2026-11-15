@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAppContext } from '../context';
-import { Users, Plus, Search, Edit2, Trash2, Mail, Phone, ShieldCheck, ChevronRight, Copy, Check, ListOrdered, KeyRound, RefreshCw, CheckCircle2, Building2, Loader2 } from 'lucide-react';
+import { Users, Plus, Search, Edit2, Trash2, Mail, Phone, ShieldCheck, ChevronRight, Copy, Check, ListOrdered, KeyRound, RefreshCw, CheckCircle2, Building2, Loader2, UserCheck, UserX } from 'lucide-react';
 import Modal from '../components/Modal';
 import { Usuario, RolePermission, View } from '../types';
 import { SupabaseAuthImportModule } from '../components/SupabaseAuthImportModule';
@@ -23,6 +23,7 @@ export default function Usuarios() {
     state, 
     addUsuario, 
     updateUsuario, 
+    toggleUsuarioStatus,
     deleteUsuario, 
     hasPermission, 
     getPermissions, 
@@ -39,6 +40,8 @@ export default function Usuarios() {
   const canDelete = hasPermission('usuarios', 'delete') || isUserAdmin;
   const [activeTab, setActiveTab] = useState<'usuarios' | 'permissions' | 'import_auth'>('usuarios');
   const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'Ativo' | 'Inativo'>('all');
+  const [togglingUserId, setTogglingUserId] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingUsuario, setEditingUsuario] = useState<Usuario | null>(null);
   const [isRefreshingAuth, setIsRefreshingAuth] = useState(false);
@@ -56,6 +59,7 @@ export default function Usuarios() {
     senha: '',
     oab: '',
     permissao: '',
+    status: 'Ativo' as 'Ativo' | 'Inativo',
     escritoriosIds: [] as string[]
   });
 
@@ -111,6 +115,13 @@ export default function Usuarios() {
       }
     }
 
+    // 3. Filtro por status (Ativo / Inativo)
+    const userStatus: 'Ativo' | 'Inativo' =
+      String(u.status || 'Ativo').trim().toLowerCase() === 'inativo' ? 'Inativo' : 'Ativo';
+    if (statusFilter !== 'all' && userStatus !== statusFilter) {
+      return false;
+    }
+
     return true;
   });
 
@@ -128,6 +139,7 @@ export default function Usuarios() {
         senha: '', // Em branco para não expor a senha existente e permitir alteração voluntária
         oab: usuario.oab || '',
         permissao: usuario.permissao,
+        status: String(usuario.status || 'Ativo').trim().toLowerCase() === 'inativo' ? 'Inativo' : 'Ativo',
         escritoriosIds: usuario.escritoriosIds || []
       });
     } else {
@@ -141,6 +153,7 @@ export default function Usuarios() {
         senha: '',
         oab: '',
         permissao: '',
+        status: 'Ativo',
         escritoriosIds: escritorioAtivoId ? [escritorioAtivoId] : []
       });
     }
@@ -225,6 +238,7 @@ export default function Usuarios() {
         senha: '',
         oab: '',
         permissao: '',
+        status: 'Ativo',
         escritoriosIds: []
       });
     } catch (err: any) {
@@ -232,6 +246,29 @@ export default function Usuarios() {
       alert(`Erro inesperado ao salvar: ${err.message || String(err)}`);
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleToggleStatus = async (usuario: Usuario) => {
+    const isCurrentlyInactive = String(usuario.status || 'Ativo').trim().toLowerCase() === 'inativo';
+    const nextStatus: 'Ativo' | 'Inativo' = isCurrentlyInactive ? 'Ativo' : 'Inativo';
+
+    const confirmMsg = nextStatus === 'Inativo'
+      ? `Tem certeza que deseja INATIVAR o usuário "${usuario.nome}"?\n\nEle perderá imediatamente o acesso ao sistema até que seja reativado.`
+      : `Deseja REATIVAR o acesso do usuário "${usuario.nome}"?`;
+
+    if (!window.confirm(confirmMsg)) return;
+
+    setTogglingUserId(usuario.id);
+    try {
+      const res = await toggleUsuarioStatus(usuario.id, nextStatus);
+      if (res && !res.success) {
+        alert(`Erro ao alterar status do usuário: ${res.error || 'Falha na operação'}`);
+      }
+    } catch (err: any) {
+      alert(`Erro ao alterar status do usuário: ${err.message || String(err)}`);
+    } finally {
+      setTogglingUserId(null);
     }
   };
 
@@ -749,7 +786,24 @@ export default function Usuarios() {
               />
             </div>
 
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="inline-flex rounded-lg border border-app-border bg-app-bg p-0.5 text-xs font-medium">
+                {(['all', 'Ativo', 'Inativo'] as const).map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    onClick={() => setStatusFilter(option)}
+                    className={`px-2.5 py-1 rounded-md transition-colors cursor-pointer ${
+                      statusFilter === option
+                        ? 'bg-primary text-white shadow-sm'
+                        : 'text-app-text-muted hover:text-app-text'
+                    }`}
+                  >
+                    {option === 'all' ? 'Todos' : option === 'Ativo' ? 'Ativos' : 'Inativos'}
+                  </button>
+                ))}
+              </div>
+
               {activeEscritorio && (
                 <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-app-bg border border-app-border text-xs text-app-text-muted">
                   <Building2 size={14} className="text-primary shrink-0" />
@@ -782,12 +836,23 @@ export default function Usuarios() {
                   <th className="p-4 font-medium">OAB</th>
                   <th className="p-4 font-medium">Contato</th>
                   <th className="p-4 font-medium">Permissão</th>
+                  <th className="p-4 font-medium">Status</th>
                   <th className="p-4 font-medium text-right">Ações</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-app-border">
-                {filteredUsuarios.map((usuario, index) => (
-                  <tr key={`${usuario.id}-${index}`} className="hover:bg-app-secondary/50 transition-colors group">
+                {filteredUsuarios.map((usuario, index) => {
+                  const isInactive = String(usuario.status || 'Ativo').trim().toLowerCase() === 'inativo';
+                  const targetEmailLower = (usuario.email || '').trim().toLowerCase();
+                  const currentEmailLower = (currentUser?.email || '').trim().toLowerCase();
+                  const isSelf = (!!currentUser?.id && usuario.id === currentUser.id) || (!!currentEmailLower && targetEmailLower === currentEmailLower);
+                  const isTargetProtectedAdmin = targetEmailLower === 'pratadeouro@gmail.com' || (!isAdmin() && usuario.permissao === 'Admin');
+
+                  return (
+                  <tr
+                    key={`${usuario.id}-${index}`}
+                    className={`hover:bg-app-secondary/50 transition-colors group ${isInactive ? 'opacity-70 bg-app-bg/40' : ''}`}
+                  >
                     <td className="p-4">
                       <div className="font-medium text-app-text">{usuario.nome}</div>
                       {usuario.cpf && <div className="text-xs text-app-text-muted mt-1">CPF: {usuario.cpf}</div>}
@@ -838,24 +903,70 @@ export default function Usuarios() {
                       </div>
                     </td>
                     <td className="p-4 text-app-text-muted">{usuario.permissao || '-'}</td>
+                    <td className="p-4">
+                      <span
+                        className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold border ${
+                          isInactive
+                            ? 'bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20'
+                            : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
+                        }`}
+                      >
+                        <span className={`w-1.5 h-1.5 rounded-full ${isInactive ? 'bg-red-500' : 'bg-emerald-500'}`} />
+                        {isInactive ? 'Inativo' : 'Ativo'}
+                      </span>
+                    </td>
                     <td className="p-4 text-right">
-                      <div className="flex justify-end space-x-2">
-                        {hasPermission('usuarios', 'write') && (
+                      <div className="flex justify-end space-x-1">
+                        {canWrite && (
                           <button 
                             onClick={() => handleOpenModal(usuario)}
-                            disabled={!isAdmin() && (usuario.permissao === 'Admin' || usuario.email.toLowerCase() === 'pratadeouro@gmail.com')}
+                            disabled={!isAdmin() && (usuario.permissao === 'Admin' || targetEmailLower === 'pratadeouro@gmail.com')}
                             className={`text-app-text-muted hover:text-primary transition-colors p-2 rounded-full hover:bg-primary/10 disabled:opacity-30 disabled:cursor-not-allowed`}
-                            title={!isAdmin() && (usuario.permissao === 'Admin' || usuario.email.toLowerCase() === 'pratadeouro@gmail.com') ? "Não é possível editar um administrador" : "Editar"}
+                            title={!isAdmin() && (usuario.permissao === 'Admin' || targetEmailLower === 'pratadeouro@gmail.com') ? "Não é possível editar um administrador" : "Editar"}
                           >
                             <Edit2 size={18} />
                           </button>
                         )}
-                        {hasPermission('usuarios', 'delete') && (
+                        {canWrite && (
+                          <button
+                            onClick={() => handleToggleStatus(usuario)}
+                            disabled={togglingUserId === usuario.id || isSelf || isTargetProtectedAdmin}
+                            className={`transition-colors p-2 rounded-full disabled:opacity-30 disabled:cursor-not-allowed ${
+                              isInactive
+                                ? 'text-emerald-600 hover:text-emerald-700 hover:bg-emerald-500/10'
+                                : 'text-amber-600 hover:text-amber-700 hover:bg-amber-500/10'
+                            }`}
+                            title={
+                              isSelf
+                                ? 'Não é possível inativar o próprio usuário'
+                                : isTargetProtectedAdmin
+                                  ? 'Não é possível alterar o status deste administrador'
+                                  : isInactive
+                                    ? 'Reativar usuário'
+                                    : 'Inativar usuário'
+                            }
+                          >
+                            {togglingUserId === usuario.id ? (
+                              <Loader2 size={18} className="animate-spin" />
+                            ) : isInactive ? (
+                              <UserCheck size={18} />
+                            ) : (
+                              <UserX size={18} />
+                            )}
+                          </button>
+                        )}
+                        {canDelete && (
                           <button 
                             onClick={() => handleDelete(usuario.id)}
-                            disabled={!isAdmin() && (usuario.permissao === 'Admin' || usuario.email.toLowerCase() === 'pratadeouro@gmail.com')}
+                            disabled={isSelf || (!isAdmin() && (usuario.permissao === 'Admin' || targetEmailLower === 'pratadeouro@gmail.com'))}
                             className={`text-app-text-muted hover:text-red-500 transition-colors p-2 rounded-full hover:bg-red-500/10 disabled:opacity-30 disabled:cursor-not-allowed`}
-                            title={!isAdmin() && (usuario.permissao === 'Admin' || usuario.email.toLowerCase() === 'pratadeouro@gmail.com') ? "Não é possível excluir um administrador" : "Excluir"}
+                            title={
+                              isSelf
+                                ? 'Não é possível excluir o próprio usuário'
+                                : !isAdmin() && (usuario.permissao === 'Admin' || targetEmailLower === 'pratadeouro@gmail.com')
+                                  ? "Não é possível excluir um administrador"
+                                  : "Excluir"
+                            }
                           >
                             <Trash2 size={18} />
                           </button>
@@ -863,10 +974,11 @@ export default function Usuarios() {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
                 {filteredUsuarios.length === 0 && (
                   <tr>
-                    <td colSpan={7} className="p-8 text-center text-app-text-muted">
+                    <td colSpan={8} className="p-8 text-center text-app-text-muted">
                       {activeEscritorio 
                         ? `Nenhum usuário encontrado para o escritório "${activeEscritorio.nome}".`
                         : 'Nenhum usuário encontrado.'}
@@ -1314,6 +1426,24 @@ export default function Usuarios() {
                     {p.role}
                   </option>
                 ))}
+              </select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-sm font-medium text-app-text">Status do Usuário</label>
+              <select
+                className="w-full px-3 py-2 border border-app-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary bg-app-surface text-app-text disabled:opacity-60 disabled:cursor-not-allowed"
+                value={formData.status}
+                disabled={
+                  (editingUsuario?.email || formData.email || '').trim().toLowerCase() === 'pratadeouro@gmail.com' ||
+                  (!!editingUsuario && (
+                    editingUsuario.id === currentUser?.id ||
+                    (editingUsuario.email || '').trim().toLowerCase() === (currentUser?.email || '').trim().toLowerCase()
+                  ))
+                }
+                onChange={e => setFormData({ ...formData, status: e.target.value === 'Inativo' ? 'Inativo' : 'Ativo' })}
+              >
+                <option value="Ativo">Ativo (Acesso Liberado)</option>
+                <option value="Inativo">Inativo (Acesso Bloqueado)</option>
               </select>
             </div>
           </div>
