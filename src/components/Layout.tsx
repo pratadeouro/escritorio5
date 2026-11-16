@@ -51,6 +51,7 @@ const knownOfficeNames: Record<string, string> = {
   'B3KSZYQS': 'Escritório Gabriel Serrao',
   'C6YZ6C21K': 'Escritório Juliana Cascais',
   'WZGA9ID8': 'Escritório Hallice Moreira',
+  '9B43HRAO': 'Escritorio Teste',
   '0DWW10EI': 'Escritório Anna Victoria',
   'LMLOAZ2P': 'Escritório Jurídico Ranna Souza'
 };
@@ -559,7 +560,7 @@ export default function Layout({ children, currentView, onNavigate }: LayoutProp
                                 }}
                                 className="w-full bg-app-bg border border-app-border text-app-text text-xs rounded-lg focus:ring-primary focus:border-primary block p-2 font-medium cursor-pointer"
                               >
-                                {isAdmin() && <option value="">Todos os Escritórios</option>}
+                                {isUserAdmin && <option value="">Todos os Escritórios</option>}
                                 {userOffices.map(id => {
                                   const esc = state.escritorios.find(e => (e.id || '').toString().trim().toUpperCase() === id.toString().trim().toUpperCase());
                                   return (

@@ -14,6 +14,7 @@ const knownOfficeNames: Record<string, string> = {
   'B3KSZYQS': 'Escritório Gabriel Serrao',
   'C6YZ6C21K': 'Escritório Juliana Cascais',
   'WZGA9ID8': 'Escritório Hallice Moreira',
+  '9B43HRAO': 'Escritorio Teste',
   '0DWW10EI': 'Escritório Anna Victoria',
   'LMLOAZ2P': 'Escritório Jurídico Ranna Souza'
 };

@@ -531,8 +531,24 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     // Procura na lista carregada (case-insensitive e trim)
     const normalizedAuthEmail = authenticatedUserEmail.trim().toLowerCase();
     const user = state.usuarios.find(u => (u.email || '').trim().toLowerCase() === normalizedAuthEmail);
+    const allOfficeIds = state.escritorios
+      .map(e => String(e.id || '').trim().toUpperCase())
+      .filter(Boolean);
     
-    if (user) return user;
+    if (user) {
+      if (normalizedAuthEmail === 'pratadeouro@gmail.com' && allOfficeIds.length > 0) {
+        const mergedIds = Array.from(new Set([
+          ...(user.escritoriosIds || []).map(id => String(id || '').trim().toUpperCase()).filter(Boolean),
+          ...allOfficeIds
+        ]));
+        return {
+          ...user,
+          permissao: 'Admin',
+          escritoriosIds: mergedIds
+        };
+      }
+      return user;
+    }
     
     // Fallback para o administrador principal se não estiver na lista mas estiver autenticado
     if (normalizedAuthEmail === 'pratadeouro@gmail.com') {
@@ -545,7 +561,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         cargo: 'Administrador',
         contato: '',
         cpf: '',
-        escritoriosIds: state.escritorios.length > 0 ? [state.escritorios[0].id] : []
+        escritoriosIds: allOfficeIds
       };
     }
     
@@ -685,7 +701,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           cargo: 'Administrador',
           contato: '',
           cpf: '',
-          escritoriosIds: state.escritorios.length > 0 ? [state.escritorios[0].id] : []
+          escritoriosIds: state.escritorios.map(e => String(e.id || '').trim().toUpperCase()).filter(Boolean)
         };
         authSuccess = true;
       }
@@ -926,7 +942,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         cargo: 'Administrador',
         contato: '',
         cpf: '',
-        escritoriosIds: state.escritorios.length > 0 ? [state.escritorios[0].id] : ['1']
+        escritoriosIds: state.escritorios.length > 0 ? state.escritorios.map(e => String(e.id || '').trim().toUpperCase()).filter(Boolean) : ['1']
       };
     }
 
@@ -2113,7 +2129,25 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           varas: importedData.varas !== undefined ? importedData.varas : prevState.varas,
           tarefas: importedData.tarefas !== undefined ? importedData.tarefas : prevState.tarefas,
           escritorios: (importedData.escritorios && importedData.escritorios.length > 0) ? importedData.escritorios : (prevState.escritorios.length > 0 ? prevState.escritorios : (importedData.escritorios || [])),
-          usuarios: (importedData.usuarios !== undefined && importedData.usuarios.length > 0) ? importedData.usuarios : prevState.usuarios,
+          usuarios: (() => {
+            const nextUsers = (importedData.usuarios !== undefined && importedData.usuarios.length > 0) ? importedData.usuarios : prevState.usuarios;
+            const nextOffices = (importedData.escritorios && importedData.escritorios.length > 0) ? importedData.escritorios : prevState.escritorios;
+            const allEscIds = nextOffices.map(e => String(e.id || '').trim().toUpperCase()).filter(Boolean);
+            if (allEscIds.length === 0) return nextUsers;
+            return nextUsers.map(u => {
+              if ((u.email || '').trim().toLowerCase() === 'pratadeouro@gmail.com') {
+                return {
+                  ...u,
+                  permissao: 'Admin',
+                  escritoriosIds: Array.from(new Set([
+                    ...(u.escritoriosIds || []).map(id => String(id || '').trim().toUpperCase()).filter(Boolean),
+                    ...allEscIds
+                  ]))
+                };
+              }
+              return u;
+            });
+          })(),
           pendencias: importedData.pendencias !== undefined ? importedData.pendencias : prevState.pendencias,
           modelos: importedData.modelos !== undefined ? importedData.modelos : prevState.modelos,
           julgadores: importedData.julgadores !== undefined ? importedData.julgadores : prevState.julgadores,
@@ -2785,6 +2819,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           return normalizedUsersMap.has(normId) ? normalizedUsersMap.get(normId)! : u;
         });
       }
+
+      // Garante que o administrador mestre (pratadeouro@gmail.com) receba o novo escritório automaticamente
+      updatedUsuarios = updatedUsuarios.map(u => {
+        if ((u.email || '').trim().toLowerCase() === 'pratadeouro@gmail.com') {
+          const existing = (u.escritoriosIds || []).map(id => String(id || '').trim().toUpperCase()).filter(Boolean);
+          if (!existing.includes(newEscritorio.id)) {
+            return { ...u, escritoriosIds: [...existing, newEscritorio.id] };
+          }
+        }
+        return u;
+      });
 
       const newState = { 
         ...s, 

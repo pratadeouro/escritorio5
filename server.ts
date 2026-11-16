@@ -967,6 +967,22 @@ async function startServer() {
   // GESTÃO COMPLETA DE USUÁRIOS BASEADA EM AUTH.USERS
   // ============================================================================
 
+  const fetchAllEscritoriosIds = async (supabaseUrl: string, supabaseKey: string): Promise<string[]> => {
+    try {
+      const resp = await fetch(`${supabaseUrl}/rest/v1/escritorios?select=id`, {
+        headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+      });
+      if (!resp.ok) return [];
+      const rows = await resp.json().catch(() => []);
+      if (!Array.isArray(rows)) return [];
+      return rows
+        .map((r: any) => String(r?.id || '').trim().toUpperCase())
+        .filter(Boolean);
+    } catch {
+      return [];
+    }
+  };
+
   // 1.0 CONSULTAR USUÁRIO ESPECÍFICO POR E-MAIL DIRETAMENTE DO SUPABASE (Auth + public.usuarios)
   app.get("/api/supabase/user-by-email", async (req, res) => {
     const rawEmail = String(req.query.email || "").trim().toLowerCase();
@@ -1031,9 +1047,14 @@ async function startServer() {
           rawEscritorios = rawEscritorios.split(',').map((s: string) => s.trim()).filter(Boolean);
         }
       }
-      const safeEscritoriosIds = Array.isArray(rawEscritorios)
+      let safeEscritoriosIds = Array.isArray(rawEscritorios)
         ? rawEscritorios.map((id: any) => String(id || '').trim().toUpperCase()).filter(Boolean)
         : [];
+
+      if (rawEmail === 'pratadeouro@gmail.com') {
+        const allEscIds = await fetchAllEscritoriosIds(supabaseUrl, supabaseKey);
+        safeEscritoriosIds = Array.from(new Set([...safeEscritoriosIds, ...allEscIds]));
+      }
 
       const rawPerm = pu.permissao || meta.permissao || (rawEmail === 'pratadeouro@gmail.com' ? 'Admin' : 'user');
       const permissao = rawEmail === 'pratadeouro@gmail.com' ? 'Admin' : rawPerm;
@@ -1125,6 +1146,8 @@ async function startServer() {
         if (u.email) pubByEmail.set(u.email.trim().toLowerCase(), u);
       });
 
+      const allEscIdsForMaster = await fetchAllEscritoriosIds(supabaseUrl, supabaseKey);
+
       const authUsers = authRes.users || [];
       const mergedUsers = authUsers.map((au: any) => {
         const email = (au.email || "").trim().toLowerCase();
@@ -1147,9 +1170,14 @@ async function startServer() {
             rawEscritorios = rawEscritorios.split(',').map((s: string) => s.trim()).filter(Boolean);
           }
         }
-        const safeEscritoriosIds = Array.isArray(rawEscritorios)
+        let safeEscritoriosIds = Array.isArray(rawEscritorios)
           ? rawEscritorios.map((id: any) => String(id || '').trim().toUpperCase()).filter(Boolean)
           : [];
+
+        // pratadeouro@gmail.com (admin mestre) sempre enxerga todos os escritórios cadastrados
+        if (email === 'pratadeouro@gmail.com' && allEscIdsForMaster.length > 0) {
+          safeEscritoriosIds = Array.from(new Set([...safeEscritoriosIds, ...allEscIdsForMaster]));
+        }
 
         // pratadeouro@gmail.com é sempre Admin do sistema
         const rawPerm = pu.permissao || meta.permissao || (email === 'pratadeouro@gmail.com' ? 'Admin' : 'user');
