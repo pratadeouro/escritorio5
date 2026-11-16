@@ -1,45 +1,72 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useAppContext } from '../context';
-import { 
-  Calendar as CalendarIcon, 
-  List, 
-  LayoutGrid, 
-  Search, 
+import {
+  Calendar as CalendarIcon,
+  List,
+  LayoutGrid,
+  Search,
   Filter,
   Inbox,
-  Building2,
-  Clock,
-  ChevronRight,
-  Info,
   Plus,
   Trash2,
-  Edit2
+  Edit2,
+  X,
+  ArrowUpDown,
 } from 'lucide-react';
 import Calendar from '../components/Calendar';
 import Modal from '../components/Modal';
+import Pagination from '../components/Pagination';
+import {
+  ConfirmDeleteModal,
+  matchesOfficeFilter,
+  normalizeSearchStr,
+} from '../components/CadastrosTableHelper';
 import { formatDate } from '../utils/date';
-import { motion, AnimatePresence } from 'motion/react';
 import { Calendario } from '../types';
 
 export default function CalendarioJudicial() {
-  const { state, escritorioAtivoId, isAdmin, currentUser, addCalendario, updateCalendario, deleteCalendario, hasPermission } = useAppContext();
-  const canWrite = hasPermission('calendario', 'write');
-  const canDelete = hasPermission('calendario', 'delete');
+  const {
+    state,
+    escritorioAtivoId,
+    isAdmin,
+    currentUser,
+    addCalendario,
+    updateCalendario,
+    deleteCalendario,
+    hasPermission,
+  } = useAppContext();
+
+  const canWrite = isAdmin() || hasPermission('calendario', 'write');
+  const canDelete = isAdmin() || hasPermission('calendario', 'delete');
+
   const [viewMode, setViewMode] = useState<'list' | 'calendar'>('calendar');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTJ, setSelectedTJ] = useState<string>('Todos');
+  const [selectedYear, setSelectedYear] = useState<string>('Todos');
+  const [sortDirection, setSortDirection] = useState<'desc' | 'asc'>('desc');
   const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(state.settings?.itemsPerPage || 10);
+
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<Calendario | null>(null);
+  const [deletingItem, setDeletingItem] = useState<Calendario | null>(null);
 
-  const itemsPerPage = state.settings?.itemsPerPage || 10;
+  useEffect(() => {
+    if (state.settings?.itemsPerPage) {
+      setPageSize(state.settings.itemsPerPage);
+    }
+  }, [state.settings?.itemsPerPage]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, selectedTJ, selectedYear, escritorioAtivoId, pageSize]);
 
   const initialFormState: Calendario = {
     id: '',
     tj: '',
     data: new Date().toISOString().split('T')[0],
     descricao: '',
-    escritorioId: escritorioAtivoId || 'x'
+    escritorioId: escritorioAtivoId || 'x',
   };
 
   const [formData, setFormData] = useState<Calendario>(initialFormState);
@@ -50,7 +77,13 @@ export default function CalendarioJudicial() {
       setFormData(item);
     } else {
       setEditingItem(null);
-      setFormData(initialFormState);
+      setFormData({
+        id: '',
+        tj: selectedTJ !== 'Todos' ? selectedTJ : '',
+        data: new Date().toISOString().split('T')[0],
+        descricao: '',
+        escritorioId: escritorioAtivoId || 'x',
+      });
     }
     setIsModalOpen(true);
   };
@@ -63,6 +96,7 @@ export default function CalendarioJudicial() {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canWrite) return;
     if (editingItem) {
       updateCalendario(formData);
     } else {
@@ -71,275 +105,374 @@ export default function CalendarioJudicial() {
     handleCloseModal();
   };
 
-  const handleDelete = (id: string) => {
-    if (window.confirm('Tem certeza que deseja excluir este registro?')) {
-      deleteCalendario(id);
-      if (isModalOpen) handleCloseModal();
+  const handleConfirmDelete = () => {
+    if (!deletingItem) return;
+    deleteCalendario(deletingItem.id);
+    if (isModalOpen && editingItem?.id === deletingItem.id) {
+      handleCloseModal();
     }
+    setDeletingItem(null);
   };
 
-  const filteredItems = useMemo(() => {
-    return state.calendario.filter(item => {
-      // Escritório filter
-      if (escritorioAtivoId && item.escritorioId && item.escritorioId !== escritorioAtivoId && item.escritorioId !== 'x') return false;
-      if (!isAdmin() && item.escritorioId && item.escritorioId !== 'x' && !(currentUser?.escritoriosIds || []).includes(item.escritorioId)) return false;
-
-      // Search filter
-      const searchLower = searchTerm.toLowerCase();
-      const matchesSearch = 
-        (item.tj || '').toLowerCase().includes(searchLower) ||
-        (item.descricao || '').toLowerCase().includes(searchLower);
-      if (!matchesSearch) return false;
-
-      // TJ Filter
-      if (selectedTJ !== 'Todos' && item.tj !== selectedTJ) return false;
-
-      return true;
-    }).sort((a, b) => new Date(b.data).getTime() - new Date(a.data).getTime());
-  }, [state.calendario, searchTerm, selectedTJ, escritorioAtivoId, isAdmin, currentUser]);
-
-  const totalPages = Math.ceil(filteredItems.length / itemsPerPage);
-  const paginatedItems = filteredItems.slice(
-    (currentPage - 1) * itemsPerPage,
-    currentPage * itemsPerPage
-  );
+  const officeScopedItems = useMemo(() => {
+    const adminUser = isAdmin();
+    const userOffices = currentUser?.escritoriosIds;
+    return state.calendario.filter((item) =>
+      matchesOfficeFilter(item.escritorioId, escritorioAtivoId, adminUser, userOffices)
+    );
+  }, [state.calendario, escritorioAtivoId, isAdmin, currentUser]);
 
   const allTJs = useMemo(() => {
     const tjs = new Set<string>();
-    state.calendario.forEach(item => {
-      if (item.tj) tjs.add(item.tj);
+    officeScopedItems.forEach((item) => {
+      if (item.tj && item.tj.trim()) tjs.add(item.tj.trim());
     });
-    return ['Todos', ...Array.from(tjs).sort()];
-  }, [state.calendario]);
+    return ['Todos', ...Array.from(tjs).sort((a, b) => a.localeCompare(b))];
+  }, [officeScopedItems]);
+
+  const allYears = useMemo(() => {
+    const years = new Set<string>();
+    officeScopedItems.forEach((item) => {
+      if (item.data && item.data.length >= 4) {
+        const y = item.data.substring(0, 4);
+        if (/^\d{4}$/.test(y)) years.add(y);
+      }
+    });
+    return ['Todos', ...Array.from(years).sort((a, b) => b.localeCompare(a))];
+  }, [officeScopedItems]);
+
+  const filteredItems = useMemo(() => {
+    const queryNorm = normalizeSearchStr(searchTerm);
+
+    return officeScopedItems
+      .filter((item) => {
+        if (selectedTJ !== 'Todos' && (item.tj || '').trim() !== selectedTJ) {
+          return false;
+        }
+
+        if (selectedYear !== 'Todos' && !(item.data || '').startsWith(selectedYear)) {
+          return false;
+        }
+
+        if (queryNorm) {
+          const formattedDate = formatDate(item.data);
+          const matchesSearch =
+            normalizeSearchStr(item.tj).includes(queryNorm) ||
+            normalizeSearchStr(item.descricao).includes(queryNorm) ||
+            normalizeSearchStr(formattedDate).includes(queryNorm) ||
+            normalizeSearchStr(item.data).includes(queryNorm);
+          if (!matchesSearch) return false;
+        }
+
+        return true;
+      })
+      .sort((a, b) => {
+        const timeA = a.data ? new Date(`${a.data}T00:00:00`).getTime() : 0;
+        const timeB = b.data ? new Date(`${b.data}T00:00:00`).getTime() : 0;
+        if (timeA !== timeB) {
+          return sortDirection === 'desc' ? timeB - timeA : timeA - timeB;
+        }
+        return (a.tj || '').localeCompare(b.tj || '');
+      });
+  }, [officeScopedItems, searchTerm, selectedTJ, selectedYear, sortDirection]);
+
+  const totalPages = Math.ceil(filteredItems.length / pageSize);
+  const safeCurrentPage = Math.min(currentPage, Math.max(1, totalPages));
+
+  const paginatedItems = useMemo(() => {
+    const startIndex = (safeCurrentPage - 1) * pageSize;
+    return filteredItems.slice(startIndex, startIndex + pageSize);
+  }, [filteredItems, safeCurrentPage, pageSize]);
+
+  const hasActiveFilters =
+    searchTerm.trim() !== '' || selectedTJ !== 'Todos' || selectedYear !== 'Todos';
+
+  const clearFilters = () => {
+    setSearchTerm('');
+    setSelectedTJ('Todos');
+    setSelectedYear('Todos');
+    setCurrentPage(1);
+  };
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto space-y-6">
+    <div className="p-2 sm:p-4 md:p-6 w-full h-full flex flex-col space-y-3 sm:space-y-4 overflow-hidden">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-app-text flex items-center">
-            <CalendarIcon className="mr-3 text-primary" size={28} />
-            Calendário Judicial
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 flex-shrink-0">
+        <div className="min-w-0">
+          <h1 className="text-xl sm:text-2xl font-bold text-app-text flex items-center">
+            <CalendarIcon className="mr-3 text-primary shrink-0" size={26} />
+            <span className="truncate">Calendário Judicial</span>
           </h1>
-          <p className="text-sm text-app-text-muted mt-1">
-            Informações e prazos dos tribunais judiciais
+          <p className="text-xs sm:text-sm text-app-text-muted mt-0.5 truncate">
+            Feriados, recessos e suspensões de prazos nos tribunais
           </p>
         </div>
-        
-        <div className="flex items-center gap-3 w-full sm:w-auto">
-          <button
-            onClick={() => handleOpenModal()}
-            className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-primary text-white px-4 py-2 rounded-xl font-semibold shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all text-sm"
-          >
-            <Plus size={18} />
-            Novo Registro
-          </button>
 
-          <div className="flex bg-app-secondary p-1 rounded-xl border border-app-border">
+        <div className="flex items-center gap-2.5 w-full sm:w-auto shrink-0">
+          {canWrite && (
             <button
+              type="button"
+              onClick={() => handleOpenModal()}
+              className="flex-1 sm:flex-none flex items-center justify-center gap-2 bg-primary text-white px-4 py-2 rounded-lg font-semibold shadow-sm hover:opacity-90 transition-opacity text-sm whitespace-nowrap shrink-0"
+            >
+              <Plus size={18} />
+              Novo Registro
+            </button>
+          )}
+
+          <div className="flex bg-app-secondary p-1 rounded-lg border border-app-border shrink-0">
+            <button
+              type="button"
               onClick={() => setViewMode('list')}
-              className={`p-2 rounded-lg transition-all flex items-center gap-2 px-3 text-sm font-medium ${
-                viewMode === 'list' 
-                  ? 'bg-app-surface shadow-sm text-primary' 
+              className={`py-1.5 px-3 rounded-md transition-colors flex items-center gap-1.5 text-sm font-medium whitespace-nowrap shrink-0 ${
+                viewMode === 'list'
+                  ? 'bg-app-surface shadow-sm text-primary'
                   : 'text-app-text-muted hover:text-app-text'
               }`}
             >
-              <List size={18} />
+              <List size={16} />
               Lista
             </button>
             <button
+              type="button"
               onClick={() => setViewMode('calendar')}
-              className={`p-2 rounded-lg transition-all flex items-center gap-2 px-3 text-sm font-medium ${
-                viewMode === 'calendar' 
-                  ? 'bg-app-surface shadow-sm text-primary' 
+              className={`py-1.5 px-3 rounded-md transition-colors flex items-center gap-1.5 text-sm font-medium whitespace-nowrap shrink-0 ${
+                viewMode === 'calendar'
+                  ? 'bg-app-surface shadow-sm text-primary'
                   : 'text-app-text-muted hover:text-app-text'
               }`}
             >
-              <LayoutGrid size={18} />
+              <LayoutGrid size={16} />
               Calendário
             </button>
           </div>
         </div>
       </div>
 
-      {/* Filters Bar */}
-      <div className="flex flex-col md:flex-row gap-4 items-center justify-between bg-app-surface p-4 rounded-2xl border border-app-border shadow-sm">
-        <div className="relative flex-1 w-full max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-app-text-muted" size={18} />
-          <input
-            type="text"
-            placeholder="Buscar por TJ ou descrição..."
-            value={searchTerm}
-            onChange={(e) => {
-              setSearchTerm(e.target.value);
-              setCurrentPage(1);
-            }}
-            className="w-full pl-10 pr-4 py-2 bg-app-bg border border-app-border rounded-xl text-app-text focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-sm"
-          />
+      {/* Main Container */}
+      <div className="bg-app-surface rounded-xl shadow-sm border border-app-border overflow-hidden flex-1 flex flex-col min-h-0">
+        {/* Filters Bar */}
+        <div className="p-3 sm:p-4 border-b border-app-border flex flex-col lg:flex-row gap-3 lg:items-center justify-between flex-shrink-0">
+          <div className="relative flex-1 w-full lg:max-w-md">
+            <Search
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-app-text-muted"
+              size={18}
+            />
+            <input
+              type="text"
+              placeholder="Buscar por tribunal, data ou descrição..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="w-full pl-9 pr-9 py-2 bg-app-secondary border border-app-border rounded-lg text-app-text placeholder-app-text-muted focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors text-sm"
+            />
+            {searchTerm && (
+              <button
+                type="button"
+                onClick={() => setSearchTerm('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-app-text-muted hover:text-app-text transition-colors"
+                title="Limpar busca"
+              >
+                <X size={16} />
+              </button>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto">
+            <div className="flex items-center gap-2 bg-app-secondary px-3 py-1.5 rounded-lg border border-app-border">
+              <Filter size={15} className="text-app-text-muted shrink-0" />
+              <span className="text-xs font-medium text-app-text-muted whitespace-nowrap">
+                Tribunal:
+              </span>
+              <select
+                value={selectedTJ}
+                onChange={(e) => setSelectedTJ(e.target.value)}
+                className="bg-transparent border-none text-sm font-medium text-app-text focus:outline-none focus:ring-0 p-0 pr-5 cursor-pointer"
+              >
+                {allTJs.map((tj) => (
+                  <option key={tj} value={tj} className="bg-app-surface text-app-text">
+                    {tj}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {allYears.length > 2 && (
+              <div className="flex items-center gap-2 bg-app-secondary px-3 py-1.5 rounded-lg border border-app-border tabular-nums">
+                <span className="text-xs font-medium text-app-text-muted whitespace-nowrap">
+                  Ano:
+                </span>
+                <select
+                  value={selectedYear}
+                  onChange={(e) => setSelectedYear(e.target.value)}
+                  className="bg-transparent border-none text-sm font-medium text-app-text focus:outline-none focus:ring-0 p-0 pr-5 cursor-pointer tabular-nums"
+                >
+                  {allYears.map((yr) => (
+                    <option key={yr} value={yr} className="bg-app-surface text-app-text">
+                      {yr}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {viewMode === 'list' && (
+              <button
+                type="button"
+                onClick={() =>
+                  setSortDirection((prev) => (prev === 'desc' ? 'asc' : 'desc'))
+                }
+                className="flex items-center gap-1.5 bg-app-secondary hover:bg-app-bg px-3 py-1.5 rounded-lg border border-app-border text-xs font-medium text-app-text transition-colors whitespace-nowrap shrink-0"
+                title="Alternar ordenação por data"
+              >
+                <ArrowUpDown size={14} className="text-primary shrink-0" />
+                {sortDirection === 'desc' ? 'Mais recentes' : 'Mais antigos'}
+              </button>
+            )}
+
+            {hasActiveFilters && (
+              <button
+                type="button"
+                onClick={clearFilters}
+                className="text-xs font-medium text-primary hover:underline px-2 py-1.5 whitespace-nowrap shrink-0"
+              >
+                Limpar filtros
+              </button>
+            )}
+
+            <span className="text-xs text-app-text-muted font-medium whitespace-nowrap ml-auto lg:ml-1 tabular-nums">
+              {filteredItems.length}{' '}
+              {filteredItems.length === 1 ? 'registro' : 'registros'}
+            </span>
+          </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
-          <div className="flex items-center gap-2 bg-app-bg px-3 py-1.5 rounded-xl border border-app-border">
-            <Filter size={16} className="text-app-text-muted" />
-            <span className="text-xs font-semibold text-app-text-muted uppercase">TJ:</span>
-            <select
-              value={selectedTJ}
-              onChange={(e) => {
-                setSelectedTJ(e.target.value);
-                setCurrentPage(1);
-              }}
-              className="bg-transparent border-none text-sm font-medium text-app-text focus:ring-0 p-0 pr-6"
-            >
-              {allTJs.map(tj => (
-                <option key={tj} value={tj}>{tj}</option>
-              ))}
-            </select>
-          </div>
-          
-          <div className="text-xs font-medium text-app-text-muted bg-app-bg px-3 py-1.5 rounded-xl border border-app-border">
-            {filteredItems.length} registros
-          </div>
-        </div>
-      </div>
-
-      {/* Content Area */}
-      <AnimatePresence mode="wait">
+        {/* Content Area */}
         {viewMode === 'list' ? (
-          <motion.div
-            key="list"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            className="space-y-4"
-          >
-            <div className="space-y-3">
+          <>
+            <div className="flex-1 overflow-y-auto min-h-0 scrollbar-thin scrollbar-thumb-app-border scrollbar-track-transparent">
               {paginatedItems.length > 0 ? (
-                paginatedItems.map((item) => (
-                  <div 
-                    key={item.id} 
-                    className="bg-app-surface p-4 rounded-xl border border-app-border hover:border-primary/30 transition-all group flex flex-col sm:flex-row sm:items-center gap-4 shadow-sm"
-                  >
-                    <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center text-primary shrink-0 group-hover:scale-110 transition-transform">
-                      <Building2 size={24} />
-                    </div>
-                    
-                    <div className="flex-1 min-w-0" onClick={() => canWrite && handleOpenModal(item)}>
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="px-2 py-0.5 bg-primary/10 text-primary border border-primary/20 rounded text-[10px] font-bold tracking-wider uppercase">
-                          {item.tj}
-                        </span>
-                        <div className="flex items-center text-xs text-app-text-muted">
-                          <Clock size={12} className="mr-1" />
+                <table className="w-full text-left border-collapse min-w-full">
+                  <thead className="sticky top-0 z-10 bg-app-secondary border-b border-app-border text-app-text-muted text-xs font-semibold">
+                    <tr>
+                      <th className="px-4 py-3 w-36 whitespace-nowrap">Data</th>
+                      <th className="px-4 py-3 w-32 whitespace-nowrap">Tribunal</th>
+                      <th className="px-4 py-3">Descrição / Suspensão de Prazo</th>
+                      {(canWrite || canDelete) && (
+                        <th className="px-4 py-3 w-28 text-right whitespace-nowrap">
+                          Ações
+                        </th>
+                      )}
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-app-border text-sm">
+                    {paginatedItems.map((item) => (
+                      <tr
+                        key={item.id}
+                        onClick={() => {
+                          if (canWrite) handleOpenModal(item);
+                        }}
+                        className={`hover:bg-app-secondary/60 transition-colors group ${
+                          canWrite ? 'cursor-pointer' : ''
+                        }`}
+                      >
+                        <td className="px-4 py-3 whitespace-nowrap font-mono text-xs sm:text-sm text-app-text tabular-nums">
                           {formatDate(item.data)}
-                        </div>
-                      </div>
-                      <h3 className="text-base font-semibold text-app-text leading-tight mb-1 truncate group-hover:text-primary transition-colors cursor-pointer">
-                        {item.descricao}
-                      </h3>
-                    </div>
-
-                    <div className="flex items-center sm:justify-end gap-2 shrink-0">
-                      {canWrite && (
-                        <button 
-                          onClick={() => handleOpenModal(item)}
-                          className="p-2 text-app-text-muted hover:text-primary hover:bg-primary/5 rounded-lg transition-all"
-                        >
-                          <Edit2 size={18} />
-                        </button>
-                      )}
-                      {canDelete && (
-                        <button 
-                          onClick={() => handleDelete(item.id)}
-                          className="p-2 text-app-text-muted hover:text-red-500 hover:bg-red-50/50 rounded-lg transition-all"
-                        >
-                          <Trash2 size={18} />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap font-semibold text-primary text-xs sm:text-sm">
+                          {item.tj || '—'}
+                        </td>
+                        <td className="px-4 py-3 text-app-text leading-snug">
+                          <span className="group-hover:text-primary transition-colors">
+                            {item.descricao}
+                          </span>
+                        </td>
+                        {(canWrite || canDelete) && (
+                          <td
+                            className="px-4 py-2.5 text-right whitespace-nowrap"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <div className="inline-flex items-center justify-end gap-1">
+                              {canWrite && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenModal(item)}
+                                  className="p-2 text-app-text-muted hover:text-primary hover:bg-primary/10 rounded-lg transition-colors"
+                                  title="Editar registro"
+                                >
+                                  <Edit2 size={16} />
+                                </button>
+                              )}
+                              {canDelete && (
+                                <button
+                                  type="button"
+                                  onClick={() => setDeletingItem(item)}
+                                  className="p-2 text-app-text-muted hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-colors"
+                                  title="Excluir registro"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               ) : (
-                <EmptyState />
+                <EmptyState
+                  hasFilters={hasActiveFilters}
+                  onClearFilters={clearFilters}
+                  canWrite={canWrite}
+                  onAdd={() => handleOpenModal()}
+                />
               )}
             </div>
 
-            {/* Pagination Controls */}
-            {totalPages > 1 && (
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-app-surface p-4 rounded-xl border border-app-border">
-                <div className="text-sm text-app-text-muted">
-                  Mostrando <span className="font-semibold text-app-text">{(currentPage - 1) * itemsPerPage + 1}</span> a <span className="font-semibold text-app-text">{Math.min(currentPage * itemsPerPage, filteredItems.length)}</span> de <span className="font-semibold text-app-text">{filteredItems.length}</span> registros
-                </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                    disabled={currentPage === 1}
-                    className="p-2 rounded-lg border border-app-border bg-app-bg text-app-text-muted hover:text-primary hover:border-primary disabled:opacity-50 disabled:hover:text-app-text-muted disabled:hover:border-app-border transition-all"
-                  >
-                    Anterior
-                  </button>
-                  <div className="flex items-center gap-1">
-                    {Array.from({ length: totalPages }, (_, i) => i + 1).map(page => (
-                      <button
-                        key={page}
-                        onClick={() => setCurrentPage(page)}
-                        className={`w-10 h-10 rounded-lg text-sm font-bold transition-all ${
-                          currentPage === page 
-                            ? 'bg-primary text-white shadow-lg shadow-primary/20' 
-                            : 'bg-app-bg text-app-text-muted hover:bg-app-secondary border border-app-border'
-                        }`}
-                      >
-                        {page}
-                      </button>
-                    ))}
-                  </div>
-                  <button
-                    onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                    disabled={currentPage === totalPages}
-                    className="p-2 rounded-lg border border-app-border bg-app-bg text-app-text-muted hover:text-primary hover:border-primary disabled:opacity-50 disabled:hover:text-app-text-muted disabled:hover:border-app-border transition-all"
-                  >
-                    Próximo
-                  </button>
-                </div>
-              </div>
-            )}
-          </motion.div>
-        ) : (
-          <motion.div
-            key="calendar"
-            initial={{ opacity: 0, scale: 0.98 }}
-            animate={{ opacity: 1, scale: 1 }}
-            exit={{ opacity: 0, scale: 1.02 }}
-            className="bg-app-surface rounded-2xl border border-app-border overflow-hidden shadow-lg p-2"
-          >
-            <Calendar 
-              events={filteredItems.map(item => ({
-                id: item.id,
-                date: item.data,
-                title: `${item.tj}: ${item.descricao}`,
-                color: 'bg-primary/10 text-primary border-primary/20 cursor-pointer hover:bg-primary/20'
-              }))}
-              onEventClick={(id) => {
-                const item = state.calendario.find(c => c.id === id);
-                if (item) handleOpenModal(item);
-              }}
+            <Pagination
+              currentPage={safeCurrentPage}
+              totalPages={totalPages}
+              totalItems={filteredItems.length}
+              itemsPerPage={pageSize}
+              onPageChange={setCurrentPage}
+              onItemsPerPageChange={setPageSize}
+              label="registros"
             />
-            
+          </>
+        ) : (
+          <div className="flex-1 overflow-y-auto min-h-0 scrollbar-thin scrollbar-thumb-app-border scrollbar-track-transparent flex flex-col">
+            <div className="p-2 flex-1">
+              <Calendar
+                events={filteredItems.map((item) => ({
+                  id: item.id,
+                  date: item.data,
+                  title: `${item.tj}: ${item.descricao}`,
+                  color:
+                    'bg-primary/10 text-primary border-primary/20 cursor-pointer hover:bg-primary/20',
+                }))}
+                onEventClick={(id) => {
+                  const item = state.calendario.find((c) => c.id === id);
+                  if (item && canWrite) handleOpenModal(item);
+                }}
+              />
+            </div>
+
             {/* Legend */}
-            <div className="p-4 bg-app-bg/50 border-t border-app-border flex flex-wrap gap-4 text-xs">
+            <div className="px-4 py-3 bg-app-secondary/30 border-t border-app-border flex flex-wrap gap-4 text-xs shrink-0">
               <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded bg-primary"></div>
+                <div className="w-3 h-3 rounded bg-primary" />
                 <span className="text-app-text-muted">Evento Judicial</span>
               </div>
               <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-primary/20 border border-primary/40"></div>
+                <div className="w-3 h-3 rounded-full bg-primary/20 border border-primary/40" />
                 <span className="text-app-text-muted">Hoje</span>
               </div>
             </div>
-          </motion.div>
+          </div>
         )}
-      </AnimatePresence>
+      </div>
 
-      {/* Modal CRUD */}
+      {/* Modal Criar / Editar */}
       <Modal
         isOpen={isModalOpen}
         onClose={handleCloseModal}
@@ -348,83 +481,137 @@ export default function CalendarioJudicial() {
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div className="space-y-1">
-              <label className="text-xs font-bold text-app-text-muted uppercase tracking-wider">Tribunal (TJ)</label>
+              <label className="text-xs font-semibold text-app-text-muted">
+                Tribunal (TJ)
+              </label>
               <input
                 type="text"
                 required
                 placeholder="Ex: TJGO, TJSP"
                 value={formData.tj}
                 onChange={(e) => setFormData({ ...formData, tj: e.target.value })}
-                className="w-full px-4 py-2 bg-app-bg border border-app-border rounded-xl text-app-text focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+                className="w-full px-3.5 py-2 bg-app-bg border border-app-border rounded-lg text-app-text focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors text-sm"
               />
             </div>
             <div className="space-y-1">
-              <label className="text-xs font-bold text-app-text-muted uppercase tracking-wider">Data</label>
+              <label className="text-xs font-semibold text-app-text-muted">
+                Data
+              </label>
               <input
                 type="date"
                 required
                 value={formData.data}
                 onChange={(e) => setFormData({ ...formData, data: e.target.value })}
-                className="w-full px-4 py-2 bg-app-bg border border-app-border rounded-xl text-app-text focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+                className="w-full px-3.5 py-2 bg-app-bg border border-app-border rounded-lg text-app-text focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors text-sm tabular-nums"
               />
             </div>
           </div>
 
           <div className="space-y-1">
-            <label className="text-xs font-bold text-app-text-muted uppercase tracking-wider">Descrição</label>
+            <label className="text-xs font-semibold text-app-text-muted">
+              Descrição
+            </label>
             <textarea
               rows={4}
               required
               placeholder="Descreva o evento ou suspensão de prazo..."
               value={formData.descricao}
               onChange={(e) => setFormData({ ...formData, descricao: e.target.value })}
-              className="w-full px-4 py-2 bg-app-bg border border-app-border rounded-xl text-app-text focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all resize-none"
+              className="w-full px-3.5 py-2 bg-app-bg border border-app-border rounded-lg text-app-text focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-colors resize-none text-sm"
             />
           </div>
 
-          <div className="pt-4 flex items-center justify-between gap-3">
-            {editingItem && (
+          <div className="pt-4 flex items-center justify-between gap-3 border-t border-app-border">
+            {editingItem && canDelete ? (
               <button
                 type="button"
-                onClick={() => handleDelete(editingItem.id)}
-                className="flex items-center gap-2 text-red-500 hover:bg-red-50 px-4 py-2 rounded-xl transition-all font-medium"
+                onClick={() => setDeletingItem(editingItem)}
+                className="flex items-center gap-2 text-red-500 hover:bg-red-500/10 px-3.5 py-2 rounded-lg transition-colors font-medium text-sm whitespace-nowrap shrink-0"
               >
-                <Trash2 size={18} />
+                <Trash2 size={16} />
                 Excluir
               </button>
+            ) : (
+              <div />
             )}
-            <div className="flex items-center gap-3 ml-auto">
+            <div className="flex items-center gap-2.5 ml-auto">
               <button
                 type="button"
                 onClick={handleCloseModal}
-                className="px-6 py-2 rounded-xl font-medium text-app-text-muted hover:bg-app-bg transition-all"
+                className="px-5 py-2 rounded-lg font-medium text-app-text-muted hover:bg-app-bg transition-colors text-sm whitespace-nowrap shrink-0"
               >
                 Cancelar
               </button>
-              <button
-                type="submit"
-                className="bg-primary text-white px-8 py-2 rounded-xl font-bold shadow-lg shadow-primary/20 hover:bg-primary/90 transition-all"
-              >
-                Salvar
-              </button>
+              {canWrite && (
+                <button
+                  type="submit"
+                  className="bg-primary text-white px-6 py-2 rounded-lg font-semibold shadow-sm hover:opacity-90 transition-opacity text-sm whitespace-nowrap shrink-0"
+                >
+                  Salvar
+                </button>
+              )}
             </div>
           </div>
         </form>
       </Modal>
+
+      {/* Modal Confirmar Exclusão */}
+      <ConfirmDeleteModal
+        isOpen={!!deletingItem}
+        onClose={() => setDeletingItem(null)}
+        onConfirm={handleConfirmDelete}
+        title="Excluir Registro Judicial"
+        description={
+          <>
+            Tem certeza que deseja excluir o evento{' '}
+            <strong className="text-app-text">{deletingItem?.descricao}</strong> (
+            {deletingItem?.tj} — {deletingItem ? formatDate(deletingItem.data) : ''})?
+          </>
+        }
+      />
     </div>
   );
 }
 
-function EmptyState() {
+interface EmptyStateProps {
+  hasFilters: boolean;
+  onClearFilters: () => void;
+  canWrite: boolean;
+  onAdd: () => void;
+}
+
+function EmptyState({ hasFilters, onClearFilters, canWrite, onAdd }: EmptyStateProps) {
   return (
-    <div className="flex flex-col items-center justify-center p-12 bg-app-surface rounded-2xl border border-app-border border-dashed">
+    <div className="flex flex-col items-center justify-center p-12 text-center h-full min-h-[260px]">
       <div className="p-4 bg-app-secondary rounded-full text-app-text-muted mb-4">
-        <Inbox size={48} strokeWidth={1.5} />
+        <Inbox size={40} strokeWidth={1.5} />
       </div>
-      <h3 className="text-lg font-bold text-app-text">Nenhum evento encontrado</h3>
-      <p className="text-app-text-muted text-center max-w-xs mt-1">
-        Tente ajustar sua busca ou filtros para encontrar o que procura.
+      <h3 className="text-base font-semibold text-app-text">Nenhum evento encontrado</h3>
+      <p className="text-sm text-app-text-muted max-w-xs mt-1">
+        {hasFilters
+          ? 'Nenhum registro corresponde aos filtros aplicados.'
+          : 'Ainda não há feriados ou suspensões cadastrados neste calendário.'}
       </p>
+      {hasFilters ? (
+        <button
+          type="button"
+          onClick={onClearFilters}
+          className="mt-4 px-4 py-2 text-xs font-semibold text-primary border border-primary/30 rounded-lg hover:bg-primary/10 transition-colors"
+        >
+          Limpar filtros
+        </button>
+      ) : (
+        canWrite && (
+          <button
+            type="button"
+            onClick={onAdd}
+            className="mt-4 inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold bg-primary text-white rounded-lg hover:opacity-90 transition-opacity"
+          >
+            <Plus size={15} />
+            Novo Registro
+          </button>
+        )
+      )}
     </div>
   );
 }

@@ -8,6 +8,8 @@ interface PaginationProps {
   itemsPerPage: number;
   onPageChange: (page: number) => void;
   label?: string; // e.g. "processos", "contatos"
+  onItemsPerPageChange?: (itemsPerPage: number) => void;
+  itemsPerPageOptions?: number[];
 }
 
 const Pagination: React.FC<PaginationProps> = ({
@@ -16,16 +18,20 @@ const Pagination: React.FC<PaginationProps> = ({
   totalItems,
   itemsPerPage,
   onPageChange,
-  label = 'itens'
+  label = 'itens',
+  onItemsPerPageChange,
+  itemsPerPageOptions = [10, 25, 50, 100]
 }) => {
+  const safeTotalPages = Math.max(1, totalPages);
+  const safeCurrentPage = Math.min(Math.max(1, currentPage), safeTotalPages);
   // When totalPages is 0 or 1, we still render the summary footer bar for user clarity
   const isMultiPage = totalPages > 1;
 
   const getPageNumbers = () => {
-    const pageList = [];
+    const pageList: number[] = [];
     const maxButtons = 5;
-    let start = Math.max(1, currentPage - 2);
-    let end = Math.min(totalPages, start + maxButtons - 1);
+    let start = Math.max(1, safeCurrentPage - 2);
+    const end = Math.min(totalPages, start + maxButtons - 1);
     
     if (end === totalPages) {
       start = Math.max(1, end - maxButtons + 1);
@@ -37,63 +43,101 @@ const Pagination: React.FC<PaginationProps> = ({
     return pageList;
   };
 
-  const pages = getPageNumbers();
+  const pages = isMultiPage ? getPageNumbers() : [];
+  const firstPageShown = pages[0] ?? 1;
+  const lastPageShown = pages[pages.length - 1] ?? 1;
 
   return (
-    <div className="p-3 sm:p-4 border-t border-app-border flex flex-col sm:flex-row items-center justify-between bg-app-secondary/30 gap-2 sm:gap-4">
-      <div className="text-xs sm:text-sm text-app-text-muted flex items-center gap-2">
+    <div className="p-3 sm:px-4 sm:py-3 border-t border-app-border flex flex-col sm:flex-row items-center justify-between bg-app-secondary/30 gap-2.5 sm:gap-4 shrink-0">
+      <div className="text-xs sm:text-sm text-app-text-muted flex flex-wrap items-center justify-center sm:justify-start gap-2 tabular-nums">
         <span>
-          Mostrando <span className="font-medium text-app-text">{totalItems === 0 ? 0 : Math.min(totalItems, (currentPage - 1) * itemsPerPage + 1)}</span> a <span className="font-medium text-app-text">{Math.min(totalItems, currentPage * itemsPerPage)}</span> de <span className="font-medium text-app-text">{totalItems}</span> {label}
+          Mostrando{' '}
+          <span className="font-semibold text-app-text">
+            {totalItems === 0 ? 0 : Math.min(totalItems, (safeCurrentPage - 1) * itemsPerPage + 1)}
+          </span>{' '}
+          a{' '}
+          <span className="font-semibold text-app-text">
+            {Math.min(totalItems, safeCurrentPage * itemsPerPage)}
+          </span>{' '}
+          de <span className="font-semibold text-app-text">{totalItems}</span> {label}
         </span>
-        <span className="hidden sm:inline-block px-2 py-0.5 rounded-md bg-app-bg text-[11px] font-medium border border-app-border text-app-text-muted">
-          Página {currentPage} de {Math.max(1, totalPages)}
+        <span className="hidden md:inline text-app-text-muted/60" aria-hidden="true">·</span>
+        <span className="hidden md:inline text-xs text-app-text-muted">
+          Página <span className="font-semibold text-app-text">{safeCurrentPage}</span> de{' '}
+          <span className="font-semibold text-app-text">{safeTotalPages}</span>
         </span>
+
+        {onItemsPerPageChange && (
+          <div className="flex items-center gap-1.5 ml-1">
+            <span className="text-app-text-muted/60 hidden sm:inline" aria-hidden="true">·</span>
+            <select
+              value={itemsPerPage}
+              onChange={(e) => onItemsPerPageChange(Number(e.target.value))}
+              aria-label="Itens por página"
+              className="bg-app-surface border border-app-border rounded-lg px-2 py-1 text-xs font-medium text-app-text focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary cursor-pointer transition-colors tabular-nums"
+            >
+              {itemsPerPageOptions.map((opt) => (
+                <option key={opt} value={opt}>
+                  {opt} / pág.
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
       </div>
 
       {isMultiPage && (
-        <div className="flex items-center space-x-1.5 sm:space-x-2">
+        <div className="flex items-center gap-1 sm:gap-1.5 tabular-nums">
           <button
-            onClick={() => onPageChange(Math.max(1, currentPage - 1))}
-            disabled={currentPage === 1}
-            className="p-1.5 sm:p-2 border border-app-border rounded-lg hover:bg-app-surface disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-app-text-muted hover:text-app-text"
+            type="button"
+            onClick={() => onPageChange(Math.max(1, safeCurrentPage - 1))}
+            disabled={safeCurrentPage === 1}
+            className="p-1.5 sm:p-2 border border-app-border rounded-lg bg-app-surface/60 hover:bg-app-surface disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-app-text-muted hover:text-app-text shrink-0"
             title="Página Anterior"
           >
-            <ChevronLeft size={16} className="sm:w-5 sm:h-5" />
+            <ChevronLeft size={16} className="sm:w-4 sm:h-4" />
           </button>
           
-          <div className="flex items-center space-x-1">
-            {currentPage > 3 && totalPages > 5 && (
+          <div className="flex items-center gap-1">
+            {firstPageShown > 1 && (
               <>
                 <button
+                  type="button"
                   onClick={() => onPageChange(1)}
-                  className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg text-xs sm:text-sm font-medium transition-all hover:bg-app-surface border border-transparent hover:border-app-border text-app-text-muted"
+                  className="min-w-8 h-8 px-2 sm:min-w-9 sm:h-9 sm:px-2.5 rounded-lg text-xs sm:text-sm font-medium transition-colors hover:bg-app-surface border border-transparent hover:border-app-border text-app-text-muted hover:text-app-text whitespace-nowrap shrink-0"
                 >
                   1
                 </button>
-                <span className="text-app-text-muted px-0.5 sm:px-1 text-[10px] sm:text-xs">...</span>
+                {firstPageShown > 2 && (
+                  <span className="text-app-text-muted px-0.5 text-xs select-none">…</span>
+                )}
               </>
             )}
             
             {pages.map(page => (
               <button
+                type="button"
                 key={page}
                 onClick={() => onPageChange(page)}
-                className={`w-8 h-8 sm:w-10 sm:h-10 rounded-lg text-xs sm:text-sm font-medium transition-all ${
-                  currentPage === page 
-                  ? 'bg-primary text-white shadow-sm font-bold' 
-                  : 'hover:bg-app-surface border border-transparent hover:border-app-border text-app-text-muted hover:text-app-text'
+                className={`min-w-8 h-8 px-2 sm:min-w-9 sm:h-9 sm:px-2.5 rounded-lg text-xs sm:text-sm font-medium transition-colors whitespace-nowrap shrink-0 ${
+                  safeCurrentPage === page 
+                    ? 'bg-primary text-white shadow-sm font-semibold' 
+                    : 'hover:bg-app-surface border border-transparent hover:border-app-border text-app-text-muted hover:text-app-text'
                 }`}
               >
                 {page}
               </button>
             ))}
 
-            {currentPage < totalPages - 2 && totalPages > 5 && (
+            {lastPageShown < totalPages && (
               <>
-                <span className="text-app-text-muted px-0.5 sm:px-1 text-[10px] sm:text-xs">...</span>
+                {lastPageShown < totalPages - 1 && (
+                  <span className="text-app-text-muted px-0.5 text-xs select-none">…</span>
+                )}
                 <button
+                  type="button"
                   onClick={() => onPageChange(totalPages)}
-                  className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg text-xs sm:text-sm font-medium transition-all hover:bg-app-surface border border-transparent hover:border-app-border text-app-text-muted"
+                  className="min-w-8 h-8 px-2 sm:min-w-9 sm:h-9 sm:px-2.5 rounded-lg text-xs sm:text-sm font-medium transition-colors hover:bg-app-surface border border-transparent hover:border-app-border text-app-text-muted hover:text-app-text whitespace-nowrap shrink-0"
                 >
                   {totalPages}
                 </button>
@@ -102,12 +146,13 @@ const Pagination: React.FC<PaginationProps> = ({
           </div>
 
           <button
-            onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
-            disabled={currentPage === totalPages}
-            className="p-1.5 sm:p-2 border border-app-border rounded-lg hover:bg-app-surface disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-app-text-muted hover:text-app-text"
+            type="button"
+            onClick={() => onPageChange(Math.min(totalPages, safeCurrentPage + 1))}
+            disabled={safeCurrentPage === totalPages}
+            className="p-1.5 sm:p-2 border border-app-border rounded-lg bg-app-surface/60 hover:bg-app-surface disabled:opacity-40 disabled:cursor-not-allowed transition-colors text-app-text-muted hover:text-app-text shrink-0"
             title="Próxima Página"
           >
-            <ChevronRight size={16} className="sm:w-5 sm:h-5" />
+            <ChevronRight size={16} className="sm:w-4 sm:h-4" />
           </button>
         </div>
       )}

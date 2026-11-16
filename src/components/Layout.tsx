@@ -234,6 +234,7 @@ export default function Layout({ children, currentView, onNavigate }: LayoutProp
     'ia',
     'tarefas',
     'documentos',
+    'calendario',
     'varas',
     'forum',
     'tribunais',
