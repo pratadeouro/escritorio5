@@ -7,6 +7,7 @@ import {
   setActiveDataSource, 
   isSupabaseConfigured, 
   fetchAllDataFromSupabase,
+  ensureSupabaseJwtSession,
   upsertProcessoSupabase,
   deleteProcessoSupabase,
   upsertContatoSupabase,
@@ -744,6 +745,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setAuthenticatedUserEmail(safeUser.email);
         localStorage.setItem('advocacia_user_email', safeUser.email);
         localStorage.removeItem('advocacia_data_backup');
+
+        if (getActiveDataSource() === 'supabase' && isSupabaseConfigured()) {
+          await ensureSupabaseJwtSession(safeUser.email);
+        }
         
         // Carrega dados completos APENAS após a confirmação do login
         await handleImportRef.current(true);
@@ -2103,7 +2108,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (!isSupabaseConfigured()) {
           throw new Error('Conexão Supabase não configurada no arquivo .env.');
         }
-        importedData = await fetchAllDataFromSupabase(!shouldLoadFull);
+        const effectiveEmail = authenticatedUserEmail || localStorage.getItem('advocacia_user_email') || undefined;
+        importedData = await fetchAllDataFromSupabase(!shouldLoadFull, effectiveEmail);
       } else {
         importedData = await importFromGoogleSheets(stateRef.current.settings.spreadsheetId, !shouldLoadFull);
       }
@@ -3615,7 +3621,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       let data: Partial<AppState>;
       if (isSupabaseActive) {
-        data = await fetchAllDataFromSupabase(false);
+        const effectiveEmail = authenticatedUserEmail || localStorage.getItem('advocacia_user_email') || undefined;
+        data = await fetchAllDataFromSupabase(false, effectiveEmail);
       } else {
         data = await importFromGoogleSheets(state.settings.spreadsheetId);
       }

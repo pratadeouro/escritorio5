@@ -29,8 +29,11 @@ export default function Escritorios() {
     googleFormsSheetName: 'Respostas ao formulário 1'
   });
 
+  const normId = (val?: string | null) => String(val || '').trim().toUpperCase();
+
   const filteredEscritorios = state.escritorios.filter(e => {
-    if (!isAdmin() && !(currentUser?.escritoriosIds || []).includes(e.id)) return false;
+    const escIdNorm = normId(e.id);
+    if (!isAdmin() && !(currentUser?.escritoriosIds || []).some(id => normId(id) === escIdNorm)) return false;
     
     const searchLower = searchTerm.toLowerCase();
     return e.nome.toLowerCase().includes(searchLower) || 
@@ -88,8 +91,9 @@ export default function Escritorios() {
 
   const openEditModal = (escritorio: Escritorio) => {
     setEditingEscritorio(escritorio);
+    const escIdNorm = normId(escritorio.id);
     const linkedUserIds = state.usuarios
-      .filter(u => (u.escritoriosIds || []).includes(escritorio.id))
+      .filter(u => (u.escritoriosIds || []).some(id => normId(id) === escIdNorm))
       .map(u => u.id);
     
     setSelectedUsers(linkedUserIds);
@@ -185,7 +189,8 @@ export default function Escritorios() {
             </thead>
             <tbody className="divide-y divide-app-border">
               {filteredEscritorios.map((escritorio, index) => {
-                const vinculados = state.usuarios.filter(u => u.escritoriosIds?.includes(escritorio.id));
+                const escIdNorm = normId(escritorio.id);
+                const vinculados = state.usuarios.filter(u => (u.escritoriosIds || []).some(id => normId(id) === escIdNorm));
                 return (
                   <tr key={`${escritorio.id}-${index}`} className="hover:bg-app-secondary/50 transition-colors group">
                     <td className="p-4 font-medium text-app-text">{escritorio.nome}</td>
@@ -206,7 +211,7 @@ export default function Escritorios() {
                     <td className="p-4 text-app-text-muted">
                       <div className="flex items-center text-sm font-medium text-app-text">
                         <Scale size={14} className="mr-1 text-primary opacity-70" />
-                        {state.processos.filter(p => p.escritorioId === escritorio.id).length} processo(s)
+                        {state.processos.filter(p => normId(p.escritorioId) === escIdNorm).length} processo(s)
                       </div>
                     </td>
                     <td className="p-4 text-app-text-muted">
@@ -369,7 +374,7 @@ export default function Escritorios() {
               <div className="border border-app-border rounded-lg bg-app-bg/50 max-h-48 overflow-y-auto p-2 space-y-1 scrollbar-thin scrollbar-thumb-app-border">
                 {state.usuarios.map((usuario, index) => {
                   const isSelected = selectedUsers.includes(usuario.id);
-                  const otherOffices = state.escritorios.filter(e => usuario.escritoriosIds?.includes(e.id) && e.id !== editingEscritorio?.id);
+                  const otherOffices = state.escritorios.filter(e => (usuario.escritoriosIds || []).some(id => normId(id) === normId(e.id)) && normId(e.id) !== normId(editingEscritorio?.id));
                   
                   return (
                     <div 

@@ -96,7 +96,69 @@ export const setActiveDataSource = (source: 'supabase' | 'sheets') => {
 // LEITURA COMPLETA (SELECT) DE DADOS DO SUPABASE
 // ==============================================================================
 
-export const fetchAllDataFromSupabase = async (coreOnly = false): Promise<Partial<AppState>> => {
+export const ensureSupabaseJwtSession = async (userEmail?: string): Promise<boolean> => {
+  if (!isSupabaseConfigured()) return false;
+  const supabase = getSupabase();
+  try {
+    const { data } = await supabase.auth.getSession();
+    const sessionEmail = String(data?.session?.user?.email || '').trim().toLowerCase();
+    const targetEmail = String(
+      userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('advocacia_user_email') : '') || ''
+    ).trim().toLowerCase();
+
+    if (data?.session?.access_token && (!targetEmail || sessionEmail === targetEmail)) {
+      return true;
+    }
+
+    if (!targetEmail) return !!data?.session?.access_token;
+
+    const resp = await fetch(`/api/supabase/user-by-email?email=${encodeURIComponent(targetEmail)}&withSession=true`);
+    if (resp.ok && resp.headers.get('content-type')?.includes('application/json')) {
+      const json = await resp.json().catch(() => null);
+      if (json?.hashedToken) {
+        const { error: otpErr } = await supabase.auth.verifyOtp({
+          token_hash: json.hashedToken,
+          type: 'magiclink',
+        });
+        if (!otpErr) {
+          console.log('[Supabase] Sessão JWT restaurada automaticamente para:', targetEmail);
+          return true;
+        }
+      }
+    }
+    return !!data?.session?.access_token;
+  } catch (err) {
+    console.warn('[Supabase] Aviso ao validar/restaurar sessão JWT:', err);
+    return false;
+  }
+};
+
+const fetchAllRowsDirect = async (
+  supabase: SupabaseClient,
+  table: string,
+  orderCol?: string,
+  ascending = true,
+  maxRows = 10000
+): Promise<{ data: any[] | null; error: any }> => {
+  const pageSize = 1000;
+  const allRows: any[] = [];
+  for (let from = 0; from < maxRows; from += pageSize) {
+    let query = supabase.from(table).select('*');
+    if (orderCol) {
+      query = query.order(orderCol, { ascending });
+    }
+    const res = await query.range(from, from + pageSize - 1);
+    if (res.error) {
+      return { data: allRows.length > 0 ? allRows : null, error: res.error };
+    }
+    const chunk = res.data || [];
+    allRows.push(...chunk);
+    if (chunk.length < pageSize) break;
+  }
+  return { data: allRows, error: null };
+};
+
+export const fetchAllDataFromSupabase = async (coreOnly = false, userEmail?: string): Promise<Partial<AppState>> => {
   if (!isSupabaseConfigured()) {
     throw new Error('Supabase não está configurado.');
   }
@@ -134,7 +196,13 @@ export const fetchAllDataFromSupabase = async (coreOnly = false): Promise<Partia
     };
   }
 
-  // Consulta de todas as 24 tabelas em paralelo
+  // Garante sessão JWT autenticada antes de consultar tabelas protegidas por RLS
+  const resolvedEmail = String(
+    userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('advocacia_user_email') : '') || ''
+  ).trim().toLowerCase();
+  const hasJwtSession = await ensureSupabaseJwtSession(resolvedEmail || undefined);
+
+  // Consulta de todas as 25 tabelas em paralelo (com paginação acima de 1000 registros para tabelas volumosas)
   const [
     escRes, usuRes, procRes, contRes, tarRes, eveRes, movRes, finRes, docRes,
     varRes, julRes, serRes, recRes, upjRes, forRes, triRes, envRes, envTipoRes, modRes,
@@ -142,32 +210,72 @@ export const fetchAllDataFromSupabase = async (coreOnly = false): Promise<Partia
   ] = await Promise.all([
     supabase.from('escritorios').select('*'),
     supabase.from('usuarios').select('*'),
-    supabase.from('processos').select('*').order('data_distribuicao', { ascending: false }),
-    supabase.from('contatos').select('*').order('nome'),
-    supabase.from('tarefas').select('*').order('data_limite', { ascending: true }),
-    supabase.from('eventos').select('*').order('data', { ascending: true }),
-    supabase.from('movimentos').select('*').order('data', { ascending: false }),
-    supabase.from('financeiro').select('*').order('data', { ascending: false }),
-    supabase.from('documentos').select('*').order('data_criacao', { ascending: false }),
-    supabase.from('varas').select('*').order('nome'),
+    fetchAllRowsDirect(supabase, 'processos', 'data_distribuicao', false),
+    fetchAllRowsDirect(supabase, 'contatos', 'nome', true),
+    fetchAllRowsDirect(supabase, 'tarefas', 'data_limite', true),
+    fetchAllRowsDirect(supabase, 'eventos', 'data', true),
+    fetchAllRowsDirect(supabase, 'movimentos', 'data', false),
+    fetchAllRowsDirect(supabase, 'financeiro', 'data', false),
+    fetchAllRowsDirect(supabase, 'documentos', 'data_criacao', false),
+    fetchAllRowsDirect(supabase, 'varas', 'nome', true),
     supabase.from('julgadores').select('*').order('nome'),
     supabase.from('servidores').select('*').order('nome'),
     supabase.from('recursos').select('*'),
     supabase.from('upj').select('*'),
     supabase.from('forums').select('*'),
     supabase.from('tribunais').select('*'),
-    supabase.from('envolvidos').select('*'),
+    fetchAllRowsDirect(supabase, 'envolvidos'),
     supabase.from('envolvidos_tipo').select('*').order('nome'),
     supabase.from('modelos').select('*'),
     supabase.from('etiquetas').select('*'),
     supabase.from('calendario').select('*'),
-    supabase.from('leads').select('*').order('data_cadastro', { ascending: false }),
+    fetchAllRowsDirect(supabase, 'leads', 'data_cadastro', false),
     supabase.from('leads_status').select('*'),
     supabase.from('logs').select('*').order('data', { ascending: false }).limit(200),
     supabase.from('app_settings').select('*')
   ]);
 
-  const allSettings = (setRes.data || []).map(mapSettingsFromDb);
+  // Se não havia sessão JWT ou alguma consulta protegida por RLS falhou/voltou vazia indevidamente, usa fallback autenticado via servidor
+  let serverFallback: Record<string, any[]> | null = null;
+  const needsServerFallback =
+    !!resolvedEmail && (
+      !hasJwtSession ||
+      !!procRes.error ||
+      !!contRes.error ||
+      ((procRes.data?.length || 0) === 0 && (contRes.data?.length || 0) === 0)
+    );
+
+  if (needsServerFallback) {
+    try {
+      const fbResp = await fetch('/api/supabase/all-data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: resolvedEmail })
+      }).then(r => (r.ok && r.headers.get('content-type')?.includes('application/json') ? r.json() : null))
+        .catch(() => null);
+      if (fbResp?.success && fbResp?.data) {
+        serverFallback = fbResp.data;
+        console.log('[Supabase] Fallback /api/supabase/all-data aplicado com sucesso:', {
+          processos: serverFallback.processos?.length || 0,
+          contatos: serverFallback.contatos?.length || 0,
+          envolvidos: serverFallback.envolvidos?.length || 0
+        });
+      }
+    } catch (fbErr) {
+      console.warn('[Supabase] Falha no fallback /api/supabase/all-data:', fbErr);
+    }
+  }
+
+  const pickRows = (directData: any[] | null | undefined, tableKey: string): any[] => {
+    const direct = Array.isArray(directData) ? directData : [];
+    const fb = serverFallback && Array.isArray(serverFallback[tableKey]) ? serverFallback[tableKey] : [];
+    if (direct.length > 0 && fb.length <= direct.length) return direct;
+    if (fb.length > direct.length) return fb;
+    return direct;
+  };
+
+  const setRows = pickRows(setRes.data, 'app_settings');
+  const allSettings = setRows.map(mapSettingsFromDb);
   const activeSettings = allSettings[0] || ({} as AppSettings);
 
   let authUsers: Usuario[] = [];
@@ -185,7 +293,7 @@ export const fetchAllDataFromSupabase = async (coreOnly = false): Promise<Partia
     console.warn('[Supabase] Falha ao consultar auth.users via admin, usando public.usuarios:', err);
   }
 
-  let escritoriosList: Escritorio[] = (escRes.data || []).map(mapEscritorioFromDb);
+  let escritoriosList: Escritorio[] = pickRows(escRes.data, 'escritorios').map(mapEscritorioFromDb);
   try {
     const escResp = await fetch('/api/supabase/escritorios').then(r => {
       if (r.ok && r.headers.get('content-type')?.includes('application/json')) {
@@ -200,38 +308,45 @@ export const fetchAllDataFromSupabase = async (coreOnly = false): Promise<Partia
     console.warn('[Supabase] Falha ao consultar /api/supabase/escritorios:', err);
   }
 
+  const procRows = pickRows(procRes.data, 'processos');
+  const contRows = pickRows(contRes.data, 'contatos');
+  const tarRows = pickRows(tarRes.data, 'tarefas');
+  const usuRows = pickRows(usuRes.data, 'usuarios');
+  const envTipoRows = pickRows(envTipoRes.data, 'envolvidos_tipo');
+  const leadStatusRows = pickRows(lesRes.data, 'leads_status');
+
   console.log('[Supabase] Dados carregados com sucesso:', {
     escritorios: escritoriosList.length,
-    processos: procRes.data?.length || 0,
-    contatos: contRes.data?.length || 0,
-    tarefas: tarRes.data?.length || 0,
-    usuarios: authUsers.length > 0 ? authUsers.length : (usuRes.data?.length || 0)
+    processos: procRows.length,
+    contatos: contRows.length,
+    tarefas: tarRows.length,
+    usuarios: authUsers.length > 0 ? authUsers.length : usuRows.length
   });
 
   return {
     escritorios: escritoriosList,
-    usuarios: authUsers.length > 0 ? authUsers : (usuRes.data || []).map(mapUsuarioFromDb),
-    processos: (procRes.data || []).map(mapProcessoFromDb),
-    contatos: (contRes.data || []).map(mapContatoFromDb),
-    tarefas: (tarRes.data || []).map(mapTarefaFromDb),
-    eventos: (eveRes.data || []).map(mapEventoFromDb),
-    movimentos: (movRes.data || []).map(mapMovimentoFromDb),
-    financeiro: (finRes.data || []).map(mapFinanceiroFromDb),
-    documentos: (docRes.data || []).map(mapDocumentoFromDb),
-    varas: (varRes.data || []).map(mapVaraFromDb),
-    julgadores: (julRes.data || []).map(mapJulgadorFromDb),
-    servidores: (serRes.data || []).map(mapServidorFromDb),
-    recursos: (recRes.data || []).map(mapRecursoFromDb),
-    upj: (upjRes.data || []).map(mapUpjFromDb),
-    forums: (forRes.data || []).map(mapForumFromDb),
-    tribunais: (triRes.data || []).map(mapTribunalFromDb),
-    envolvidos: (envRes.data || []).map(mapEnvolvidoFromDb),
+    usuarios: authUsers.length > 0 ? authUsers : usuRows.map(mapUsuarioFromDb),
+    processos: procRows.map(mapProcessoFromDb),
+    contatos: contRows.map(mapContatoFromDb),
+    tarefas: tarRows.map(mapTarefaFromDb),
+    eventos: pickRows(eveRes.data, 'eventos').map(mapEventoFromDb),
+    movimentos: pickRows(movRes.data, 'movimentos').map(mapMovimentoFromDb),
+    financeiro: pickRows(finRes.data, 'financeiro').map(mapFinanceiroFromDb),
+    documentos: pickRows(docRes.data, 'documentos').map(mapDocumentoFromDb),
+    varas: pickRows(varRes.data, 'varas').map(mapVaraFromDb),
+    julgadores: pickRows(julRes.data, 'julgadores').map(mapJulgadorFromDb),
+    servidores: pickRows(serRes.data, 'servidores').map(mapServidorFromDb),
+    recursos: pickRows(recRes.data, 'recursos').map(mapRecursoFromDb),
+    upj: pickRows(upjRes.data, 'upj').map(mapUpjFromDb),
+    forums: pickRows(forRes.data, 'forums').map(mapForumFromDb),
+    tribunais: pickRows(triRes.data, 'tribunais').map(mapTribunalFromDb),
+    envolvidos: pickRows(envRes.data, 'envolvidos').map(mapEnvolvidoFromDb),
     tipoEnvolvimentos: (() => {
       const defaults: TipoEnvolvimento[] = [
         { id: 'apelante', nome: 'Apelante' },
         { id: 'apelado', nome: 'Apelado' },
       ];
-      const loaded = (envTipoRes.data || []).map(mapTipoEnvolvimentoFromDb);
+      const loaded = envTipoRows.map(mapTipoEnvolvimentoFromDb);
       const merged = [...loaded];
       defaults.forEach(d => {
         if (!merged.some(t => t.id.toLowerCase() === d.id || t.nome.toLowerCase() === d.nome.toLowerCase())) {
@@ -240,12 +355,12 @@ export const fetchAllDataFromSupabase = async (coreOnly = false): Promise<Partia
       });
       return merged;
     })(),
-    modelos: (modRes.data || []).map(mapModeloFromDb),
-    etiquetas: (etiRes.data || []).map(mapEtiquetaFromDb),
-    calendario: (calRes.data || []).map(mapCalendarioFromDb),
-    leads: (leaRes.data || []).map(mapLeadFromDb),
-    leadsStatus: lesRes.data && lesRes.data.length > 0 ? lesRes.data.map(mapLeadStatusFromDb) : DEFAULT_LEAD_STATUSES,
-    logs: (logRes.data || []).map(mapLogFromDb),
+    modelos: pickRows(modRes.data, 'modelos').map(mapModeloFromDb),
+    etiquetas: pickRows(etiRes.data, 'etiquetas').map(mapEtiquetaFromDb),
+    calendario: pickRows(calRes.data, 'calendario').map(mapCalendarioFromDb),
+    leads: pickRows(leaRes.data, 'leads').map(mapLeadFromDb),
+    leadsStatus: leadStatusRows.length > 0 ? leadStatusRows.map(mapLeadStatusFromDb) : DEFAULT_LEAD_STATUSES,
+    logs: pickRows(logRes.data, 'logs').map(mapLogFromDb),
     allSettings,
     settings: activeSettings,
     hasLoaded: true,
