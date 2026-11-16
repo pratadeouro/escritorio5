@@ -1,5 +1,5 @@
 import express from "express";
-import "dotenv/config";
+import dotenv from "dotenv";
 import { createServer as createViteServer } from "vite";
 import path from "path";
 import fs from "fs";
@@ -12,20 +12,50 @@ import { getWeeklyReportTemplate, getNewNotificationsTemplate, getDailyReportTem
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Carrega o arquivo .env dando prioridade absoluta aos valores definidos nele sobre variáveis antigas do container
+(() => {
+  const cwdEnv = path.resolve(process.cwd(), ".env");
+  const dirEnv = path.resolve(__dirname, ".env");
+  const envPath = fs.existsSync(cwdEnv) ? cwdEnv : (fs.existsSync(dirEnv) ? dirEnv : null);
+  if (!envPath) {
+    dotenv.config();
+    return;
+  }
+  const parsed = dotenv.parse(fs.readFileSync(envPath, "utf-8"));
+  const allowEmptyOverrideKeys = new Set([
+    "VITE_SPREADSHEET_ID",
+    "SPREADSHEET_ID",
+    "VITE_SCRIPT_URL",
+    "SCRIPT_URL",
+  ]);
+  for (const [key, val] of Object.entries(parsed)) {
+    const clean = val.trim();
+    if (clean !== "" || allowEmptyOverrideKeys.has(key) || process.env[key] === undefined) {
+      process.env[key] = clean;
+    }
+  }
+})();
+
 const getEnvSpreadsheetId = (): string =>
   (process.env.VITE_SPREADSHEET_ID || process.env.SPREADSHEET_ID || '').trim();
 
 const getServerSupabaseConfig = () => {
-  const supabaseUrl = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim().replace(/\/$/, '');
-  const secretKey = (process.env.SUPABASE_SECRET_KEY || process.env.SERVICE_ROLE_KEY || '').trim();
-  const publishableKey = (
-    process.env.SUPABASE_PUBLISHABLE_KEY ||
-    process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
-    process.env.VITE_SUPABASE_ANON_KEY ||
-    process.env.VITE_ANON_KEY ||
-    process.env.ANON_KEY ||
-    ''
-  ).trim();
+  const candidates = [process.env.SUPABASE_URL, process.env.VITE_SUPABASE_URL]
+    .map(v => (v || '').trim().replace(/\/$/, ''))
+    .filter(Boolean);
+  const supabaseUrl = candidates.find(u => u.startsWith('https://')) || candidates[0] || '';
+  const secretCandidates = [process.env.SUPABASE_SECRET_KEY, process.env.SERVICE_ROLE_KEY]
+    .map(v => (v || '').trim())
+    .filter(Boolean);
+  const secretKey = secretCandidates.find(k => !k.startsWith('eyJhbGciOi')) || secretCandidates[0] || '';
+  const publishableCandidates = [
+    process.env.SUPABASE_PUBLISHABLE_KEY,
+    process.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+    process.env.VITE_SUPABASE_ANON_KEY,
+    process.env.VITE_ANON_KEY,
+    process.env.ANON_KEY,
+  ].map(v => (v || '').trim()).filter(Boolean);
+  const publishableKey = publishableCandidates.find(k => k.startsWith('sb_publishable_')) || publishableCandidates[0] || '';
   const supabaseKey = secretKey || publishableKey;
   const hasServiceRole = !!secretKey;
   return { supabaseUrl, supabaseKey, secretKey, publishableKey, hasServiceRole };

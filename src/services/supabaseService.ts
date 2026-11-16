@@ -30,11 +30,11 @@ import {
 } from '../types';
 
 // Credenciais e fonte de dados lidas exclusivamente do arquivo .env
-export const OFFICIAL_SUPABASE_URL = String((import.meta as any).env?.VITE_SUPABASE_URL || '').trim();
+export const OFFICIAL_SUPABASE_URL = String(import.meta.env.VITE_SUPABASE_URL || '').trim();
 export const OFFICIAL_SUPABASE_KEY = String(
-  (import.meta as any).env?.VITE_SUPABASE_PUBLISHABLE_KEY ||
-  (import.meta as any).env?.VITE_SUPABASE_ANON_KEY ||
-  (import.meta as any).env?.VITE_ANON_KEY ||
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+  import.meta.env.VITE_SUPABASE_ANON_KEY ||
+  import.meta.env.VITE_ANON_KEY ||
   ''
 ).trim();
 
@@ -71,7 +71,7 @@ export const getSupabase = (): SupabaseClient => {
  * Obtém a fonte de dados ativa exclusivamente a partir do .env ('supabase' ou 'sheets')
  */
 export const getActiveDataSource = (): 'supabase' | 'sheets' => {
-  const envSource = String((import.meta as any).env?.VITE_DATA_SOURCE || '').trim().toLowerCase();
+  const envSource = String(import.meta.env.VITE_DATA_SOURCE || '').trim().toLowerCase();
   if (envSource === 'sheets') return 'sheets';
   if (envSource === 'supabase') return 'supabase';
   return isSupabaseConfigured() ? 'supabase' : 'sheets';
@@ -610,8 +610,8 @@ const mapLogFromDb = (r: any): LogRegistro => ({
 });
 
 const mapSettingsFromDb = (r: any): AppSettings => ({
-  spreadsheetId: (import.meta as any).env.VITE_SPREADSHEET_ID || '',
-  scriptUrl: (import.meta as any).env.VITE_SCRIPT_URL || '',
+  spreadsheetId: String(import.meta.env.VITE_SPREADSHEET_ID || '').trim(),
+  scriptUrl: String(import.meta.env.VITE_SCRIPT_URL || '').trim(),
   timezone: r.timezone || 'America/Sao_Paulo',
   itemsPerPage: r.items_per_page || 10,
   permissions: r.permissions || '[]',
