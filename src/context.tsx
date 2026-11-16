@@ -92,8 +92,8 @@ const initialState: AppState = {
   forums: [],
   logs: [],
   settings: {
-    spreadsheetId: import.meta.env.VITE_SPREADSHEET_ID || '1GuBKYPr_ea0A7Gh5mGQxxevQZs8qXZg4mSx93u5TCsg',
-    scriptUrl: import.meta.env.VITE_SCRIPT_URL || '',
+    spreadsheetId: String(import.meta.env.VITE_SPREADSHEET_ID || '').trim(),
+    scriptUrl: String(import.meta.env.VITE_SCRIPT_URL || '').trim(),
     timezone: 'America/Sao_Paulo',
     itemsPerPage: 10,
     permissions: '[]',
@@ -248,9 +248,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           settings: { 
             ...initialState.settings, 
             ...parsed,
-            // Forçar variáveis de ambiente se existirem, ignorando o localStorage para estes campos
-            spreadsheetId: import.meta.env.VITE_SPREADSHEET_ID || parsed.spreadsheetId || initialState.settings.spreadsheetId,
-            scriptUrl: import.meta.env.VITE_SCRIPT_URL || parsed.scriptUrl || initialState.settings.scriptUrl,
+            // .env é a única fonte de conexão: nunca permitir override via localStorage
+            spreadsheetId: initialState.settings.spreadsheetId,
+            scriptUrl: initialState.settings.scriptUrl,
             googleClientId: (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || parsed.googleClientId || initialState.settings.googleClientId || ''
           } 
         };
@@ -262,8 +262,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       ...initialState,
       settings: {
         ...initialState.settings,
-        spreadsheetId: import.meta.env.VITE_SPREADSHEET_ID || initialState.settings.spreadsheetId,
-        scriptUrl: import.meta.env.VITE_SCRIPT_URL || initialState.settings.scriptUrl,
+        spreadsheetId: initialState.settings.spreadsheetId,
+        scriptUrl: initialState.settings.scriptUrl,
         googleClientId: (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || initialState.settings.googleClientId || ''
       }
     };
@@ -341,15 +341,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return () => { isMounted = false; };
   }, []);
 
-  // Limpeza de URLs antigas ou chaves residuais de outros ambientes
+  // Limpeza de chaves residuais de conexão em localStorage (.env é a única fonte de conexão)
   useEffect(() => {
     try {
-      ['supabase_migration_url', 'supabase_migration_key'].forEach(k => {
-        const val = localStorage.getItem(k);
-        if (val && (val.includes('walbermendonca') || val.includes('127.0.0.1') || val.startsWith('eyJhbGciOi'))) {
-          localStorage.removeItem(k);
-        }
-      });
+      [
+        'supabase_migration_url',
+        'supabase_migration_key',
+        'supabase_migration_publishable_key',
+        'advocacia_data_source'
+      ].forEach(k => localStorage.removeItem(k));
     } catch {}
   }, []);
 
@@ -413,10 +413,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   }, []);
 
-  const setDataSource = useCallback((source: 'supabase' | 'sheets') => {
-    setActiveDataSource(source);
-    setDataSourceState(source);
-    if (source === 'supabase') {
+  const setDataSource = useCallback((_source: 'supabase' | 'sheets') => {
+    const resolved = getActiveDataSource();
+    setActiveDataSource(resolved);
+    setDataSourceState(resolved);
+    if (resolved === 'supabase') {
       refreshAuthUsers();
     }
   }, [refreshAuthUsers]);
@@ -573,12 +574,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     isAuthenticatingRef.current = true;
     try {
-      // Garante que a fonte de dados já esteja alinhada para Supabase ANTES de signInHybrid disparar SIGNED_IN
-      if (isSupabaseConfigured()) {
-        setActiveDataSource('supabase');
-        setDataSourceState('supabase');
-        localStorage.setItem('advocacia_data_source', 'supabase');
-      }
+      // Mantém a fonte de dados sincronizada estritamente com o .env
+      setDataSourceState(getActiveDataSource());
 
       let user: Usuario | undefined;
       let authSuccess = false;
@@ -762,10 +759,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     isAuthenticatingRef.current = true;
     try {
-      // FORÇAR FONTE DE DADOS SUPABASE: O login com Google deve sempre autenticar e carregar dados do Supabase
-      setActiveDataSource('supabase');
-      setDataSourceState('supabase');
-      localStorage.setItem('advocacia_data_source', 'supabase');
+      // Mantém a fonte de dados sincronizada estritamente com o .env
+      setDataSourceState(getActiveDataSource());
 
       let user: Usuario | undefined;
       let explicitNotFound = false;
@@ -2074,13 +2069,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const shouldLoadFull = isFullLoad || !!authenticatedUserEmail;
       let importedData: Partial<AppState>;
 
-      if (getActiveDataSource() === 'supabase' && isSupabaseConfigured()) {
-        try {
-          importedData = await fetchAllDataFromSupabase(!shouldLoadFull);
-        } catch (sbErr) {
-          console.warn('[Supabase] Falha ao carregar do Supabase, tentando Sheets...', sbErr);
-          importedData = await importFromGoogleSheets(stateRef.current.settings.spreadsheetId, !shouldLoadFull);
+      if (getActiveDataSource() === 'supabase') {
+        if (!isSupabaseConfigured()) {
+          throw new Error('Conexão Supabase não configurada no arquivo .env.');
         }
+        importedData = await fetchAllDataFromSupabase(!shouldLoadFull);
       } else {
         importedData = await importFromGoogleSheets(stateRef.current.settings.spreadsheetId, !shouldLoadFull);
       }
@@ -2208,6 +2201,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             return { 
               ...prevState.settings, 
               ...chosen,
+              spreadsheetId: initialState.settings.spreadsheetId,
+              scriptUrl: initialState.settings.scriptUrl,
               permissions: hasPerms ? chosen.permissions : (globalFallbackSettings?.permissions || chosen.permissions || prevState.settings.permissions)
             };
           })(),
@@ -3419,7 +3414,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const updateSettings = useCallback((settings: AppState['settings']) => {
     setState(s => {
       const eid = s.settings.idEscritorio || escritorioAtivoId || '';
-      const updatedSettings = { ...settings, idEscritorio: eid };
+      const updatedSettings = {
+        ...settings,
+        idEscritorio: eid,
+        spreadsheetId: initialState.settings.spreadsheetId,
+        scriptUrl: initialState.settings.scriptUrl,
+      };
       
       const isPermissionsChanged = JSON.stringify(settings.permissions) !== JSON.stringify(s.settings.permissions);
       
@@ -3570,7 +3570,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           ...s,
           ...data,
           allSettings,
-          settings: { ...s.settings, ...(officeSettings || data.settings || {}) },
+          settings: {
+            ...s.settings,
+            ...(officeSettings || data.settings || {}),
+            spreadsheetId: initialState.settings.spreadsheetId,
+            scriptUrl: initialState.settings.scriptUrl,
+          },
           syncStatus: 'idle',
           lastSyncTime: now,
           syncLogs: [{

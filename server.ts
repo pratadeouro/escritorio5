@@ -12,12 +12,31 @@ import { getWeeklyReportTemplate, getNewNotificationsTemplate, getDailyReportTem
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const SPREADSHEET_ID = process.env.VITE_SPREADSHEET_ID || '1GuBKYPr_ea0A7Gh5mGQxxevQZs8qXZg4mSx93u5TCsg';
+const getEnvSpreadsheetId = (): string =>
+  (process.env.VITE_SPREADSHEET_ID || process.env.SPREADSHEET_ID || '').trim();
+
+const getServerSupabaseConfig = () => {
+  const supabaseUrl = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '').trim().replace(/\/$/, '');
+  const secretKey = (process.env.SUPABASE_SECRET_KEY || process.env.SERVICE_ROLE_KEY || '').trim();
+  const publishableKey = (
+    process.env.SUPABASE_PUBLISHABLE_KEY ||
+    process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+    process.env.VITE_SUPABASE_ANON_KEY ||
+    process.env.VITE_ANON_KEY ||
+    process.env.ANON_KEY ||
+    ''
+  ).trim();
+  const supabaseKey = secretKey || publishableKey;
+  const hasServiceRole = !!secretKey;
+  return { supabaseUrl, supabaseKey, secretKey, publishableKey, hasServiceRole };
+};
 
 // Helper to fetch CSV from Google Sheets
 async function fetchSheetData(sheetName: string) {
+  const spreadsheetId = getEnvSpreadsheetId();
+  if (!spreadsheetId) return [];
   try {
-    const url = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}&headers=1&t=${Date.now()}`;
+    const url = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(sheetName)}&headers=1&t=${Date.now()}`;
     const response = await fetch(url);
     if (!response.ok) return [];
     const csv = await response.text();
@@ -508,8 +527,10 @@ async function startServer() {
       return res.status(400).json({ success: false, error: "Tabela e registro são obrigatórios." });
     }
 
-    const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca')) ? process.env.SUPABASE_URL : 'https://qhxdujbsipgwthrgvncl.supabase.co';
-    const supabaseKey = (process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi')) ? process.env.SUPABASE_SECRET_KEY : (process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL');
+    const { supabaseUrl, supabaseKey } = getServerSupabaseConfig();
+    if (!supabaseUrl || !supabaseKey) {
+      return res.status(500).json({ success: false, error: "Conexão Supabase não configurada no arquivo .env." });
+    }
 
     try {
       const conflictHeader = conflictColumn ? `resolution=merge-duplicates,on_conflict=${conflictColumn}` : 'resolution=merge-duplicates';
@@ -543,8 +564,10 @@ async function startServer() {
       return res.status(400).json({ success: false, error: "Tabela e id são obrigatórios." });
     }
 
-    const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca')) ? process.env.SUPABASE_URL : 'https://qhxdujbsipgwthrgvncl.supabase.co';
-    const supabaseKey = (process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi')) ? process.env.SUPABASE_SECRET_KEY : (process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL');
+    const { supabaseUrl, supabaseKey } = getServerSupabaseConfig();
+    if (!supabaseUrl || !supabaseKey) {
+      return res.status(500).json({ success: false, error: "Conexão Supabase não configurada no arquivo .env." });
+    }
 
     try {
       const idCol = column || 'id';
@@ -592,11 +615,9 @@ async function startServer() {
       let environmentSource: 'env' | 'supabase' | 'default' = envMode ? 'env' : 'default';
 
       // Fallback no Supabase app_settings para google_client_id e/ou environment_mode
-      if (!googleClientId || !envMode) {
+      const { supabaseUrl, supabaseKey } = getServerSupabaseConfig();
+      if ((!googleClientId || !envMode) && supabaseUrl && supabaseKey) {
         try {
-          const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca')) ? process.env.SUPABASE_URL : 'https://qhxdujbsipgwthrgvncl.supabase.co';
-          const supabaseKey = (process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi')) ? process.env.SUPABASE_SECRET_KEY : (process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL');
-
           let sbRes = await fetch(`${supabaseUrl}/rest/v1/app_settings?select=google_client_id,environment_mode&limit=5`, {
             headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
           });
@@ -699,12 +720,12 @@ async function startServer() {
         console.warn(`[Configuração Global] APP_ENVIRONMENT=${cleanMode} aplicado em memória; .env não gravado: ${envWriteError}`);
       }
 
-      // 2. Sincroniza na tabela app_settings do Supabase (se a coluna existir)
+      // 2. Sincroniza na tabela app_settings do Supabase (se a coluna existir e .env estiver configurado)
       let supabaseSynced = false;
-      try {
-        const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca')) ? process.env.SUPABASE_URL : 'https://qhxdujbsipgwthrgvncl.supabase.co';
-        const supabaseKey = (process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi')) ? process.env.SUPABASE_SECRET_KEY : (process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL');
-        const sbResp = await fetch(`${supabaseUrl}/rest/v1/app_settings`, {
+      const { supabaseUrl, supabaseKey } = getServerSupabaseConfig();
+      if (supabaseUrl && supabaseKey) {
+        try {
+          const sbResp = await fetch(`${supabaseUrl}/rest/v1/app_settings`, {
           method: "POST",
           headers: {
             apikey: supabaseKey,
@@ -715,12 +736,13 @@ async function startServer() {
           body: JSON.stringify({ id: "global", id_escritorio: "GLOBAL", environment_mode: cleanMode })
         });
         supabaseSynced = sbResp.ok;
-        if (!sbResp.ok) {
-          const errText = await sbResp.text().catch(() => '');
-          console.warn("[Configuração Global] Aviso ao gravar environment_mode no Supabase:", errText);
+          if (!sbResp.ok) {
+            const errText = await sbResp.text().catch(() => '');
+            console.warn("[Configuração Global] Aviso ao gravar environment_mode no Supabase:", errText);
+          }
+        } catch (sbSyncErr) {
+          console.warn("[Configuração Global] Aviso ao sincronizar environment_mode com Supabase:", sbSyncErr);
         }
-      } catch (sbSyncErr) {
-        console.warn("[Configuração Global] Aviso ao sincronizar environment_mode com Supabase:", sbSyncErr);
       }
 
       res.json({
@@ -777,21 +799,22 @@ async function startServer() {
       }
 
       // 2. Sincroniza na tabela app_settings do Supabase (para persistência no banco)
-      try {
-        const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca')) ? process.env.SUPABASE_URL : 'https://qhxdujbsipgwthrgvncl.supabase.co';
-        const supabaseKey = (process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi')) ? process.env.SUPABASE_SECRET_KEY : (process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL');
-        await fetch(`${supabaseUrl}/rest/v1/app_settings`, {
-          method: "POST",
-          headers: {
-            apikey: supabaseKey,
-            Authorization: `Bearer ${supabaseKey}`,
-            "Content-Type": "application/json",
-            "Prefer": "resolution=merge-duplicates"
-          },
-          body: JSON.stringify({ id: "global", google_client_id: cleanId })
-        }).catch(() => null);
-      } catch (sbSyncErr) {
-        console.warn("[Configuração Global] Aviso ao sincronizar com app_settings do Supabase:", sbSyncErr);
+      const { supabaseUrl, supabaseKey } = getServerSupabaseConfig();
+      if (supabaseUrl && supabaseKey) {
+        try {
+          await fetch(`${supabaseUrl}/rest/v1/app_settings`, {
+            method: "POST",
+            headers: {
+              apikey: supabaseKey,
+              Authorization: `Bearer ${supabaseKey}`,
+              "Content-Type": "application/json",
+              "Prefer": "resolution=merge-duplicates"
+            },
+            body: JSON.stringify({ id: "global", google_client_id: cleanId })
+          }).catch(() => null);
+        } catch (sbSyncErr) {
+          console.warn("[Configuração Global] Aviso ao sincronizar com app_settings do Supabase:", sbSyncErr);
+        }
       }
 
       res.json({ success: true, googleClientId: cleanId, envFileSaved, envWriteError });
@@ -801,137 +824,25 @@ async function startServer() {
     }
   });
 
-  const maskSecret = (val?: string): string => {
-    const clean = (val || '').trim();
-    if (!clean) return '';
-    if (clean.length <= 8) return '••••••••';
-    return `${clean.slice(0, 6)}••••••${clean.slice(-4)}`;
-  };
-
-  // API para consultar o status das chaves Supabase configuradas no servidor (sem expor segredos)
+  // API somente-leitura para diagnóstico de conexão (.env é a única fonte de configuração)
   app.get("/api/admin/supabase-config-status", (_req, res) => {
-    const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca'))
-      ? process.env.SUPABASE_URL
-      : (process.env.VITE_SUPABASE_URL || 'https://qhxdujbsipgwthrgvncl.supabase.co');
-
-    const publishableKey = process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
-      process.env.SUPABASE_PUBLISHABLE_KEY ||
-      process.env.VITE_SUPABASE_ANON_KEY ||
-      process.env.ANON_KEY ||
-      'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL';
-
-    const secretKey = process.env.SUPABASE_SECRET_KEY || process.env.SERVICE_ROLE_KEY || '';
-    const jwtSecret = process.env.JWT_SECRET || '';
-    const postgresPassword = process.env.POSTGRES_PASSWORD || '';
-
+    const { supabaseUrl, publishableKey, secretKey } = getServerSupabaseConfig();
     res.json({
       success: true,
-      supabaseUrl,
-      publishableKey,
+      configured: !!(supabaseUrl && (secretKey || publishableKey)),
+      hasUrl: !!supabaseUrl,
+      hasPublishableKey: !!publishableKey,
       hasSecretKey: !!secretKey,
-      secretKeyMask: maskSecret(secretKey),
-      hasJwtSecret: !!jwtSecret,
-      jwtSecretMask: maskSecret(jwtSecret),
-      hasPostgresPassword: !!postgresPassword,
-      postgresPasswordMask: maskSecret(postgresPassword),
+      source: "env"
     });
   });
 
-  // API para salvar as chaves do Supabase diretamente no .env e em memória no servidor
-  app.post("/api/admin/save-supabase-config", async (req, res) => {
-    try {
-      const {
-        supabaseUrl,
-        publishableKey,
-        secretKey,
-        jwtSecret,
-        postgresPassword
-      } = req.body || {};
-
-      const { envFileSaved, envWriteError } = writeEnvVarsSafely({
-        SUPABASE_URL: supabaseUrl,
-        VITE_SUPABASE_URL: supabaseUrl,
-        VITE_SUPABASE_PUBLISHABLE_KEY: publishableKey,
-        SUPABASE_PUBLISHABLE_KEY: publishableKey,
-        VITE_SUPABASE_ANON_KEY: publishableKey,
-        ANON_KEY: publishableKey,
-        SUPABASE_SECRET_KEY: secretKey,
-        SERVICE_ROLE_KEY: secretKey,
-        JWT_SECRET: jwtSecret,
-        POSTGRES_PASSWORD: postgresPassword,
-      });
-
-      if (envFileSaved) {
-        console.log("[Configuração Supabase] Chaves atualizadas no .env do servidor com sucesso.");
-      } else {
-        console.warn("[Configuração Supabase] Chaves aplicadas em memória, mas não foi possível gravar no .env:", envWriteError);
-      }
-
-      const currentSecret = process.env.SUPABASE_SECRET_KEY || process.env.SERVICE_ROLE_KEY || '';
-      const currentJwt = process.env.JWT_SECRET || '';
-      const currentPg = process.env.POSTGRES_PASSWORD || '';
-
-      res.json({
-        success: true,
-        envFileSaved,
-        envWriteError,
-        hasSecretKey: !!currentSecret,
-        secretKeyMask: maskSecret(currentSecret),
-        hasJwtSecret: !!currentJwt,
-        jwtSecretMask: maskSecret(currentJwt),
-        hasPostgresPassword: !!currentPg,
-        postgresPasswordMask: maskSecret(currentPg),
-      });
-    } catch (err: any) {
-      console.error("[Configuração Supabase] Erro ao salvar chaves no .env:", err);
-      res.status(500).json({ success: false, error: err.message });
-    }
-  });
-
-  // API para testar conexão administrativa usando a URL/chave informadas ou já salvas no servidor
-  app.post("/api/admin/test-supabase-connection", async (req, res) => {
-    try {
-      const targetUrl = String(req.body?.supabaseUrl || process.env.SUPABASE_URL || 'https://qhxdujbsipgwthrgvncl.supabase.co').trim();
-      const targetKey = String(
-        req.body?.secretKey ||
-        req.body?.publishableKey ||
-        process.env.SUPABASE_SECRET_KEY ||
-        process.env.SUPABASE_PUBLISHABLE_KEY ||
-        'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL'
-      ).trim();
-
-      if (!targetUrl || !targetKey) {
-        return res.status(400).json({ success: false, message: "URL e Chave do Supabase são obrigatórias." });
-      }
-
-      const resp = await fetch(`${targetUrl.replace(/\/$/, '')}/rest/v1/escritorios?select=id&limit=1`, {
-        headers: { apikey: targetKey, Authorization: `Bearer ${targetKey}` }
-      });
-
-      if (resp.ok) {
-        const usedAdminKey = !!(req.body?.secretKey || process.env.SUPABASE_SECRET_KEY);
-        return res.json({
-          success: true,
-          message: usedAdminKey
-            ? "Conexão administrativa (Service/Secret Key) estabelecida com sucesso!"
-            : "Conexão pública (Publishable/Anon Key) estabelecida! Configure a Secret Key para operações administrativas."
-        });
-      }
-
-      const errText = await resp.text().catch(() => '');
-      return res.json({
-        success: false,
-        message: `Falha ao conectar (HTTP ${resp.status}): ${errText.slice(0, 140) || 'Verifique a URL e as chaves informadas.'}`
-      });
-    } catch (err: any) {
-      res.json({ success: false, message: `Erro na requisição: ${err.message}` });
-    }
-  });
-
   // API para listar escritórios com bypass de RLS via servidor
-  app.get("/api/supabase/escritorios", async (req, res) => {
-    const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca')) ? process.env.SUPABASE_URL : 'https://qhxdujbsipgwthrgvncl.supabase.co';
-    const supabaseKey = (process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi')) ? process.env.SUPABASE_SECRET_KEY : (process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL');
+  app.get("/api/supabase/escritorios", async (_req, res) => {
+    const { supabaseUrl, supabaseKey } = getServerSupabaseConfig();
+    if (!supabaseUrl || !supabaseKey) {
+      return res.status(500).json({ success: false, error: "Conexão Supabase não configurada no arquivo .env." });
+    }
 
     try {
       const resp = await fetch(`${supabaseUrl}/rest/v1/escritorios?select=*`, {
@@ -998,9 +909,10 @@ async function startServer() {
       return res.status(400).json({ success: false, error: "Parâmetro 'email' é obrigatório." });
     }
 
-    const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca')) ? process.env.SUPABASE_URL : 'https://qhxdujbsipgwthrgvncl.supabase.co';
-    const supabaseKey = (process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi')) ? process.env.SUPABASE_SECRET_KEY : (process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL');
-    const hasServiceRole = !!(process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi'));
+    const { supabaseUrl, supabaseKey, hasServiceRole } = getServerSupabaseConfig();
+    if (!supabaseUrl) {
+      return res.status(500).json({ success: false, error: "SUPABASE_URL não configurada no arquivo .env." });
+    }
 
     if (!hasServiceRole) {
       return res.status(500).json({
@@ -1122,9 +1034,10 @@ async function startServer() {
 
   // 1. CONSULTAR USUÁRIOS DIRETAMENTE DE AUTH.USERS (com dados mesclados de public.usuarios)
   app.get("/api/supabase/admin/users", async (req, res) => {
-    const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca')) ? process.env.SUPABASE_URL : 'https://qhxdujbsipgwthrgvncl.supabase.co';
-    const supabaseKey = (process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi')) ? process.env.SUPABASE_SECRET_KEY : (process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL');
-    const hasServiceRole = !!(process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi'));
+    const { supabaseUrl, supabaseKey, hasServiceRole } = getServerSupabaseConfig();
+    if (!supabaseUrl) {
+      return res.status(500).json({ success: false, error: "SUPABASE_URL não configurada no arquivo .env." });
+    }
 
     if (!hasServiceRole) {
       return res.status(500).json({ success: false, error: "Chave administrativa não configurada para consultar auth.users." });
@@ -1219,9 +1132,10 @@ async function startServer() {
       return res.status(400).json({ success: false, error: "E-mail e senha são obrigatórios." });
     }
 
-    const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca')) ? process.env.SUPABASE_URL : 'https://qhxdujbsipgwthrgvncl.supabase.co';
-    const supabaseKey = (process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi')) ? process.env.SUPABASE_SECRET_KEY : (process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL');
-    const hasServiceRole = !!(process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi'));
+    const { supabaseUrl, supabaseKey, hasServiceRole } = getServerSupabaseConfig();
+    if (!supabaseUrl) {
+      return res.status(500).json({ success: false, error: "SUPABASE_URL não configurada no arquivo .env." });
+    }
 
     const safePassword = password.toString().trim().length >= 6 
       ? password.toString().trim() 
@@ -1326,9 +1240,10 @@ async function startServer() {
     const { email, nome, cargo, permissao, escritoriosIds, oab, cpf, contato, status } = req.body;
     const password = req.body.password || req.body.senha;
 
-    const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca')) ? process.env.SUPABASE_URL : 'https://qhxdujbsipgwthrgvncl.supabase.co';
-    const supabaseKey = (process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi')) ? process.env.SUPABASE_SECRET_KEY : (process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL');
-    const hasServiceRole = !!(process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi'));
+    const { supabaseUrl, supabaseKey, hasServiceRole } = getServerSupabaseConfig();
+    if (!supabaseUrl) {
+      return res.status(500).json({ success: false, error: "SUPABASE_URL não configurada no arquivo .env." });
+    }
 
     if (!hasServiceRole) {
       return res.status(500).json({ success: false, error: "Chave administrativa não configurada para atualizar em auth.users." });
@@ -1469,9 +1384,10 @@ async function startServer() {
     const { id } = req.params;
     const { status, email } = req.body || {};
 
-    const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca')) ? process.env.SUPABASE_URL : 'https://qhxdujbsipgwthrgvncl.supabase.co';
-    const supabaseKey = (process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi')) ? process.env.SUPABASE_SECRET_KEY : (process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL');
-    const hasServiceRole = !!(process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi'));
+    const { supabaseUrl, supabaseKey, hasServiceRole } = getServerSupabaseConfig();
+    if (!supabaseUrl) {
+      return res.status(500).json({ success: false, error: "SUPABASE_URL não configurada no arquivo .env." });
+    }
 
     if (!hasServiceRole) {
       return res.status(500).json({ success: false, error: "Chave administrativa não configurada para alterar status em auth.users." });
@@ -1642,9 +1558,10 @@ async function startServer() {
     const { id } = req.params;
     const email = req.query.email as string | undefined;
 
-    const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca')) ? process.env.SUPABASE_URL : 'https://qhxdujbsipgwthrgvncl.supabase.co';
-    const supabaseKey = (process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi')) ? process.env.SUPABASE_SECRET_KEY : (process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL');
-    const hasServiceRole = !!(process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi'));
+    const { supabaseUrl, supabaseKey, hasServiceRole } = getServerSupabaseConfig();
+    if (!supabaseUrl) {
+      return res.status(500).json({ success: false, error: "SUPABASE_URL não configurada no arquivo .env." });
+    }
 
     if (!hasServiceRole) {
       return res.status(500).json({ success: false, error: "Chave administrativa não configurada para excluir de auth.users." });
@@ -1700,9 +1617,10 @@ async function startServer() {
       return res.status(400).json({ success: false, error: "E-mail e senha são obrigatórios." });
     }
 
-    const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca')) ? process.env.SUPABASE_URL : 'https://qhxdujbsipgwthrgvncl.supabase.co';
-    const supabaseKey = (process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi')) ? process.env.SUPABASE_SECRET_KEY : (process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL');
-    const hasServiceRole = !!(process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi'));
+    const { supabaseUrl, supabaseKey, hasServiceRole } = getServerSupabaseConfig();
+    if (!supabaseUrl || !supabaseKey) {
+      return res.status(500).json({ success: false, error: "Conexão Supabase não configurada no arquivo .env." });
+    }
 
     // Garante que a senha atenda ao requisito mínimo de 6 dígitos do Supabase Auth
     const safePassword = password.toString().trim().length >= 6 
@@ -1780,9 +1698,10 @@ async function startServer() {
       return res.status(400).json({ success: false, error: "Nenhum usuário informado para importação." });
     }
 
-    const supabaseUrl = (process.env.SUPABASE_URL && !process.env.SUPABASE_URL.includes('127.0.0.1') && !process.env.SUPABASE_URL.includes('walbermendonca')) ? process.env.SUPABASE_URL : 'https://qhxdujbsipgwthrgvncl.supabase.co';
-    const supabaseKey = (process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi')) ? process.env.SUPABASE_SECRET_KEY : (process.env.SUPABASE_PUBLISHABLE_KEY || 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL');
-    const hasServiceRole = !!(process.env.SUPABASE_SECRET_KEY && !process.env.SUPABASE_SECRET_KEY.startsWith('eyJhbGciOi'));
+    const { supabaseUrl, supabaseKey, hasServiceRole } = getServerSupabaseConfig();
+    if (!supabaseUrl || !supabaseKey) {
+      return res.status(500).json({ success: false, error: "Conexão Supabase não configurada no arquivo .env." });
+    }
 
     let createdCount = 0;
     let alreadyRegisteredCount = 0;

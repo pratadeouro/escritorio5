@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Database, 
   CheckCircle2, 
@@ -21,41 +21,26 @@ import {
   MigrationProgress 
 } from '../services/supabaseMigration';
 import { registerUserInSupabaseAuth } from '../services/supabaseAuth';
-import { SupabaseConnectionFields } from './SupabaseConnectionFields';
+import { OFFICIAL_SUPABASE_URL, OFFICIAL_SUPABASE_KEY, isSupabaseConfigured } from '../services/supabaseService';
 
 export const SupabaseMigrationTab: React.FC = () => {
-  const { state, forceLoad, dataSource, setDataSource } = useAppContext();
+  const { state, forceLoad } = useAppContext();
 
-  const [supabaseUrl, setSupabaseUrl] = useState<string>(() => {
-    const saved = localStorage.getItem('supabase_migration_url');
-    if (saved && !saved.includes('walbermendonca') && !saved.includes('127.0.0.1')) return saved;
-    return 'https://qhxdujbsipgwthrgvncl.supabase.co';
-  });
-  const [supabaseKey, setSupabaseKey] = useState<string>(() => {
-    const saved = localStorage.getItem('supabase_migration_key');
-    if (saved && !saved.startsWith('eyJhbGciOi')) return saved;
-    return 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL';
-  });
+  const supabaseConfigured = isSupabaseConfigured();
 
   useEffect(() => {
-    const saved = localStorage.getItem('supabase_migration_url');
-    if (saved && (saved.includes('walbermendonca') || saved.includes('127.0.0.1'))) {
+    try {
       localStorage.removeItem('supabase_migration_url');
       localStorage.removeItem('supabase_migration_key');
-      setSupabaseUrl('https://qhxdujbsipgwthrgvncl.supabase.co');
-      setSupabaseKey('sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL');
-    }
+      localStorage.removeItem('supabase_migration_publishable_key');
+    } catch {}
   }, []);
 
   const [copiedSchema, setCopiedSchema] = useState(false);
   const [isMigrating, setIsMigrating] = useState(false);
   const [progress, setProgress] = useState<MigrationProgress | null>(null);
   const [migrationResult, setMigrationResult] = useState<{ success: boolean; totalRecords: number; errors: string[] } | null>(null);
-
-  const handleCredentialsChange = useCallback((creds: { supabaseUrl: string; activeKey: string }) => {
-    setSupabaseUrl(creds.supabaseUrl);
-    setSupabaseKey(creds.activeKey);
-  }, []);
+  const [confirmEmptyMigration, setConfirmEmptyMigration] = useState(false);
 
   const handleCopySchema = () => {
     navigator.clipboard.writeText(SUPABASE_SCHEMA_SQL);
@@ -103,81 +88,7 @@ export const SupabaseMigrationTab: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
-  const handleStartMigration = async () => {
-    if (!supabaseUrl || !supabaseKey) {
-      alert('Por favor, informe a URL e a Chave do Supabase antes de iniciar.');
-      return;
-    }
-
-    if (totalSheetsRecords === 0) {
-      const confirmEmpty = window.confirm(
-        'Atenção: Os dados parecem não estar carregados da planilha no momento. Deseja continuar mesmo assim ou prefere clicar em "Recarregar Dados da Planilha" primeiro?'
-      );
-      if (!confirmEmpty) return;
-    }
-
-    setIsMigrating(true);
-    setMigrationResult(null);
-
-    try {
-      const res = await migrateAllDataToSupabase(state, supabaseUrl, supabaseKey, (prog) => {
-        setProgress(prog);
-      });
-      setMigrationResult(res);
-    } catch (err: any) {
-      setMigrationResult({
-        success: false,
-        totalRecords: progress?.migratedRecords || 0,
-        errors: [err.message || String(err)]
-      });
-    } finally {
-      setIsMigrating(false);
-    }
-  };
-
-  const [isSyncingAuth, setIsSyncingAuth] = useState(false);
-  const [authSyncStatus, setAuthSyncStatus] = useState<string | null>(null);
-
-  const handleSyncAuthUsers = async () => {
-    const usuarios = state.usuarios || [];
-    if (usuarios.length === 0) {
-      alert('Nenhum usuário encontrado na memória para sincronizar.');
-      return;
-    }
-
-    setIsSyncingAuth(true);
-    setAuthSyncStatus('Iniciando provisionamento de usuários no Supabase Auth...');
-    let successCount = 0;
-    let failCount = 0;
-
-    for (let i = 0; i < usuarios.length; i++) {
-      const u = usuarios[i];
-      if (!u.email) continue;
-      const senhaToUse = u.senha ? u.senha.toString() : '123456';
-      setAuthSyncStatus(`Provisionando (${i + 1}/${usuarios.length}): ${u.email}...`);
-      
-      try {
-        const res = await registerUserInSupabaseAuth(u.email, senhaToUse, {
-          nome: u.nome,
-          cargo: u.cargo,
-          permissao: u.permissao
-        });
-
-        if (res.success) {
-          successCount++;
-        } else {
-          failCount++;
-        }
-      } catch {
-        failCount++;
-      }
-    }
-
-    setIsSyncingAuth(false);
-    setAuthSyncStatus(`Concluído! ${successCount} usuário(s) sincronizados no Supabase Auth.`);
-  };
-
-  // Contagem de registros atuais carregados da planilha
+  // Contagem de registros atuais em memória
   const tablesCount = [
     { name: 'Processos', count: state.processos?.length || 0 },
     { name: 'Contatos / Clientes', count: state.contatos?.length || 0 },
@@ -194,6 +105,93 @@ export const SupabaseMigrationTab: React.FC = () => {
 
   const totalSheetsRecords = tablesCount.reduce((acc, curr) => acc + curr.count, 0);
 
+  const executeMigration = async () => {
+    setConfirmEmptyMigration(false);
+    if (!supabaseConfigured) {
+      setMigrationResult({
+        success: false,
+        totalRecords: 0,
+        errors: ['Credenciais do Supabase não configuradas no arquivo .env do servidor.']
+      });
+      return;
+    }
+
+    setIsMigrating(true);
+    setMigrationResult(null);
+
+    try {
+      const res = await migrateAllDataToSupabase(state, OFFICIAL_SUPABASE_URL, OFFICIAL_SUPABASE_KEY, (prog) => {
+        setProgress(prog);
+      });
+      setMigrationResult(res);
+    } catch (err: any) {
+      setMigrationResult({
+        success: false,
+        totalRecords: progress?.migratedRecords || 0,
+        errors: [err.message || String(err)]
+      });
+    } finally {
+      setIsMigrating(false);
+    }
+  };
+
+  const handleStartMigration = async () => {
+    if (!supabaseConfigured) {
+      setMigrationResult({
+        success: false,
+        totalRecords: 0,
+        errors: ['Credenciais do Supabase não configuradas no arquivo .env do servidor.']
+      });
+      return;
+    }
+
+    if (totalSheetsRecords === 0 && !confirmEmptyMigration) {
+      setConfirmEmptyMigration(true);
+      return;
+    }
+
+    await executeMigration();
+  };
+
+  const [isSyncingAuth, setIsSyncingAuth] = useState(false);
+  const [authSyncStatus, setAuthSyncStatus] = useState<string | null>(null);
+
+  const handleSyncAuthUsers = async () => {
+    const usuarios = state.usuarios || [];
+    if (usuarios.length === 0) {
+      setAuthSyncStatus('Nenhum usuário encontrado na memória para sincronizar.');
+      return;
+    }
+
+    setIsSyncingAuth(true);
+    setAuthSyncStatus('Iniciando provisionamento de usuários no Supabase Auth...');
+    let successCount = 0;
+
+    for (let i = 0; i < usuarios.length; i++) {
+      const u = usuarios[i];
+      if (!u.email) continue;
+      const senhaToUse = u.senha ? u.senha.toString() : '123456';
+      setAuthSyncStatus(`Provisionando (${i + 1}/${usuarios.length}): ${u.email}...`);
+      
+      try {
+        const res = await registerUserInSupabaseAuth(u.email, senhaToUse, {
+          nome: u.nome,
+          cargo: u.cargo,
+          permissao: u.permissao
+        });
+
+        if (res.success) {
+          successCount++;
+        }
+      } catch {
+        // segue para o próximo usuário
+      }
+    }
+
+    setIsSyncingAuth(false);
+    setAuthSyncStatus(`Concluído! ${successCount} usuário(s) sincronizados no Supabase Auth.`);
+  };
+
   return (
     <div className="space-y-8 animate-fadeIn max-w-5xl">
       {/* Header do Módulo */}
@@ -204,14 +202,14 @@ export const SupabaseMigrationTab: React.FC = () => {
               <Database size={28} />
             </div>
             <div>
-              <h2 className="text-xl font-bold text-app-text flex items-center gap-2">
-                Módulo de Migração Google Sheets &rarr; Supabase
+              <h2 className="text-xl font-bold text-app-text flex items-center gap-2 flex-wrap">
+                Módulo de Migração de Dados &rarr; Supabase
                 <span className="text-[11px] font-semibold uppercase tracking-wider bg-emerald-500/20 text-emerald-600 dark:text-emerald-400 px-2.5 py-0.5 rounded-full border border-emerald-500/30">
-                  PostgreSQL
+                  Conexão via .env
                 </span>
               </h2>
               <p className="text-sm text-app-text-muted mt-0.5">
-                Migre com facilidade todos os registros da sua planilha para um banco de dados relacional de alta performance no Supabase.
+                Utiliza exclusivamente as variáveis definidas no arquivo <code className="font-mono">.env</code> para enviar registros e exportar scripts SQL.
               </p>
             </div>
           </div>
@@ -220,73 +218,30 @@ export const SupabaseMigrationTab: React.FC = () => {
             type="button"
             onClick={forceLoad}
             className="flex items-center gap-2 px-4 py-2 bg-app-surface border border-app-border hover:bg-app-secondary rounded-xl text-xs font-semibold text-app-text transition-all shrink-0"
-            title="Sincronizar novamente com o Google Sheets antes da migração"
+            title="Recarregar dados atuais a partir da conexão configurada no .env"
           >
             <RefreshCw size={14} className={state.syncStatus === 'loading' ? 'animate-spin' : ''} />
-            Recarregar Dados da Planilha
+            Recarregar Dados
           </button>
         </div>
       </div>
 
-      {/* Switch de Ativação da Fonte de Dados */}
-      <div className={`border-2 rounded-2xl p-6 transition-all ${
-        dataSource === 'supabase'
-          ? 'bg-emerald-500/5 border-emerald-500/30'
-          : 'bg-app-surface border-app-border'
-      }`}>
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2">
-              <span className={`w-3 h-3 rounded-full ${dataSource === 'supabase' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`} />
-              <h3 className="font-bold text-app-text text-base">
-                Fonte de Dados em Uso:{' '}
-                <span className={dataSource === 'supabase' ? 'text-emerald-600 dark:text-emerald-400 font-extrabold' : 'text-amber-600 font-extrabold'}>
-                  {dataSource === 'supabase' ? 'Supabase (PostgreSQL)' : 'Google Sheets (Planilha)'}
-                </span>
-              </h3>
-            </div>
-            <p className="text-xs text-app-text-muted">
-              {dataSource === 'supabase'
-                ? 'O aplicativo está operando com altíssima performance conectado diretamente ao seu banco de dados Supabase.'
-                : 'O aplicativo está operando conectado à planilha Google Sheets. Após migrar os dados, clique no botão ao lado para ativar o Supabase.'}
-            </p>
-          </div>
-
-          <div className="flex items-center gap-3 shrink-0">
-            {dataSource === 'supabase' ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setDataSource('sheets');
-                  setTimeout(() => forceLoad(), 100);
-                }}
-                className="px-4 py-2 bg-app-bg border border-app-border hover:bg-app-secondary rounded-xl text-xs font-bold text-app-text transition-all"
-              >
-                Reverter para Google Sheets
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => {
-                  setDataSource('supabase');
-                  setTimeout(() => forceLoad(), 100);
-                }}
-                className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md hover:shadow-emerald-500/20 transition-all"
-              >
-                <CheckCircle2 size={16} />
-                Ativar Supabase como Banco Principal
-              </button>
-            )}
+      {!supabaseConfigured && (
+        <div className="p-4 bg-red-500/10 border border-red-500/25 rounded-2xl text-xs text-red-600 dark:text-red-400 flex items-start gap-3">
+          <AlertCircle size={18} className="shrink-0 mt-0.5" />
+          <div>
+            <strong className="block font-bold mb-0.5">Conexão Supabase ausente no .env</strong>
+            <span>Defina <code className="font-mono">VITE_SUPABASE_URL</code> e <code className="font-mono">VITE_SUPABASE_PUBLISHABLE_KEY</code> no arquivo <code className="font-mono">.env</code> do servidor para habilitar a migração direta.</span>
           </div>
         </div>
-      </div>
+      )}
 
       {/* Passo 1: Status dos Dados Atuais */}
       <div className="bg-app-surface border border-app-border rounded-2xl p-6 space-y-4">
         <div className="flex items-center justify-between border-b border-app-border pb-3">
           <div className="flex items-center gap-2">
             <span className="w-6 h-6 rounded-full bg-primary/20 text-primary flex items-center justify-center text-xs font-bold">1</span>
-            <h3 className="font-bold text-app-text">Dados Carregados do Google Sheets</h3>
+            <h3 className="font-bold text-app-text">Dados Carregados em Memória</h3>
           </div>
           <span className="text-xs font-bold text-app-text-muted">
             Total em Memória: <b className="text-primary">{totalSheetsRecords} registros</b>
@@ -303,21 +258,11 @@ export const SupabaseMigrationTab: React.FC = () => {
         </div>
       </div>
 
-      {/* Passo 2: Credenciais do Supabase */}
-      <div className="bg-app-surface border border-app-border rounded-2xl p-6 space-y-4">
-        <div className="flex items-center gap-2 border-b border-app-border pb-3">
-          <span className="w-6 h-6 rounded-full bg-primary/20 text-primary flex items-center justify-center text-xs font-bold">2</span>
-          <h3 className="font-bold text-app-text">Conexão com o Supabase</h3>
-        </div>
-
-        <SupabaseConnectionFields onCredentialsChange={handleCredentialsChange} />
-      </div>
-
-      {/* Passo 3: Script DDL do Schema SQL & RLS */}
+      {/* Passo 2: Script DDL do Schema SQL & RLS */}
       <div className="bg-app-surface border border-app-border rounded-2xl p-6 space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-app-border pb-3">
           <div className="flex items-center gap-2">
-            <span className="w-6 h-6 rounded-full bg-primary/20 text-primary flex items-center justify-center text-xs font-bold">3</span>
+            <span className="w-6 h-6 rounded-full bg-primary/20 text-primary flex items-center justify-center text-xs font-bold">2</span>
             <div>
               <h3 className="font-bold text-app-text">Scripts SQL para o Supabase (Schema & RLS)</h3>
               <p className="text-xs text-app-text-muted">
@@ -410,15 +355,15 @@ export const SupabaseMigrationTab: React.FC = () => {
         </div>
       </div>
 
-      {/* Passo 4: Execução da Migração */}
+      {/* Passo 3: Execução da Migração */}
       <div className="bg-app-surface border border-app-border rounded-2xl p-6 space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-app-border pb-3">
           <div className="flex items-center gap-2">
-            <span className="w-6 h-6 rounded-full bg-primary/20 text-primary flex items-center justify-center text-xs font-bold">4</span>
+            <span className="w-6 h-6 rounded-full bg-primary/20 text-primary flex items-center justify-center text-xs font-bold">3</span>
             <div>
               <h3 className="font-bold text-app-text">Migração dos Dados</h3>
               <p className="text-xs text-app-text-muted">
-                Envia todos os registros em lotes atômicos com chave primária e integridade relacional.
+                Envia todos os registros em lotes atômicos com chave primária e integridade relacional usando a conexão do <code className="font-mono">.env</code>.
               </p>
             </div>
           </div>
@@ -427,7 +372,7 @@ export const SupabaseMigrationTab: React.FC = () => {
             <button
               type="button"
               onClick={handleSyncAuthUsers}
-              disabled={isSyncingAuth || !supabaseUrl || !supabaseKey}
+              disabled={isSyncingAuth || !supabaseConfigured}
               className="flex items-center gap-1.5 px-3.5 py-2 bg-primary/10 border border-primary/20 hover:bg-primary/20 text-primary rounded-xl text-xs font-semibold transition-all disabled:opacity-50"
               title="Pré-provisionar todos os usuários existentes diretamente no Supabase Auth"
             >
@@ -448,7 +393,7 @@ export const SupabaseMigrationTab: React.FC = () => {
             <button
               type="button"
               onClick={handleStartMigration}
-              disabled={isMigrating || !supabaseUrl || !supabaseKey}
+              disabled={isMigrating || !supabaseConfigured}
               className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition-all shadow-md hover:shadow-emerald-500/20 disabled:opacity-50"
             >
               {isMigrating ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
@@ -456,6 +401,31 @@ export const SupabaseMigrationTab: React.FC = () => {
             </button>
           </div>
         </div>
+
+        {confirmEmptyMigration && (
+          <div className="p-4 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-700 dark:text-amber-300 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-2">
+              <AlertCircle size={18} className="shrink-0 mt-0.5" />
+              <span>Nenhum registro carregado em memória no momento. Deseja prosseguir com a migração mesmo assim?</span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => setConfirmEmptyMigration(false)}
+                className="px-3 py-1.5 rounded-lg border border-app-border bg-app-surface text-app-text font-semibold"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={executeMigration}
+                className="px-3 py-1.5 rounded-lg bg-amber-600 text-white font-bold"
+              >
+                Continuar
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Status da Sincronização de Usuários no Auth */}
         {authSyncStatus && (
@@ -476,12 +446,11 @@ export const SupabaseMigrationTab: React.FC = () => {
               <span className="font-bold text-primary">{progress.percentage}%</span>
             </div>
 
-            <div className="w-full bg-app-bg border border-app-border rounded-full h-3 overflow-hidden">
-              <div 
-                className="bg-gradient-to-r from-primary to-emerald-500 h-full transition-all duration-300"
-                style={{ width: `${progress.percentage}%` }}
-              />
-            </div>
+            <progress
+              value={progress.percentage}
+              max={100}
+              className="w-full h-3 rounded-full overflow-hidden accent-emerald-600"
+            />
           </div>
         )}
 
@@ -501,7 +470,7 @@ export const SupabaseMigrationTab: React.FC = () => {
               <p className="font-bold">
                 {migrationResult.success 
                   ? `Migração concluída com êxito! ${migrationResult.totalRecords} registros foram migrados para o Supabase.`
-                  : `Migração finalizada com ${migrationResult.errors.length} avisos.`}
+                  : `Migração finalizada com ${migrationResult.errors.length} aviso(s).`}
               </p>
               {migrationResult.errors.length > 0 && (
                 <ul className="list-disc list-inside space-y-0.5 opacity-90">

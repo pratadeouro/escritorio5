@@ -29,9 +29,14 @@ import {
   AppSettings
 } from '../types';
 
-// Credenciais Oficiais do Supabase Cloud
-export const OFFICIAL_SUPABASE_URL = 'https://qhxdujbsipgwthrgvncl.supabase.co';
-export const OFFICIAL_SUPABASE_KEY = 'sb_publishable_Iyu6_roB7iGGd8-1xxK7tA_G7y7E0bL';
+// Credenciais e fonte de dados lidas exclusivamente do arquivo .env
+export const OFFICIAL_SUPABASE_URL = String((import.meta as any).env?.VITE_SUPABASE_URL || '').trim();
+export const OFFICIAL_SUPABASE_KEY = String(
+  (import.meta as any).env?.VITE_SUPABASE_PUBLISHABLE_KEY ||
+  (import.meta as any).env?.VITE_SUPABASE_ANON_KEY ||
+  (import.meta as any).env?.VITE_ANON_KEY ||
+  ''
+).trim();
 
 const SUPABASE_URL = OFFICIAL_SUPABASE_URL;
 const SUPABASE_KEY = OFFICIAL_SUPABASE_KEY;
@@ -44,6 +49,9 @@ export const isSupabaseConfigured = (): boolean => {
 
 export const getSupabase = (): SupabaseClient => {
   if (!supabaseInstance) {
+    if (!isSupabaseConfigured()) {
+      throw new Error('Conexão Supabase não configurada no arquivo .env (VITE_SUPABASE_URL / VITE_SUPABASE_PUBLISHABLE_KEY).');
+    }
     supabaseInstance = createClient(SUPABASE_URL, SUPABASE_KEY, {
       auth: {
         persistSession: true,
@@ -60,22 +68,22 @@ export const getSupabase = (): SupabaseClient => {
 };
 
 /**
- * Obtém a fonte de dados ativa: 'supabase' ou 'sheets'
+ * Obtém a fonte de dados ativa exclusivamente a partir do .env ('supabase' ou 'sheets')
  */
 export const getActiveDataSource = (): 'supabase' | 'sheets' => {
-  const saved = localStorage.getItem('advocacia_data_source');
-  if (saved === 'supabase' || saved === 'sheets') return saved;
-  const envSource = (import.meta as any).env.VITE_DATA_SOURCE;
-  if (envSource === 'supabase' || envSource === 'sheets') return envSource;
-  // Padrão para supabase se estiver configurado
+  const envSource = String((import.meta as any).env?.VITE_DATA_SOURCE || '').trim().toLowerCase();
+  if (envSource === 'sheets') return 'sheets';
+  if (envSource === 'supabase') return 'supabase';
   return isSupabaseConfigured() ? 'supabase' : 'sheets';
 };
 
 /**
- * Define a fonte de dados ativa
+ * Mantida apenas por compatibilidade de assinatura — não grava mais em localStorage, pois o .env é a única fonte
  */
-export const setActiveDataSource = (source: 'supabase' | 'sheets') => {
-  localStorage.setItem('advocacia_data_source', source);
+export const setActiveDataSource = (_source: 'supabase' | 'sheets') => {
+  try {
+    localStorage.removeItem('advocacia_data_source');
+  } catch {}
 };
 
 // ==============================================================================

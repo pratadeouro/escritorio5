@@ -21,16 +21,10 @@ import {
   EyeOff, 
   Loader2, 
   Scale, 
-  RefreshCw,
-  Building2,
-  Clock,
-  Sparkles
+  Clock
 } from 'lucide-react';
-import { isSupabaseConfigured } from '../services/supabaseService';
-import { CURRENT_APP_VERSION } from '../services/versionService';
 import { EnvironmentMode } from '../types';
 import { SupabaseMigrationTab } from '../components/SupabaseMigrationTab';
-import { SupabaseConnectionFields } from '../components/SupabaseConnectionFields';
 
 const PRIMARY_COLORS = [
   { name: 'Índigo Moderno', hex: '#4f46e5' },
@@ -49,8 +43,6 @@ export default function ConfiguracoesGlobais() {
     isAdmin, 
     currentUser, 
     applyTheme, 
-    dataSource, 
-    setDataSource,
     activeOfficeName,
     environmentMode,
     environmentSource,
@@ -73,7 +65,7 @@ export default function ConfiguracoesGlobais() {
     );
   }
 
-  const [activeTab, setActiveTab] = useState<'google' | 'identity' | 'theme' | 'operations' | 'database' | 'email' | 'migration'>('google');
+  const [activeTab, setActiveTab] = useState<'google' | 'identity' | 'theme' | 'operations' | 'email' | 'migration'>('google');
 
   useEffect(() => {
     if (isProductionMode && activeTab === 'migration') {
@@ -158,6 +150,7 @@ export default function ConfiguracoesGlobais() {
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [copiedOrigin, setCopiedOrigin] = useState(false);
+  const [copiedClientId, setCopiedClientId] = useState(false);
 
   const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
 
@@ -455,18 +448,6 @@ export default function ConfiguracoesGlobais() {
         </button>
 
         <button
-          onClick={() => setActiveTab('database')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs transition-all whitespace-nowrap ${
-            activeTab === 'database'
-              ? 'bg-primary text-white shadow-md'
-              : 'text-app-text-muted hover:text-app-text hover:bg-app-surface'
-          }`}
-        >
-          <Database size={15} />
-          Banco de Dados & Storage
-        </button>
-
-        <button
           onClick={() => setActiveTab('email')}
           className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs transition-all whitespace-nowrap ${
             activeTab === 'email'
@@ -568,12 +549,13 @@ export default function ConfiguracoesGlobais() {
                       type="button"
                       onClick={() => {
                         navigator.clipboard.writeText(googleClientId);
-                        alert('Google Client ID copiado!');
+                        setCopiedClientId(true);
+                        setTimeout(() => setCopiedClientId(false), 2000);
                       }}
                       className="p-2 text-app-text-muted hover:text-primary rounded-xl"
                       title="Copiar"
                     >
-                      <Copy size={16} />
+                      {copiedClientId ? <Check size={16} className="text-emerald-500" /> : <Copy size={16} />}
                     </button>
                   )}
                 </div>
@@ -925,88 +907,7 @@ export default function ConfiguracoesGlobais() {
         </div>
       )}
 
-      {/* Conteúdo da Aba 5: Banco de Dados & Storage */}
-      {activeTab === 'database' && (
-        <div className="space-y-6">
-          <div className="bg-app-surface border border-app-border rounded-3xl p-6 shadow-sm space-y-6">
-            <div>
-              <h3 className="text-lg font-bold text-app-text">Banco de Dados & Armazenamento</h3>
-              <p className="text-xs text-app-text-muted">
-                Gerencie a fonte de dados mestra do sistema (Supabase Cloud ou Google Sheets).
-              </p>
-            </div>
-
-            {/* Alternador de Banco de Dados */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div 
-                onClick={() => setDataSource('supabase')}
-                className={`p-5 rounded-2xl border cursor-pointer transition-all ${
-                  dataSource === 'supabase'
-                    ? 'border-emerald-500 bg-emerald-500/5 ring-2 ring-emerald-500/20'
-                    : 'border-app-border hover:bg-app-bg'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <div className="p-2 bg-emerald-500/10 text-emerald-500 rounded-xl">
-                      <Database size={20} />
-                    </div>
-                    <div>
-                      <h4 className="font-bold text-app-text text-sm">Supabase Cloud (PostgreSQL)</h4>
-                      <p className="text-[11px] text-emerald-600 dark:text-emerald-400 font-semibold">Recomendado para Produção</p>
-                    </div>
-                  </div>
-                  {dataSource === 'supabase' && <CheckCircle2 className="text-emerald-500" size={20} />}
-                </div>
-                <p className="text-xs text-app-text-muted leading-relaxed">
-                  Banco relacional de alta performance com segurança RLS, autenticação robusta e operações atômicas instantâneas.
-                </p>
-              </div>
-
-              <div 
-                onClick={() => setDataSource('sheets')}
-                className={`p-5 rounded-2xl border cursor-pointer transition-all ${
-                  dataSource === 'sheets'
-                    ? 'border-blue-500 bg-blue-500/5 ring-2 ring-blue-500/20'
-                    : 'border-app-border hover:bg-app-bg'
-                }`}
-              >
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-2">
-                    <div className="p-2 bg-blue-500/10 text-blue-500 rounded-xl">
-                      <Building2 size={20} />
-                    </div>
-                    <div>
-                      <h4 className="font-bold text-app-text text-sm">Google Sheets & Apps Script</h4>
-                      <p className="text-[11px] text-blue-600 dark:text-blue-400 font-semibold">Planilha Online</p>
-                    </div>
-                  </div>
-                  {dataSource === 'sheets' && <CheckCircle2 className="text-blue-500" size={20} />}
-                </div>
-                <p className="text-xs text-app-text-muted leading-relaxed">
-                  Armazenamento em planilhas Google conectadas via script de automação Google Apps Script.
-                </p>
-              </div>
-            </div>
-
-            {/* Informações e Chaves da Conexão Supabase Cloud */}
-            <div className="bg-app-bg/50 border border-app-border rounded-2xl p-5 space-y-4">
-              <div className="flex items-center justify-between border-b border-app-border pb-3">
-                <span className="text-xs font-bold text-app-text uppercase tracking-wider">
-                  Conexão e Chaves do Supabase Cloud
-                </span>
-                <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                  Configuração Ativa
-                </span>
-              </div>
-              <SupabaseConnectionFields showHeader={false} />
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Conteúdo da Aba 6: E-mails & Notificações Globais */}
+      {/* Conteúdo da Aba 5: E-mails & Notificações Globais */}
       {activeTab === 'email' && (
         <div className="space-y-6">
           <div className="bg-app-surface border border-app-border rounded-3xl p-6 shadow-sm space-y-6">

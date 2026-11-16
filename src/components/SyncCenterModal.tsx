@@ -21,7 +21,7 @@ interface SyncCenterModalProps {
 }
 
 export function SyncCenterModal({ isOpen, onClose }: SyncCenterModalProps) {
-  const { state, forceSave, forceLoad, lastSyncTime, syncLogs } = useAppContext();
+  const { state, forceSave, forceLoad, lastSyncTime, syncLogs, dataSource } = useAppContext();
 
   useEffect(() => {
     if (!isOpen) return;
@@ -66,9 +66,7 @@ export function SyncCenterModal({ isOpen, onClose }: SyncCenterModalProps) {
   };
 
   const handleManualLoad = async () => {
-    if (window.confirm('Isso irá recarregar todos os dados da planilha. Alterações não salvas podem ser perdidas. Continuar?')) {
-      await forceLoad();
-    }
+    await forceLoad();
   };
 
   const lastSyncFormatted = lastSyncTime 
@@ -126,7 +124,9 @@ export function SyncCenterModal({ isOpen, onClose }: SyncCenterModalProps) {
                 <div>
                   <h4 className="text-xl font-bold text-app-text">{getStatusText()}</h4>
                   <p className="text-sm text-app-text-muted mt-1">
-                    Conexão ativa com o Google Sheets via GAS
+                    {dataSource === 'supabase'
+                      ? 'Conexão ativa via .env — Supabase Cloud (PostgreSQL)'
+                      : 'Conexão ativa via .env — Google Sheets'}
                   </p>
                 </div>
                 
