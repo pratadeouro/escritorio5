@@ -681,6 +681,9 @@ async function startServer() {
         }
       }
 
+      const rawDataSource = String(process.env.DATA_SOURCE || process.env.VITE_DATA_SOURCE || 'supabase').trim().toLowerCase();
+      const dataSource: 'supabase' | 'sheets' = rawDataSource === 'sheets' ? 'sheets' : 'supabase';
+
       res.json({
         success: true,
         googleClientId,
@@ -688,6 +691,7 @@ async function startServer() {
         siteSubtitle,
         environmentMode,
         environmentSource,
+        dataSource,
       });
     } catch (err: any) {
       res.status(500).json({ success: false, error: err.message });
@@ -786,6 +790,38 @@ async function startServer() {
     } catch (err: any) {
       console.error("[Configuração Global] Erro ao gravar APP_ENVIRONMENT no .env:", err);
       res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  // API para o administrador alternar a fonte de dados ativa ('supabase' | 'sheets') no .env
+  app.post("/api/admin/save-data-source", (req, res) => {
+    try {
+      const raw = String(req.body?.dataSource || '').trim().toLowerCase();
+      if (raw !== 'supabase' && raw !== 'sheets') {
+        return res.status(400).json({ success: false, error: "Fonte de dados inválida. Utilize 'supabase' ou 'sheets'." });
+      }
+      const cleanSource: 'supabase' | 'sheets' = raw;
+
+      const { envFileSaved, envWriteError } = writeEnvVarsSafely({
+        DATA_SOURCE: cleanSource,
+        VITE_DATA_SOURCE: cleanSource,
+      });
+
+      if (envFileSaved) {
+        console.log(`[Configuração Global] DATA_SOURCE=${cleanSource} gravado no .env com sucesso.`);
+      } else {
+        console.warn(`[Configuração Global] DATA_SOURCE=${cleanSource} aplicado em memória; .env não gravado: ${envWriteError}`);
+      }
+
+      return res.json({
+        success: true,
+        dataSource: cleanSource,
+        envFileSaved,
+        envWriteError
+      });
+    } catch (err: any) {
+      console.error("[Configuração Global] Erro ao gravar DATA_SOURCE no .env:", err);
+      return res.status(500).json({ success: false, error: err.message });
     }
   });
 

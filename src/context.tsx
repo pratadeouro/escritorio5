@@ -212,7 +212,7 @@ interface AppContextType {
   applyTheme: (theme: 'light' | 'dark' | 'system', primary: string, bg: string, secondary: string, officeName?: string) => void;
   setViewParams: (params: any) => void;
   dataSource: 'supabase' | 'sheets';
-  setDataSource: (source: 'supabase' | 'sheets') => void;
+  setDataSource: (source: 'supabase' | 'sheets') => Promise<void>;
   refreshAuthUsers: () => Promise<void>;
   environmentMode: EnvironmentMode;
   environmentSource: 'env' | 'supabase' | 'default';
@@ -333,6 +333,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             }
           }));
         }
+        if (data.dataSource === 'supabase' || data.dataSource === 'sheets') {
+          setActiveDataSource(data.dataSource);
+          setDataSourceState(data.dataSource);
+        }
       } catch {
         // Fallback garantido por localStorage / VITE_APP_ENVIRONMENT
       }
@@ -341,14 +345,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return () => { isMounted = false; };
   }, []);
 
-  // Limpeza de chaves residuais de conexão em localStorage (.env é a única fonte de conexão)
+  // Limpeza de chaves residuais de credenciais em localStorage (.env é a única fonte de conexão)
   useEffect(() => {
     try {
       [
         'supabase_migration_url',
         'supabase_migration_key',
-        'supabase_migration_publishable_key',
-        'advocacia_data_source'
+        'supabase_migration_publishable_key'
       ].forEach(k => localStorage.removeItem(k));
     } catch {}
   }, []);
@@ -413,11 +416,22 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   }, []);
 
-  const setDataSource = useCallback((_source: 'supabase' | 'sheets') => {
-    const resolved = getActiveDataSource();
-    setActiveDataSource(resolved);
-    setDataSourceState(resolved);
-    if (resolved === 'supabase') {
+  const setDataSource = useCallback(async (source: 'supabase' | 'sheets') => {
+    const cleanSource: 'supabase' | 'sheets' = source === 'sheets' ? 'sheets' : 'supabase';
+    setActiveDataSource(cleanSource);
+    setDataSourceState(cleanSource);
+
+    try {
+      await fetch('/api/admin/save-data-source', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dataSource: cleanSource })
+      });
+    } catch (err) {
+      console.warn('[Fonte de Dados] Falha ao gravar DATA_SOURCE no .env via backend:', err);
+    }
+
+    if (cleanSource === 'supabase') {
       refreshAuthUsers();
     }
   }, [refreshAuthUsers]);

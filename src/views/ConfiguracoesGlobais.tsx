@@ -21,8 +21,10 @@ import {
   EyeOff, 
   Loader2, 
   Scale, 
-  Clock
+  Clock,
+  FileSpreadsheet
 } from 'lucide-react';
+import { isSupabaseConfigured } from '../services/supabaseService';
 import { EnvironmentMode } from '../types';
 import { SupabaseMigrationTab } from '../components/SupabaseMigrationTab';
 
@@ -39,10 +41,13 @@ export default function ConfiguracoesGlobais() {
   const { 
     state, 
     updateSettings, 
-    forceSave, 
+    forceSave,
+    forceLoad,
     isAdmin, 
     currentUser, 
     applyTheme, 
+    dataSource,
+    setDataSource,
     activeOfficeName,
     environmentMode,
     environmentSource,
@@ -137,9 +142,14 @@ export default function ConfiguracoesGlobais() {
   const [emailPass, setEmailPass] = useState(() => state.settings.emailPass || '');
   const [showEmailPass, setShowEmailPass] = useState(false);
 
-  // Modo de operação do sistema (Homologação vs Produção)
+  // Modo de operação do sistema (Homologação vs Produção) e Fonte de Dados (Supabase vs Google Sheets)
   const [selectedEnvMode, setSelectedEnvMode] = useState<EnvironmentMode>(environmentMode);
   const [isSwitchingEnv, setIsSwitchingEnv] = useState(false);
+  const [isSwitchingDataSource, setIsSwitchingDataSource] = useState(false);
+  const [dataSourceFeedback, setDataSourceFeedback] = useState<{ type: 'success' | 'warning' | 'error'; message: string } | null>(null);
+
+  const supabaseReadyInEnv = isSupabaseConfigured();
+  const sheetsReadyInEnv = !!String(state.settings.spreadsheetId || '').trim();
 
   useEffect(() => {
     setSelectedEnvMode(environmentMode);
@@ -194,6 +204,47 @@ export default function ConfiguracoesGlobais() {
       setTimeout(() => setSaveSuccess(false), 3500);
     } finally {
       setIsSwitchingEnv(false);
+    }
+  };
+
+  const handleSwitchDataSource = async (targetSource: 'supabase' | 'sheets') => {
+    if (isSwitchingDataSource || dataSource === targetSource) return;
+
+    if (targetSource === 'supabase' && !supabaseReadyInEnv) {
+      setDataSourceFeedback({
+        type: 'error',
+        message: 'Supabase não está configurado no arquivo .env (VITE_SUPABASE_URL / VITE_SUPABASE_PUBLISHABLE_KEY).'
+      });
+      return;
+    }
+
+    if (targetSource === 'sheets' && !sheetsReadyInEnv) {
+      setDataSourceFeedback({
+        type: 'error',
+        message: 'Google Sheets não está configurado no arquivo .env (VITE_SPREADSHEET_ID).'
+      });
+      return;
+    }
+
+    setIsSwitchingDataSource(true);
+    setDataSourceFeedback(null);
+    try {
+      await setDataSource(targetSource);
+      await forceLoad();
+      setDataSourceFeedback({
+        type: 'success',
+        message: targetSource === 'supabase'
+          ? 'Fonte de dados alterada para Supabase Cloud (.env atualizado e dados recarregados).'
+          : 'Fonte de dados alterada para Google Sheets (.env atualizado e dados recarregados).'
+      });
+      setTimeout(() => setDataSourceFeedback(null), 4000);
+    } catch (err: any) {
+      setDataSourceFeedback({
+        type: 'error',
+        message: err?.message || 'Erro ao alternar fonte de dados.'
+      });
+    } finally {
+      setIsSwitchingDataSource(false);
     }
   };
 
@@ -395,6 +446,108 @@ export default function ConfiguracoesGlobais() {
             </p>
           </button>
         </div>
+      </div>
+
+      {/* Painel Rápido: Fonte de Dados Principal (Supabase vs Google Sheets) */}
+      <div className="bg-app-surface border border-app-border rounded-3xl p-5 shadow-sm space-y-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <h2 className="text-base font-bold text-app-text">Fonte de Dados Principal</h2>
+              <span className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${
+                dataSource === 'supabase'
+                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
+                  : 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20'
+              }`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${dataSource === 'supabase' ? 'bg-emerald-500 animate-pulse' : 'bg-blue-500 animate-pulse'}`} />
+                {dataSource === 'supabase' ? 'Supabase Cloud Ativo' : 'Google Sheets Ativo'}
+              </span>
+            </div>
+            <p className="text-xs text-app-text-muted mt-1">
+              Alterna a fonte de dados ativa entre Supabase Cloud e Google Sheets usando exclusivamente as credenciais do <code className="font-mono">.env</code>.
+            </p>
+          </div>
+          {isSwitchingDataSource && (
+            <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-primary">
+              <Loader2 size={14} className="animate-spin" /> Alterando e recarregando...
+            </span>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <button
+            type="button"
+            disabled={isSwitchingDataSource}
+            onClick={() => handleSwitchDataSource('supabase')}
+            className={`text-left p-4 rounded-2xl border transition-all disabled:opacity-60 ${
+              dataSource === 'supabase'
+                ? 'border-emerald-500 bg-emerald-500/10 ring-2 ring-emerald-500/20'
+                : 'border-app-border bg-app-bg hover:border-emerald-500/40'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-1.5 gap-2">
+              <span className="text-sm font-bold text-app-text flex items-center gap-2">
+                <Database size={16} className="text-emerald-500 shrink-0" />
+                Supabase Cloud (PostgreSQL)
+              </span>
+              <div className="flex items-center gap-1.5">
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                  supabaseReadyInEnv
+                    ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
+                    : 'bg-red-500/10 text-red-600 dark:text-red-400 border-red-500/20'
+                }`}>
+                  {supabaseReadyInEnv ? '.env configurado' : 'Ausente no .env'}
+                </span>
+                {dataSource === 'supabase' && <CheckCircle2 size={18} className="text-emerald-500 shrink-0" />}
+              </div>
+            </div>
+            <p className="text-xs text-app-text-muted leading-relaxed">
+              Operações em tempo real no banco relacional PostgreSQL com autenticação Supabase Auth e regras RLS.
+            </p>
+          </button>
+
+          <button
+            type="button"
+            disabled={isSwitchingDataSource}
+            onClick={() => handleSwitchDataSource('sheets')}
+            className={`text-left p-4 rounded-2xl border transition-all disabled:opacity-60 ${
+              dataSource === 'sheets'
+                ? 'border-blue-500 bg-blue-500/10 ring-2 ring-blue-500/20'
+                : 'border-app-border bg-app-bg hover:border-blue-500/40'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-1.5 gap-2">
+              <span className="text-sm font-bold text-app-text flex items-center gap-2">
+                <FileSpreadsheet size={16} className="text-blue-500 shrink-0" />
+                Google Sheets (Planilha)
+              </span>
+              <div className="flex items-center gap-1.5">
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                  sheetsReadyInEnv
+                    ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400 border-blue-500/20'
+                    : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
+                }`}>
+                  {sheetsReadyInEnv ? '.env configurado' : 'Ausente no .env'}
+                </span>
+                {dataSource === 'sheets' && <CheckCircle2 size={18} className="text-blue-500 shrink-0" />}
+              </div>
+            </div>
+            <p className="text-xs text-app-text-muted leading-relaxed">
+              Leitura e gravação na planilha Google configurada nas variáveis <code className="font-mono">VITE_SPREADSHEET_ID</code> e <code className="font-mono">VITE_SCRIPT_URL</code> do <code className="font-mono">.env</code>.
+            </p>
+          </button>
+        </div>
+
+        {dataSourceFeedback && (
+          <div className={`p-3 rounded-xl border text-xs font-semibold flex items-center gap-2 ${
+            dataSourceFeedback.type === 'success'
+              ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-600 dark:text-emerald-400'
+              : 'bg-red-500/10 border-red-500/20 text-red-600 dark:text-red-400'
+          }`}>
+            {dataSourceFeedback.type === 'success' ? <CheckCircle2 size={16} className="shrink-0" /> : <AlertCircle size={16} className="shrink-0" />}
+            <span>{dataSourceFeedback.message}</span>
+          </div>
+        )}
       </div>
 
       {/* Navegação por Abas das Configurações Globais */}

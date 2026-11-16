@@ -68,9 +68,13 @@ export const getSupabase = (): SupabaseClient => {
 };
 
 /**
- * Obtém a fonte de dados ativa exclusivamente a partir do .env ('supabase' ou 'sheets')
+ * Obtém a fonte de dados ativa ('supabase' ou 'sheets'), priorizando seleção salva / sincronizada com .env
  */
 export const getActiveDataSource = (): 'supabase' | 'sheets' => {
+  try {
+    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('advocacia_data_source') : null;
+    if (saved === 'supabase' || saved === 'sheets') return saved;
+  } catch {}
   const envSource = String(import.meta.env.VITE_DATA_SOURCE || '').trim().toLowerCase();
   if (envSource === 'sheets') return 'sheets';
   if (envSource === 'supabase') return 'supabase';
@@ -78,11 +82,13 @@ export const getActiveDataSource = (): 'supabase' | 'sheets' => {
 };
 
 /**
- * Mantida apenas por compatibilidade de assinatura — não grava mais em localStorage, pois o .env é a única fonte
+ * Define a fonte de dados ativa ('supabase' ou 'sheets')
  */
-export const setActiveDataSource = (_source: 'supabase' | 'sheets') => {
+export const setActiveDataSource = (source: 'supabase' | 'sheets') => {
   try {
-    localStorage.removeItem('advocacia_data_source');
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem('advocacia_data_source', source);
+    }
   } catch {}
 };
 
