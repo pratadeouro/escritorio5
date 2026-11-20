@@ -11,6 +11,8 @@ import { getWeeklyReportTemplate, getNewNotificationsTemplate, getDailyReportTem
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+let envFilePort: string | undefined;
+
 // Carrega o arquivo .env dando prioridade absoluta aos valores definidos nele sobre variáveis antigas do container
 (() => {
   const cwdEnv = path.resolve(process.cwd(), ".env");
@@ -21,6 +23,7 @@ const __dirname = path.dirname(__filename);
     return;
   }
   const parsed = dotenv.parse(fs.readFileSync(envPath, "utf-8"));
+  envFilePort = (parsed.SERVER_PORT || parsed.APP_PORT || parsed.PORT || parsed.port || "").trim() || undefined;
   const allowEmptyOverrideKeys = new Set([
     "VITE_SPREADSHEET_ID",
     "SPREADSHEET_ID",
@@ -34,6 +37,28 @@ const __dirname = path.dirname(__filename);
     }
   }
 })();
+
+const resolveServerPort = (): number => {
+  const parseValidPort = (val?: string): number | null => {
+    if (!val) return null;
+    const n = Number(String(val).trim());
+    return Number.isInteger(n) && n > 0 && n <= 65535 ? n : null;
+  };
+
+  const fromEnvFile = parseValidPort(envFilePort);
+  if (fromEnvFile) return fromEnvFile;
+
+  const fromExplicitVar = parseValidPort(process.env.SERVER_PORT || process.env.APP_PORT || process.env.port);
+  if (fromExplicitVar) return fromExplicitVar;
+
+  const isManagedCloudContainer = !!(process.env.K_SERVICE || process.env.K_REVISION);
+  if (!isManagedCloudContainer) {
+    const fromProcessPort = parseValidPort(process.env.PORT);
+    if (fromProcessPort) return fromProcessPort;
+  }
+
+  return 3000;
+};
 
 const getEnvSpreadsheetId = (): string =>
   (process.env.VITE_SPREADSHEET_ID || process.env.SPREADSHEET_ID || '').trim();
@@ -359,7 +384,7 @@ async function runAutomatedEmails(type: 'weekly' | 'daily') {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = resolveServerPort();
 
   app.use(express.json());
 
