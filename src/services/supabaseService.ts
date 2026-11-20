@@ -133,6 +133,29 @@ export const ensureSupabaseJwtSession = async (userEmail?: string): Promise<bool
   }
 };
 
+let googleProviderEnabledCache: { checkedAt: number; enabled: boolean } | null = null;
+export const isSupabaseGoogleProviderEnabled = async (): Promise<boolean> => {
+  if (!isSupabaseConfigured()) return false;
+  const now = Date.now();
+  if (googleProviderEnabledCache && now - googleProviderEnabledCache.checkedAt < 60_000) {
+    return googleProviderEnabledCache.enabled;
+  }
+  try {
+    const resp = await fetch(`${SUPABASE_URL}/auth/v1/settings`, {
+      headers: { apikey: SUPABASE_KEY },
+    });
+    if (resp.ok) {
+      const json = await resp.json().catch(() => null);
+      const enabled = Boolean(json?.external?.google);
+      googleProviderEnabledCache = { checkedAt: now, enabled };
+      return enabled;
+    }
+  } catch {
+    // prossegue silenciosamente
+  }
+  return false;
+};
+
 const fetchAllRowsDirect = async (
   supabase: SupabaseClient,
   table: string,

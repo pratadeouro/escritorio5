@@ -8,6 +8,7 @@ import {
   isSupabaseConfigured, 
   fetchAllDataFromSupabase,
   ensureSupabaseJwtSession,
+  isSupabaseGoogleProviderEnabled,
   upsertProcessoSupabase,
   deleteProcessoSupabase,
   upsertContatoSupabase,
@@ -844,54 +845,59 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       console.warn('[Login Google] Falha ao consultar endpoint /api/supabase/user-by-email:', apiErr);
     }
 
-    // 2. Se /api falhou (ex: 502) ou não obteve sessão JWT, autentica nativamente via Google ID Token no Supabase Auth
+    // 2. Se /api falhou ou não obteve sessão JWT, autentica via Google ID Token apenas se o provedor Google estiver habilitado no Supabase Auth
     if ((!user || !hasJwtSession) && !explicitNotFound && googleCredential && isSupabaseConfigured()) {
       try {
-        const supabase = getSupabase();
-        const { data: idTokenData, error: idTokenErr } = await supabase.auth.signInWithIdToken({
-          provider: 'google',
-          token: googleCredential,
-        });
-        if (!idTokenErr && idTokenData?.user) {
-          hasJwtSession = true;
-          if (!user) {
-            const { data: dbUser } = await supabase
-              .from('usuarios')
-              .select('*')
-              .ilike('email', normalizedEmail)
-              .maybeSingle();
+        const googleProviderEnabled = await isSupabaseGoogleProviderEnabled();
+        if (googleProviderEnabled) {
+          const supabase = getSupabase();
+          const { data: idTokenData, error: idTokenErr } = await supabase.auth.signInWithIdToken({
+            provider: 'google',
+            token: googleCredential,
+          });
+          if (!idTokenErr && idTokenData?.user) {
+            hasJwtSession = true;
+            if (!user) {
+              const { data: dbUser } = await supabase
+                .from('usuarios')
+                .select('*')
+                .ilike('email', normalizedEmail)
+                .maybeSingle();
 
-            if (dbUser) {
-              user = mapUsuarioFromDb(dbUser);
-            } else {
-              const meta = idTokenData.user.user_metadata || {};
-              let rawEsc = meta.escritorios_ids || [];
-              if (typeof rawEsc === 'string') {
-                try { rawEsc = JSON.parse(rawEsc); } catch { rawEsc = []; }
+              if (dbUser) {
+                user = mapUsuarioFromDb(dbUser);
+              } else {
+                const meta = idTokenData.user.user_metadata || {};
+                let rawEsc = meta.escritorios_ids || [];
+                if (typeof rawEsc === 'string') {
+                  try { rawEsc = JSON.parse(rawEsc); } catch { rawEsc = []; }
+                }
+                user = {
+                  id: idTokenData.user.id,
+                  nome: meta.nome || meta.full_name || meta.name || normalizedEmail.split('@')[0],
+                  email: normalizedEmail,
+                  senha: '',
+                  permissao: normalizedEmail === 'pratadeouro@gmail.com' ? 'Admin' : (meta.permissao || 'user'),
+                  cargo: meta.cargo || '',
+                  contato: meta.contato || '',
+                  cpf: meta.cpf || '',
+                  escritoriosIds: Array.isArray(rawEsc) ? rawEsc.map((id: any) => String(id).trim().toUpperCase()) : [],
+                };
               }
-              user = {
-                id: idTokenData.user.id,
-                nome: meta.nome || meta.full_name || meta.name || normalizedEmail.split('@')[0],
-                email: normalizedEmail,
-                senha: '',
-                permissao: normalizedEmail === 'pratadeouro@gmail.com' ? 'Admin' : (meta.permissao || 'user'),
-                cargo: meta.cargo || '',
-                contato: meta.contato || '',
-                cpf: meta.cpf || '',
-                escritoriosIds: Array.isArray(rawEsc) ? rawEsc.map((id: any) => String(id).trim().toUpperCase()) : [],
+            }
+            console.log('[Login Google] Sessão autenticada via Supabase signInWithIdToken:', normalizedEmail);
+          } else if (idTokenErr) {
+            const errLower = (idTokenErr.message || '').toLowerCase();
+            if (errLower.includes('banned') || errLower.includes('user is banned')) {
+              return {
+                success: false,
+                error: 'Este usuário está inativo no sistema. Entre em contato com o administrador do escritório.'
               };
             }
+            console.warn('[Login Google] Aviso no signInWithIdToken:', idTokenErr.message);
           }
-          console.log('[Login Google] Sessão autenticada via Supabase signInWithIdToken:', normalizedEmail);
-        } else if (idTokenErr) {
-          const errLower = (idTokenErr.message || '').toLowerCase();
-          if (errLower.includes('banned') || errLower.includes('user is banned')) {
-            return {
-              success: false,
-              error: 'Este usuário está inativo no sistema. Entre em contato com o administrador do escritório.'
-            };
-          }
-          console.warn('[Login Google] Aviso no signInWithIdToken:', idTokenErr.message);
+        } else {
+          console.info('[Login Google] Provedor Google desabilitado no Supabase Auth (/auth/v1/settings); ignorando signInWithIdToken.');
         }
       } catch (idTokErr) {
         console.warn('[Login Google] signInWithIdToken indisponível:', idTokErr);

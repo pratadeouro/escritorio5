@@ -1,6 +1,5 @@
 import express from "express";
 import dotenv from "dotenv";
-import { createServer as createViteServer } from "vite";
 import path from "path";
 import fs from "fs";
 import { fileURLToPath } from "url";
@@ -1152,19 +1151,74 @@ async function startServer() {
       return res.status(400).json({ success: false, error: "Parâmetro 'email' é obrigatório." });
     }
 
-    const { supabaseUrl, supabaseKey, hasServiceRole } = getServerSupabaseConfig();
-    if (!supabaseUrl) {
-      return res.status(500).json({ success: false, error: "SUPABASE_URL não configurada no arquivo .env." });
+    const { supabaseUrl, supabaseKey, publishableKey, hasServiceRole } = getServerSupabaseConfig();
+    if (!supabaseUrl || (!supabaseKey && !publishableKey)) {
+      return res.status(500).json({ success: false, error: "Conexão Supabase não configurada no arquivo .env." });
     }
 
-    if (!hasServiceRole) {
-      return res.status(500).json({
-        success: false,
-        error: "Chave administrativa (SUPABASE_SECRET_KEY) não configurada no servidor para consultar usuários."
-      });
-    }
+    const fetchUserViaRpc = async (apiKeyToUse: string) => {
+      try {
+        const rpcResp = await fetch(`${supabaseUrl}/rest/v1/rpc/get_user_by_email_for_login`, {
+          method: "POST",
+          headers: {
+            apikey: apiKeyToUse,
+            Authorization: `Bearer ${apiKeyToUse}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ p_email: rawEmail })
+        });
+        if (!rpcResp.ok) return { ok: false, userRow: null };
+        const rpcData = await rpcResp.json().catch(() => null);
+        return { ok: true, userRow: rpcData || null };
+      } catch {
+        return { ok: false, userRow: null };
+      }
+    };
 
     try {
+      if (!hasServiceRole) {
+        const rpcKey = publishableKey || supabaseKey;
+        const rpcResult = await fetchUserViaRpc(rpcKey);
+        if (rpcResult.ok && rpcResult.userRow) {
+          const r = rpcResult.userRow;
+          let rawEsc = r.escritorios_ids ?? r.escritoriosIds ?? [];
+          if (typeof rawEsc === 'string') {
+            try { rawEsc = JSON.parse(rawEsc); } catch { rawEsc = rawEsc.split(',').map((s: string) => s.trim()).filter(Boolean); }
+          }
+          const safeEsc = Array.isArray(rawEsc)
+            ? rawEsc.map((id: any) => String(id || '').trim().toUpperCase()).filter(Boolean)
+            : [];
+          const rawPerm = r.permissao || (rawEmail === 'pratadeouro@gmail.com' ? 'Admin' : 'user');
+          const status = (rawEmail !== 'pratadeouro@gmail.com' && String(r.status || 'Ativo').trim().toLowerCase() === 'inativo')
+            ? 'Inativo'
+            : 'Ativo';
+          return res.json({
+            success: true,
+            missingServiceRole: true,
+            user: {
+              id: r.id || `user-${Date.now()}`,
+              nome: r.nome || rawEmail.split('@')[0],
+              email: r.email || rawEmail,
+              cargo: r.cargo || '',
+              contato: r.contato || '',
+              cpf: r.cpf || '',
+              senha: '',
+              oab: r.oab || '',
+              permissao: rawEmail === 'pratadeouro@gmail.com' ? 'Admin' : rawPerm,
+              escritoriosIds: safeEsc,
+              status
+            }
+          });
+        }
+        return res.status(rpcResult.ok ? 404 : 503).json({
+          success: false,
+          missingServiceRole: true,
+          error: rpcResult.ok
+            ? "Usuário não encontrado no Supabase."
+            : "Chave administrativa (SUPABASE_SECRET_KEY) não configurada no servidor."
+        });
+      }
+
       const [authResp, pubResp] = await Promise.all([
         fetch(`${supabaseUrl}/auth/v1/admin/users?per_page=1000`, {
           headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
@@ -1188,6 +1242,30 @@ async function startServer() {
       const pu = pubUsers.find((u: any) => (u.email || "").trim().toLowerCase() === rawEmail) || pubUsers[0] || {};
 
       if (!au && !pu.id && !pu.email) {
+        const rpcFallback = await fetchUserViaRpc(publishableKey || supabaseKey);
+        if (rpcFallback.ok && rpcFallback.userRow) {
+          const r = rpcFallback.userRow;
+          let rawEsc = r.escritorios_ids ?? r.escritoriosIds ?? [];
+          if (typeof rawEsc === 'string') {
+            try { rawEsc = JSON.parse(rawEsc); } catch { rawEsc = rawEsc.split(',').map((s: string) => s.trim()).filter(Boolean); }
+          }
+          return res.json({
+            success: true,
+            user: {
+              id: r.id || `user-${Date.now()}`,
+              nome: r.nome || rawEmail.split('@')[0],
+              email: r.email || rawEmail,
+              cargo: r.cargo || '',
+              contato: r.contato || '',
+              cpf: r.cpf || '',
+              senha: '',
+              oab: r.oab || '',
+              permissao: rawEmail === 'pratadeouro@gmail.com' ? 'Admin' : (r.permissao || 'user'),
+              escritoriosIds: Array.isArray(rawEsc) ? rawEsc.map((id: any) => String(id || '').trim().toUpperCase()).filter(Boolean) : [],
+              status: (rawEmail !== 'pratadeouro@gmail.com' && String(r.status || 'Ativo').trim().toLowerCase() === 'inativo') ? 'Inativo' : 'Ativo'
+            }
+          });
+        }
         return res.status(404).json({ success: false, error: "Usuário não encontrado no Supabase." });
       }
 
@@ -2068,6 +2146,7 @@ async function startServer() {
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
