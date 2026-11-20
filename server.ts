@@ -902,6 +902,170 @@ async function startServer() {
     });
   });
 
+  // API de verificação ativa de chaves e conectividade com o Supabase (nunca retorna a chave secreta bruta)
+  app.get("/api/admin/supabase-verify-keys", async (req, res) => {
+    const { supabaseUrl, publishableKey, secretKey } = getServerSupabaseConfig();
+    const clientUrlParam = String(req.query.clientUrl || '').trim().replace(/\/$/, '');
+
+    const maskPublic = (k: string) => {
+      if (!k) return '';
+      if (k.length <= 20) return `${k.slice(0, 6)}...(${k.length} chars)`;
+      return `${k.slice(0, 16)}...${k.slice(-4)} (${k.length} chars)`;
+    };
+    const maskSecret = (k: string) => {
+      if (!k) return '';
+      const prefix = k.startsWith('sb_secret_') ? 'sb_secret_' : k.startsWith('sb_publishable_') ? 'sb_publishable_' : k.startsWith('eyJ') ? 'eyJ...' : 'chave_';
+      return `${prefix}*** (${k.length} caracteres)`;
+    };
+
+    const urlValidFormat = /^https:\/\/[a-z0-9.-]+\.[a-z]{2,}(:\d+)?$/i.test(supabaseUrl);
+    const hasWhitespaceInUrl = /\s/.test(supabaseUrl) || /["']/.test(supabaseUrl);
+
+    const urlCheck: {
+      ok: boolean;
+      status: 'ok' | 'missing' | 'invalid_format' | 'connection_error';
+      value: string;
+      matchesClient: boolean | null;
+      message: string;
+    } = {
+      ok: false,
+      status: 'missing',
+      value: supabaseUrl || '',
+      matchesClient: clientUrlParam && supabaseUrl ? clientUrlParam.toLowerCase() === supabaseUrl.toLowerCase() : null,
+      message: ''
+    };
+
+    if (!supabaseUrl) {
+      urlCheck.status = 'missing';
+      urlCheck.message = 'SUPABASE_URL / VITE_SUPABASE_URL não encontrada no .env.';
+    } else if (!urlValidFormat || hasWhitespaceInUrl) {
+      urlCheck.status = 'invalid_format';
+      urlCheck.message = 'URL do Supabase com formato inválido (verifique https://, aspas ou espaços extras).';
+    } else {
+      urlCheck.ok = true;
+      urlCheck.status = 'ok';
+      urlCheck.message = 'Formato da URL válido.';
+    }
+
+    const pubCheck: {
+      ok: boolean;
+      status: 'ok' | 'missing' | 'invalid_format' | 'invalid_key' | 'connection_error';
+      masked: string;
+      message: string;
+      googleProviderEnabled?: boolean;
+    } = {
+      ok: false,
+      status: 'missing',
+      masked: maskPublic(publishableKey),
+      message: ''
+    };
+
+    if (!publishableKey) {
+      pubCheck.status = 'missing';
+      pubCheck.message = 'SUPABASE_PUBLISHABLE_KEY / VITE_SUPABASE_PUBLISHABLE_KEY não configurada no .env.';
+    } else if (publishableKey.startsWith('sb_secret_')) {
+      pubCheck.status = 'invalid_format';
+      pubCheck.message = 'Uma chave secreta (sb_secret_) foi colocada no campo da chave pública!';
+    } else if (/[\s"']/.test(publishableKey) || publishableKey.length < 20) {
+      pubCheck.status = 'invalid_format';
+      pubCheck.message = 'Chave pública contém espaços, aspas ou está incompleta.';
+    } else if (urlCheck.ok) {
+      try {
+        const authResp = await fetch(`${supabaseUrl}/auth/v1/settings`, {
+          headers: { apikey: publishableKey },
+          signal: AbortSignal.timeout(8000)
+        });
+        if (authResp.ok) {
+          const authJson = await authResp.json().catch(() => null);
+          pubCheck.ok = true;
+          pubCheck.status = 'ok';
+          pubCheck.googleProviderEnabled = Boolean(authJson?.external?.google);
+          pubCheck.message = 'Chave pública aceita pelo Supabase Auth e conexão ativa.';
+        } else if (authResp.status === 401 || authResp.status === 403) {
+          pubCheck.status = 'invalid_key';
+          pubCheck.message = `Chave pública rejeitada pelo Supabase (HTTP ${authResp.status}). Verifique se foi digitada corretamente.`;
+        } else {
+          pubCheck.status = 'connection_error';
+          pubCheck.message = `Supabase retornou HTTP ${authResp.status} ao validar a chave pública.`;
+        }
+      } catch (err: any) {
+        urlCheck.ok = false;
+        urlCheck.status = 'connection_error';
+        urlCheck.message = `Falha de rede ao conectar em ${supabaseUrl}: ${err?.cause?.code || err?.message || String(err)}`;
+        pubCheck.status = 'connection_error';
+        pubCheck.message = 'Não foi possível validar a chave pública devido a erro de conexão com a URL.';
+      }
+    } else {
+      pubCheck.status = 'connection_error';
+      pubCheck.message = 'Aguardando URL válida para testar a chave pública.';
+    }
+
+    const secCheck: {
+      ok: boolean;
+      status: 'ok' | 'missing' | 'invalid_format' | 'invalid_key' | 'connection_error';
+      masked: string;
+      message: string;
+      tablesReachable?: boolean;
+    } = {
+      ok: false,
+      status: 'missing',
+      masked: maskSecret(secretKey),
+      message: ''
+    };
+
+    if (!secretKey) {
+      secCheck.status = 'missing';
+      secCheck.message = 'SUPABASE_SECRET_KEY / SERVICE_ROLE_KEY não configurada no servidor (.env). Sem ela, o fallback /api/supabase/all-data e a geração de sessão JWT para login Google não funcionam.';
+    } else if (secretKey.startsWith('sb_publishable_')) {
+      secCheck.status = 'invalid_format';
+      secCheck.message = 'Uma chave pública (sb_publishable_) foi colocada no lugar da SUPABASE_SECRET_KEY!';
+    } else if (/[\s"']/.test(secretKey) || secretKey.length < 20) {
+      secCheck.status = 'invalid_format';
+      secCheck.message = 'Chave secreta contém espaços, aspas ou está incompleta.';
+    } else if (urlCheck.ok) {
+      try {
+        const [adminResp, restResp] = await Promise.all([
+          fetch(`${supabaseUrl}/auth/v1/admin/users?per_page=1`, {
+            headers: { apikey: secretKey, Authorization: `Bearer ${secretKey}` },
+            signal: AbortSignal.timeout(8000)
+          }),
+          fetch(`${supabaseUrl}/rest/v1/escritorios?select=id&limit=1`, {
+            headers: { apikey: secretKey, Authorization: `Bearer ${secretKey}` },
+            signal: AbortSignal.timeout(8000)
+          })
+        ]);
+
+        if (adminResp.ok && restResp.ok) {
+          secCheck.ok = true;
+          secCheck.status = 'ok';
+          secCheck.tablesReachable = true;
+          secCheck.message = 'Chave secreta autenticada com sucesso (Auth Admin + REST/RLS OK).';
+        } else if (adminResp.status === 401 || adminResp.status === 403 || restResp.status === 401 || restResp.status === 403) {
+          secCheck.status = 'invalid_key';
+          secCheck.message = `SUPABASE_SECRET_KEY rejeitada pelo Supabase (Auth HTTP ${adminResp.status} / REST HTTP ${restResp.status}). Verifique se a chave foi copiada corretamente.`;
+        } else {
+          secCheck.status = 'connection_error';
+          secCheck.tablesReachable = restResp.ok;
+          secCheck.message = `Resposta inesperada ao testar chave secreta (Auth HTTP ${adminResp.status}, REST HTTP ${restResp.status}).`;
+        }
+      } catch (err: any) {
+        secCheck.status = 'connection_error';
+        secCheck.message = `Erro de conexão ao testar chave secreta: ${err?.cause?.code || err?.message || String(err)}`;
+      }
+    } else {
+      secCheck.status = 'connection_error';
+      secCheck.message = 'Aguardando URL válida para testar a chave secreta.';
+    }
+
+    return res.json({
+      success: urlCheck.ok && pubCheck.ok && secCheck.ok,
+      checkedAt: new Date().toISOString(),
+      url: urlCheck,
+      publishableKey: pubCheck,
+      secretKey: secCheck
+    });
+  });
+
   // API para listar escritórios com bypass de RLS via servidor
   app.get("/api/supabase/escritorios", async (_req, res) => {
     const { supabaseUrl, supabaseKey } = getServerSupabaseConfig();
