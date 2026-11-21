@@ -800,10 +800,13 @@ export function CreateProcessoModal({ isOpen, onClose, initialData }: { isOpen: 
     onClose();
   };
 
-  const availableEtiquetas = state.etiquetas.filter(e => 
-    e.escritorioId === escritorioAtivoId || 
-    e.escritorioId?.toUpperCase() === 'X'
-  ).sort((a, b) => a.nome.localeCompare(b.nome));
+  const availableEtiquetas = state.etiquetas.filter(e => {
+    const tagEsc = String(e.escritorioId || '').trim().toUpperCase();
+    const targetEsc = String(formData.escritorioId || escritorioAtivoId || '').trim().toUpperCase();
+    const isGlobal = !tagEsc || tagEsc === 'X';
+    if (!targetEsc) return isAdmin() || isGlobal;
+    return isGlobal || tagEsc === targetEsc;
+  }).sort((a, b) => a.nome.localeCompare(b.nome));
 
   const tagsArray = (formData.tags || '').split(',').map(t => t.trim()).filter(Boolean);
   const unselectedTags = availableEtiquetas.filter(tag => !tagsArray.includes(String(tag.id)));

@@ -287,14 +287,35 @@ export const fetchAllDataFromSupabase = async (coreOnly = false, userEmail?: str
     } catch (fbErr) {
       console.warn('[Supabase] Falha no fallback /api/supabase/all-data:', fbErr);
     }
+  } else if (resolvedEmail) {
+    const hasGlobalTag = (rows: any[] | null | undefined) =>
+      Array.isArray(rows) && rows.some(r => String(r?.escritorio_id || '').trim().toUpperCase() === 'X');
+    if (!hasGlobalTag(etiRes.data) || !hasGlobalTag(modRes.data)) {
+      try {
+        const scResp = await fetch('/api/supabase/shared-catalogs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: resolvedEmail })
+        }).then(r => (r.ok && r.headers.get('content-type')?.includes('application/json') ? r.json() : null))
+          .catch(() => null);
+        if (scResp?.success && scResp?.data) {
+          serverFallback = scResp.data;
+        }
+      } catch (scErr) {
+        console.warn('[Supabase] Falha no fallback /api/supabase/shared-catalogs:', scErr);
+      }
+    }
   }
 
   const pickRows = (directData: any[] | null | undefined, tableKey: string): any[] => {
     const direct = Array.isArray(directData) ? directData : [];
     const fb = serverFallback && Array.isArray(serverFallback[tableKey]) ? serverFallback[tableKey] : [];
-    if (direct.length > 0 && fb.length <= direct.length) return direct;
+    if (fb.length === 0) return direct;
+    if (direct.length === 0) return fb;
     if (fb.length > direct.length) return fb;
-    return direct;
+    const seenIds = new Set(direct.map((r: any) => String(r?.id ?? '')));
+    const missing = fb.filter((r: any) => !seenIds.has(String(r?.id ?? '')));
+    return missing.length > 0 ? [...direct, ...missing] : direct;
   };
 
   const setRows = pickRows(setRes.data, 'app_settings');

@@ -1312,6 +1312,102 @@ async function startServer() {
   app.get("/api/supabase/all-data", handleSupabaseAllData);
   app.post("/api/supabase/all-data", handleSupabaseAllData);
 
+  // Endpoint leve para catálogos compartilhados/globais ('X'/'x'/NULL) quando políticas RLS antigas no Supabase bloqueiam linhas 'X'
+  const handleSupabaseSharedCatalogs = async (req: express.Request, res: express.Response) => {
+    const rawEmail = String(req.body?.email || req.query?.email || "").trim().toLowerCase();
+    if (!rawEmail) {
+      return res.status(401).json({ success: false, error: "E-mail do usuário autenticado é obrigatório." });
+    }
+
+    const { supabaseUrl, supabaseKey, hasServiceRole } = getServerSupabaseConfig();
+    if (!supabaseUrl || !supabaseKey || !hasServiceRole) {
+      return res.status(500).json({ success: false, error: "Chaves de servidor do Supabase não configuradas." });
+    }
+
+    try {
+      const pubResp = await fetch(
+        `${supabaseUrl}/rest/v1/usuarios?select=id,email,permissao,status,escritorios_ids&limit=1000`,
+        { headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` } }
+      ).then(r => (r.ok ? r.json() : [])).catch(() => []);
+
+      const pubUsers = Array.isArray(pubResp) ? pubResp : [];
+      let pu = pubUsers.find((u: any) => String(u?.email || "").trim().toLowerCase() === rawEmail);
+      let meta: any = {};
+
+      if (!pu && rawEmail !== 'pratadeouro@gmail.com') {
+        const authResp = await fetch(`${supabaseUrl}/auth/v1/admin/users?per_page=1000`, {
+          headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+        }).then(r => (r.ok ? r.json() : { users: [] })).catch(() => ({ users: [] }));
+        const authUsers = Array.isArray(authResp?.users) ? authResp.users : [];
+        const au = authUsers.find((u: any) => String(u?.email || "").trim().toLowerCase() === rawEmail);
+        if (!au) {
+          return res.status(403).json({ success: false, error: "Usuário não autorizado." });
+        }
+        meta = au.user_metadata || {};
+      }
+
+      const rawStatus = pu?.status || meta.status || 'Ativo';
+      if (rawEmail !== 'pratadeouro@gmail.com' && String(rawStatus).trim().toLowerCase() === 'inativo') {
+        return res.status(403).json({ success: false, error: "Usuário inativo." });
+      }
+
+      const permStr = String(pu?.permissao || meta.permissao || '').toLowerCase();
+      const isAdminUser =
+        rawEmail === 'pratadeouro@gmail.com' ||
+        rawEmail.includes('walber') ||
+        permStr.includes('admin') ||
+        permStr.includes('gestor');
+
+      let rawEsc = pu?.escritorios_ids ?? meta.escritorios_ids ?? meta.escritoriosIds ?? [];
+      if (typeof rawEsc === 'string') {
+        try { rawEsc = JSON.parse(rawEsc); } catch { rawEsc = rawEsc.split(',').map((s: string) => s.trim()).filter(Boolean); }
+      }
+      const userEscSet = new Set(
+        (Array.isArray(rawEsc) ? rawEsc : []).map((id: any) => String(id || '').trim().toUpperCase()).filter(Boolean)
+      );
+
+      const fetchTable = async (table: string): Promise<any[]> => {
+        const resp = await fetch(`${supabaseUrl}/rest/v1/${table}?select=*`, {
+          headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+        });
+        if (!resp.ok) return [];
+        const rows = await resp.json().catch(() => []);
+        return Array.isArray(rows) ? rows : [];
+      };
+
+      const filterShared = (rows: any[]) => {
+        if (isAdminUser) return rows;
+        return rows.filter(r => {
+          const val = String(r?.escritorio_id || '').trim().toUpperCase();
+          if (!val || val === 'X') return true;
+          return userEscSet.has(val);
+        });
+      };
+
+      const [etiquetas, modelos, julgadores, servidores] = await Promise.all([
+        fetchTable('etiquetas'),
+        fetchTable('modelos'),
+        fetchTable('julgadores'),
+        fetchTable('servidores'),
+      ]);
+
+      return res.json({
+        success: true,
+        data: {
+          etiquetas: filterShared(etiquetas),
+          modelos: filterShared(modelos),
+          julgadores: filterShared(julgadores),
+          servidores: filterShared(servidores),
+        }
+      });
+    } catch (err: any) {
+      console.error("[Server Supabase Shared Catalogs] Exceção:", err);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  };
+  app.get("/api/supabase/shared-catalogs", handleSupabaseSharedCatalogs);
+  app.post("/api/supabase/shared-catalogs", handleSupabaseSharedCatalogs);
+
   // ============================================================================
   // GESTÃO COMPLETA DE USUÁRIOS BASEADA EM AUTH.USERS
   // ============================================================================

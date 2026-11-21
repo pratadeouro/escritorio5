@@ -671,68 +671,68 @@ CREATE POLICY "RLS_Usuarios_Delete" ON public.usuarios
 
 CREATE POLICY "RLS_Processos" ON public.processos
   FOR ALL TO authenticated
-  USING (public.is_active_user() AND (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios())))
-  WITH CHECK (public.is_active_user() AND (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios())));
+  USING (public.is_active_user() AND (public.is_admin() OR upper(trim(COALESCE(escritorio_id, ''))) = 'X' OR escritorio_id = ANY(public.current_user_escritorios())))
+  WITH CHECK (public.is_active_user() AND (public.is_admin() OR upper(trim(COALESCE(escritorio_id, ''))) = 'X' OR escritorio_id = ANY(public.current_user_escritorios())));
 
 CREATE POLICY "RLS_Contatos" ON public.contatos
   FOR ALL TO authenticated
-  USING (public.is_active_user() AND (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios())))
-  WITH CHECK (public.is_active_user() AND (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios())));
+  USING (public.is_active_user() AND (public.is_admin() OR upper(trim(COALESCE(escritorio_id, ''))) = 'X' OR escritorio_id = ANY(public.current_user_escritorios())))
+  WITH CHECK (public.is_active_user() AND (public.is_admin() OR upper(trim(COALESCE(escritorio_id, ''))) = 'X' OR escritorio_id = ANY(public.current_user_escritorios())));
 
 CREATE POLICY "RLS_Tarefas" ON public.tarefas
   FOR ALL TO authenticated
-  USING (public.is_active_user() AND (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios())))
-  WITH CHECK (public.is_active_user() AND (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios())));
+  USING (public.is_active_user() AND (public.is_admin() OR upper(trim(COALESCE(escritorio_id, ''))) = 'X' OR escritorio_id = ANY(public.current_user_escritorios())))
+  WITH CHECK (public.is_active_user() AND (public.is_admin() OR upper(trim(COALESCE(escritorio_id, ''))) = 'X' OR escritorio_id = ANY(public.current_user_escritorios())));
 
 CREATE POLICY "RLS_Eventos" ON public.eventos
   FOR ALL TO authenticated
-  USING (public.is_active_user() AND (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios())))
-  WITH CHECK (public.is_active_user() AND (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios())));
+  USING (public.is_active_user() AND (public.is_admin() OR upper(trim(COALESCE(escritorio_id, ''))) = 'X' OR escritorio_id = ANY(public.current_user_escritorios())))
+  WITH CHECK (public.is_active_user() AND (public.is_admin() OR upper(trim(COALESCE(escritorio_id, ''))) = 'X' OR escritorio_id = ANY(public.current_user_escritorios())));
 
 CREATE POLICY "RLS_Financeiro" ON public.financeiro
   FOR ALL TO authenticated
-  USING (public.is_active_user() AND (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios())))
-  WITH CHECK (public.is_active_user() AND (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios())));
+  USING (public.is_active_user() AND (public.is_admin() OR upper(trim(COALESCE(escritorio_id, ''))) = 'X' OR escritorio_id = ANY(public.current_user_escritorios())))
+  WITH CHECK (public.is_active_user() AND (public.is_admin() OR upper(trim(COALESCE(escritorio_id, ''))) = 'X' OR escritorio_id = ANY(public.current_user_escritorios())));
 
 CREATE POLICY "RLS_Movimentos" ON public.movimentos
   FOR ALL TO authenticated
-  USING (public.is_active_user() AND (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios())))
-  WITH CHECK (public.is_active_user() AND (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios())));
+  USING (public.is_active_user() AND (public.is_admin() OR upper(trim(COALESCE(escritorio_id, ''))) = 'X' OR escritorio_id = ANY(public.current_user_escritorios())))
+  WITH CHECK (public.is_active_user() AND (public.is_admin() OR upper(trim(COALESCE(escritorio_id, ''))) = 'X' OR escritorio_id = ANY(public.current_user_escritorios())));
 
 CREATE POLICY "RLS_Documentos" ON public.documentos
   FOR ALL TO authenticated
-  USING (public.is_active_user() AND (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios())))
-  WITH CHECK (public.is_active_user() AND (public.is_admin() OR escritorio_id = ANY(public.current_user_escritorios())));
+  USING (public.is_active_user() AND (public.is_admin() OR upper(trim(COALESCE(escritorio_id, ''))) = 'X' OR escritorio_id = ANY(public.current_user_escritorios())))
+  WITH CHECK (public.is_active_user() AND (public.is_admin() OR upper(trim(COALESCE(escritorio_id, ''))) = 'X' OR escritorio_id = ANY(public.current_user_escritorios())));
 
 CREATE POLICY "RLS_Varas" ON public.varas
   FOR ALL TO authenticated
-  USING (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios())))
-  WITH CHECK (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios())));
+  USING (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR trim(escritorio_id) = '' OR upper(trim(escritorio_id)) = 'X' OR escritorio_id = ANY(public.current_user_escritorios())))
+  WITH CHECK (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR trim(escritorio_id) = '' OR upper(trim(escritorio_id)) = 'X' OR escritorio_id = ANY(public.current_user_escritorios())));
 
 CREATE POLICY "RLS_Julgadores" ON public.julgadores
   FOR ALL TO authenticated
-  USING (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios())))
-  WITH CHECK (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios())));
+  USING (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR trim(escritorio_id) = '' OR upper(trim(escritorio_id)) = 'X' OR escritorio_id = ANY(public.current_user_escritorios())))
+  WITH CHECK (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR trim(escritorio_id) = '' OR upper(trim(escritorio_id)) = 'X' OR escritorio_id = ANY(public.current_user_escritorios())));
 
 CREATE POLICY "RLS_Servidores" ON public.servidores
   FOR ALL TO authenticated
-  USING (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios())))
-  WITH CHECK (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios())));
+  USING (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR trim(escritorio_id) = '' OR upper(trim(escritorio_id)) = 'X' OR escritorio_id = ANY(public.current_user_escritorios())))
+  WITH CHECK (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR trim(escritorio_id) = '' OR upper(trim(escritorio_id)) = 'X' OR escritorio_id = ANY(public.current_user_escritorios())));
 
 CREATE POLICY "RLS_Modelos" ON public.modelos
   FOR ALL TO authenticated
-  USING (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios())))
-  WITH CHECK (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios())));
+  USING (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR trim(escritorio_id) = '' OR upper(trim(escritorio_id)) = 'X' OR escritorio_id = ANY(public.current_user_escritorios())))
+  WITH CHECK (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR trim(escritorio_id) = '' OR upper(trim(escritorio_id)) = 'X' OR escritorio_id = ANY(public.current_user_escritorios())));
 
 CREATE POLICY "RLS_Etiquetas" ON public.etiquetas
   FOR ALL TO authenticated
-  USING (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios())))
-  WITH CHECK (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios())));
+  USING (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR trim(escritorio_id) = '' OR upper(trim(escritorio_id)) = 'X' OR escritorio_id = ANY(public.current_user_escritorios())))
+  WITH CHECK (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR trim(escritorio_id) = '' OR upper(trim(escritorio_id)) = 'X' OR escritorio_id = ANY(public.current_user_escritorios())));
 
 CREATE POLICY "RLS_Leads" ON public.leads
   FOR ALL TO authenticated
-  USING (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios())))
-  WITH CHECK (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR escritorio_id = ANY(public.current_user_escritorios())));
+  USING (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR trim(escritorio_id) = '' OR upper(trim(escritorio_id)) = 'X' OR escritorio_id = ANY(public.current_user_escritorios())))
+  WITH CHECK (public.is_active_user() AND (public.is_admin() OR escritorio_id IS NULL OR trim(escritorio_id) = '' OR upper(trim(escritorio_id)) = 'X' OR escritorio_id = ANY(public.current_user_escritorios())));
 
 CREATE POLICY "RLS_Tribunais" ON public.tribunais FOR ALL TO authenticated USING (public.is_active_user()) WITH CHECK (public.is_admin());
 CREATE POLICY "RLS_Forums" ON public.forums FOR ALL TO authenticated USING (public.is_active_user()) WITH CHECK (public.is_admin());
@@ -754,7 +754,7 @@ CREATE POLICY "RLS_Logs_Update" ON public.logs
 
 CREATE POLICY "RLS_Logs_Select" ON public.logs
   FOR SELECT TO authenticated
-  USING (public.is_active_user() AND (public.is_admin() OR id_escritorio IS NULL OR id_escritorio = ANY(public.current_user_escritorios())));
+  USING (public.is_active_user() AND (public.is_admin() OR id_escritorio IS NULL OR trim(id_escritorio) = '' OR upper(trim(id_escritorio)) = 'X' OR id_escritorio = ANY(public.current_user_escritorios())));
 
 CREATE POLICY "RLS_AppSettings_Select" ON public.app_settings
   FOR SELECT TO authenticated

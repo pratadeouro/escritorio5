@@ -18,10 +18,14 @@ const Etiquetas: React.FC = () => {
     escritorioId: 'X'
   });
 
-  const filteredEtiquetas = state.etiquetas.filter(e => 
-    e.nome.toLowerCase().includes(searchTerm.toLowerCase()) &&
-    (e.escritorioId === escritorioAtivoId || e.escritorioId?.toLowerCase() === 'x')
-  );
+  const activeEscNorm = String(escritorioAtivoId || '').trim().toUpperCase();
+  const filteredEtiquetas = state.etiquetas.filter(e => {
+    if (!e.nome.toLowerCase().includes(searchTerm.toLowerCase())) return false;
+    const tagEsc = String(e.escritorioId || '').trim().toUpperCase();
+    const isGlobal = !tagEsc || tagEsc === 'X';
+    if (!activeEscNorm) return isAdmin() || isGlobal;
+    return isGlobal || tagEsc === activeEscNorm;
+  });
 
   const handleOpenModal = (etiqueta?: Etiqueta) => {
     if (etiqueta) {
@@ -142,9 +146,9 @@ const Etiquetas: React.FC = () => {
                         <div className="flex flex-col min-w-0">
                           <span className="font-semibold text-app-text truncate">{etiqueta.nome}</span>
                           <span className="text-[10px] text-app-text-muted mt-0.5">
-                            {etiqueta.escritorioId?.toUpperCase() === 'X' 
-                              ? 'Global' 
-                              : state.escritorios.find(esc => esc.id === etiqueta.escritorioId)?.nome || 'Específico'}
+                            {!etiqueta.escritorioId || etiqueta.escritorioId.trim().toUpperCase() === 'X'
+                              ? 'Global'
+                              : state.escritorios.find(esc => esc.id.trim().toUpperCase() === etiqueta.escritorioId?.trim().toUpperCase())?.nome || 'Específico'}
                           </span>
                         </div>
                       </div>

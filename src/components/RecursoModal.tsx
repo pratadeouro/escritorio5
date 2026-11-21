@@ -39,8 +39,14 @@ export default function RecursoModal({ isOpen, onClose, recurso, readOnly: propR
 
   const tagsArray = React.useMemo(() => (formData.marcador || '').split(',').map(t => t.trim()).filter(Boolean), [formData.marcador]);
   const availableEtiquetas = React.useMemo(() => {
-    return state.etiquetas.filter(e => !e.escritorioId || e.escritorioId.toLowerCase() === 'x' || e.escritorioId === (formData.escritorioId || escritorioAtivoId));
-  }, [state.etiquetas, formData.escritorioId, escritorioAtivoId]);
+    const targetEsc = String(formData.escritorioId || escritorioAtivoId || '').trim().toUpperCase();
+    return state.etiquetas.filter(e => {
+      const tagEsc = String(e.escritorioId || '').trim().toUpperCase();
+      const isGlobal = !tagEsc || tagEsc === 'X';
+      if (!targetEsc) return isAdmin() || isGlobal;
+      return isGlobal || tagEsc === targetEsc;
+    });
+  }, [state.etiquetas, formData.escritorioId, escritorioAtivoId, isAdmin]);
   const unselectedTags = React.useMemo(() => {
     return availableEtiquetas.filter(tag => {
       const tagIdStr = String(tag.id);

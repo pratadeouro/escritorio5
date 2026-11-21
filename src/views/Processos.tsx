@@ -856,11 +856,14 @@ export default function Processos({
     .sort((a, b) => new Date(b.data).getTime() - new Date(a.data).getTime());
 
   const availableEtiquetas = useMemo(() => {
-    return state.etiquetas.filter(e => 
-      e.escritorioId === escritorioAtivoId || 
-      e.escritorioId?.toUpperCase() === 'X'
-    ).sort((a, b) => a.nome.localeCompare(b.nome));
-  }, [state.etiquetas, escritorioAtivoId]);
+    const activeEsc = String(escritorioAtivoId || '').trim().toUpperCase();
+    return state.etiquetas.filter(e => {
+      const tagEsc = String(e.escritorioId || '').trim().toUpperCase();
+      const isGlobal = !tagEsc || tagEsc === 'X';
+      if (!activeEsc) return isAdmin() || isGlobal;
+      return isGlobal || tagEsc === activeEsc;
+    }).sort((a, b) => a.nome.localeCompare(b.nome));
+  }, [state.etiquetas, escritorioAtivoId, isAdmin]);
 
   const tagsArray = useMemo(() => (formData.tags || '').split(',').map(t => t.trim()).filter(Boolean), [formData.tags]);
   
