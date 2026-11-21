@@ -196,10 +196,9 @@ export default function Settings() {
     templateDailyReport: state.settings.templateDailyReport || '',
     templateNewNotifications: state.settings.templateNewNotifications || '',
     emailDispatchTime: state.settings.emailDispatchTime || '08:00',
-    showMovimentos: state.settings.showMovimentos ?? true,
+    itemsPerPage: activeOffice?.itemsPerPage || state.settings.itemsPerPage || 10,
     diasMorosidade: state.settings.diasMorosidade || 30,
     menuOrder: state.settings.menuOrder || [],
-    googleClientId: activeOffice?.googleClientId || state.settings.googleClientId || '',
     appVersion: activeOffice?.appVersion || state.settings.appVersion || '',
   });
 
@@ -217,6 +216,7 @@ export default function Settings() {
         responsibleLawyer: prev.responsibleLawyer || activeOffice.responsavel || '',
         oabNumber: prev.oabNumber || activeOffice.oab || '',
         uf: prev.uf || activeOffice.uf || '',
+        itemsPerPage: activeOffice.itemsPerPage || prev.itemsPerPage || 10,
         enableEmailNotifications: activeOffice.enableEmailNotifications ?? prev.enableEmailNotifications ?? false,
         emailWeeklyReport: activeOffice.emailWeeklyReport ?? prev.emailWeeklyReport ?? false,
         emailDailyReport: activeOffice.emailDailyReport ?? prev.emailDailyReport ?? false,
@@ -225,7 +225,6 @@ export default function Settings() {
         templateDailyReport: activeOffice.templateDailyReport || prev.templateDailyReport || '',
         templateNewNotifications: activeOffice.templateNewNotifications || prev.templateNewNotifications || '',
         emailDispatchTime: activeOffice.emailDispatchTime || prev.emailDispatchTime || '08:00',
-        googleClientId: activeOffice.googleClientId || prev.googleClientId || '',
         appVersion: activeOffice.appVersion || prev.appVersion || state.settings.appVersion || '',
       }));
     }
@@ -910,10 +909,8 @@ export default function Settings() {
       templateDailyReport: formData.templateDailyReport,
       templateNewNotifications: formData.templateNewNotifications,
       emailDispatchTime: formData.emailDispatchTime,
-      showMovimentos: formData.showMovimentos,
       diasMorosidade: formData.diasMorosidade,
       menuOrder: formData.menuOrder,
-      googleClientId: formData.googleClientId,
       appVersion: formData.appVersion
     });
 
@@ -950,10 +947,8 @@ export default function Settings() {
         templateDailyReport: formData.templateDailyReport,
         templateNewNotifications: formData.templateNewNotifications,
         emailDispatchTime: formData.emailDispatchTime,
-        showMovimentos: formData.showMovimentos,
         diasMorosidade: formData.diasMorosidade,
         menuOrder: formData.menuOrder,
-        googleClientId: formData.googleClientId,
         appVersion: formData.appVersion
       });
     }
@@ -1663,17 +1658,38 @@ export default function Settings() {
               <h2 className="font-semibold text-app-text">Regional e Fuso Horário</h2>
             </div>
             <div className="p-6 space-y-4">
-              <div className="space-y-1">
-                <label className="text-sm font-medium text-app-text">Timezone Padrão</label>
-                <select
-                  className="w-full px-3 py-2 border border-app-border bg-app-bg text-app-text rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
-                  value={formData.timezone}
-                  onChange={e => setFormData({ ...formData, timezone: e.target.value })}
-                >
-                  {timezones.map(tz => (
-                    <option key={tz} value={tz}>{tz}</option>
-                  ))}
-                </select>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-app-text">Timezone Padrão</label>
+                  <select
+                    className="w-full px-3 py-2 border border-app-border bg-app-bg text-app-text rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+                    value={formData.timezone}
+                    onChange={e => setFormData({ ...formData, timezone: e.target.value })}
+                  >
+                    {timezones.map(tz => (
+                      <option key={tz} value={tz}>{tz}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-app-text flex items-center gap-2">
+                    <ListOrdered size={16} className="text-primary" />
+                    Itens por Página (Paginação)
+                  </label>
+                  <select
+                    className="w-full px-3 py-2 border border-app-border bg-app-bg text-app-text rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+                    value={formData.itemsPerPage || 10}
+                    onChange={e => setFormData({ ...formData, itemsPerPage: parseInt(e.target.value, 10) || 10 })}
+                  >
+                    {[10, 20, 25, 50, 100].map(val => (
+                      <option key={val} value={val}>{val} itens por página</option>
+                    ))}
+                  </select>
+                  <p className="text-[11px] text-app-text-muted">
+                    Quantidade padrão de registros exibidos por página nas tabelas do escritório.
+                  </p>
+                </div>
               </div>
 
               <div className="pt-4 border-t border-app-border space-y-4">
@@ -1691,63 +1707,6 @@ export default function Settings() {
                     />
                     <span className="text-sm text-app-text-muted whitespace-nowrap">dias sem movimentação</span>
                   </div>
-                </div>
-              </div>
-
-              <div className="pt-4 border-t border-app-border space-y-4">
-                <h3 className="text-sm font-semibold text-app-text">Visibilidade de Módulos</h3>
-                <label className="flex items-center gap-3 p-3 bg-app-bg rounded-xl border border-app-border cursor-pointer hover:bg-app-secondary/50 transition-colors">
-                  <input
-                    type="checkbox"
-                    className="w-5 h-5 text-primary border-app-border rounded focus:ring-primary bg-app-bg"
-                    checked={formData.showMovimentos}
-                    onChange={e => setFormData({ ...formData, showMovimentos: e.target.checked })}
-                  />
-                  <div className="flex-1">
-                    <p className="text-sm font-bold text-app-text">Módulo de Movimentações</p>
-                    <p className="text-xs text-app-text-muted">Exibir menu e aba de movimentações processuais globalmente.</p>
-                  </div>
-                </label>
-              </div>
-
-              <div className="pt-4 border-t border-app-border space-y-3">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-sm font-semibold text-app-text flex items-center gap-2">
-                    <svg className="w-4 h-4" viewBox="0 0 24 24">
-                      <path
-                        fill="#4285F4"
-                        d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
-                      />
-                      <path
-                        fill="#34A853"
-                        d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
-                      />
-                      <path
-                        fill="#FBBC05"
-                        d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
-                      />
-                      <path
-                        fill="#EA4335"
-                        d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
-                      />
-                    </svg>
-                    Autenticação Oficial Google (OAuth 2.0 Client ID)
-                  </h3>
-                </div>
-                <p className="text-xs text-app-text-muted leading-relaxed">
-                  Insira o <strong>Client ID OAuth 2.0</strong> gerado no Google Cloud Console para ativar o popup oficial de login com um clique para todos os advogados e membros do escritório.
-                </p>
-                <div className="space-y-1">
-                  <input
-                    type="text"
-                    placeholder="Ex: 123456789-abcdef.apps.googleusercontent.com"
-                    value={formData.googleClientId || ''}
-                    onChange={e => setFormData({ ...formData, googleClientId: e.target.value.trim() })}
-                    className="w-full px-3 py-2 border border-app-border bg-app-bg text-app-text rounded-lg focus:outline-none focus:ring-2 focus:ring-primary text-sm font-mono"
-                  />
-                  <p className="text-[11px] text-app-text-muted">
-                    Origem JavaScript autorizada: <code className="bg-app-secondary px-1.5 py-0.5 rounded text-[10px]">{window.location.origin}</code>
-                  </p>
                 </div>
               </div>
 
