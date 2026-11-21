@@ -10,6 +10,7 @@ import { Movimento } from '../types';
 import { formatDate } from '../utils/date';
 import { searchDatajud } from '../services/djenService';
 import { CreateProcessoModal, CreateMovimentoModal } from '../components/CreateModals';
+import Pagination from '../components/Pagination';
 
 type ModalMode = 'view' | 'edit' | 'create';
 
@@ -309,20 +310,15 @@ export default function Movimentos() {
   };
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-6">
+    <div className="p-2 sm:p-4 md:p-6 w-full h-full flex flex-col space-y-3 sm:space-y-6 overflow-hidden">
       {/* Page Header & Tabs */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-app-text flex items-center">
-            <Activity className="mr-3 text-primary" />
-            Movimentações Processuais
-          </h1>
-          <p className="text-xs text-app-text-muted mt-1">
-            Gerencie movimentações cadastradas ou consulte a linha do tempo oficial via Datajud.
-          </p>
-        </div>
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 flex-shrink-0">
+        <h1 className="text-xl sm:text-2xl font-bold text-app-text flex items-center uppercase">
+          <Activity className="mr-3 text-primary shrink-0" />
+          <span className="truncate">Movimentos</span>
+        </h1>
 
-        <div className="flex items-center gap-1 bg-app-secondary p-1 rounded-xl border border-app-border">
+        <div className="flex items-center gap-1 bg-app-secondary p-1 rounded-xl border border-app-border shrink-0">
           <button
             onClick={() => setActiveMainTab('lista')}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold transition-all ${
@@ -350,45 +346,58 @@ export default function Movimentos() {
 
       {/* Main Tab Content */}
       {activeMainTab === 'lista' ? (
-        <div className="bg-app-surface rounded-xl shadow-sm border border-app-border overflow-hidden">
-          <div className="p-4 border-b border-app-border flex items-center">
-            <div className="relative flex-1 max-w-md">
+        <div className="bg-app-surface rounded-xl shadow-sm border border-app-border overflow-hidden flex-1 flex flex-col min-h-0">
+          <div className="p-3 sm:p-4 border-b border-app-border flex flex-col lg:flex-row gap-3 lg:items-center justify-between flex-shrink-0">
+            <div className="relative w-full sm:w-80">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-app-text-muted" size={20} />
               <input 
                 type="text" 
                 placeholder="Buscar por descrição ou número do processo..." 
-                className="w-full pl-10 pr-4 py-2 border border-app-border bg-app-bg text-app-text rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent"
+                className="w-full pl-10 pr-10 py-2 border border-app-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary focus:border-transparent bg-app-secondary text-app-text placeholder-app-text-muted"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
+              {searchTerm && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSearchTerm('');
+                    setCurrentPage(1);
+                  }}
+                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-app-text-muted hover:text-app-text transition-colors"
+                  title="Limpar busca"
+                >
+                  <X size={18} />
+                </button>
+              )}
             </div>
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
+          <div className="overflow-auto flex-1 scrollbar-thin scrollbar-thumb-app-border scrollbar-track-transparent">
+            <table className="w-full text-left border-collapse min-w-full">
+              <thead className="sticky top-0 z-20 bg-app-surface shadow-sm">
                 <tr className="bg-app-secondary text-app-text-muted text-sm uppercase tracking-wider">
-                  <th className="p-4 font-medium">Data</th>
-                  <th className="p-4 font-medium">Processo</th>
-                  <th className="p-4 font-medium">Movimentação</th>
-                  <th className="p-4 font-medium">Responsável</th>
-                  <th className="p-4 font-medium">Ações</th>
+                  <th className="px-4 py-3 font-medium whitespace-nowrap bg-app-secondary">Data</th>
+                  <th className="px-4 py-3 font-medium whitespace-nowrap bg-app-secondary">Processo</th>
+                  <th className="px-4 py-3 font-medium whitespace-nowrap bg-app-secondary">Movimentação</th>
+                  <th className="px-4 py-3 font-medium whitespace-nowrap bg-app-secondary">Responsável</th>
+                  <th className="px-4 py-3 font-medium text-right sticky right-0 z-20 bg-app-secondary shadow-[-4px_0_8px_rgba(0,0,0,0.05)]">Ações</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-app-border">
                 {currentItems.map((mov, idx) => {
                   const proc = getProcesso(mov.processoId);
                   return (
-                    <tr key={mov.id || idx} className="hover:bg-app-bg transition-colors group">
-                      <td className="p-4 whitespace-nowrap">
+                    <tr key={mov.id || idx} className="hover:bg-app-secondary transition-colors group">
+                      <td className="px-4 py-3 whitespace-nowrap">
                         <div className="flex items-center text-sm text-app-text-muted">
                            <Calendar size={14} className="mr-2 text-app-text-muted" />
                            {formatDate(mov.data)}
                         </div>
                       </td>
-                      <td className="p-4">
+                      <td className="px-4 py-3 whitespace-nowrap">
                         <div 
-                          className="text-sm font-medium text-primary cursor-pointer hover:underline"
+                          className="text-sm font-mono font-bold text-primary cursor-pointer hover:underline"
                           onClick={() => {
                             if (proc) {
                               setSelectedProcessId(proc.id);
@@ -404,7 +413,7 @@ export default function Movimentos() {
                           </div>
                         )}
                       </td>
-                      <td className="p-4">
+                      <td className="px-4 py-3">
                         <div className="text-sm text-app-text max-w-xl line-clamp-2">
                           {mov.descricao}
                         </div>
@@ -415,17 +424,17 @@ export default function Movimentos() {
                           </div>
                         )}
                       </td>
-                      <td className="p-4">
+                      <td className="px-4 py-3 whitespace-nowrap">
                         <div className="flex items-center text-sm text-app-text-muted">
                           <User size={14} className="mr-2 text-app-text-muted" />
                           {mov.usuarioId ? getUsuarioNome(mov.usuarioId) : 'N/A'}
                         </div>
                       </td>
-                      <td className="p-4">
-                        <div className="flex items-center space-x-2">
+                      <td className="px-4 py-3 text-right sticky right-0 z-10 bg-app-surface group-hover:bg-app-secondary transition-colors shadow-[-4px_0_8px_rgba(0,0,0,0.05)]">
+                        <div className="flex justify-end space-x-2">
                           <button 
                             onClick={() => handleOpenModal('view', mov)}
-                            className="p-1.5 text-app-text-muted hover:text-primary hover:bg-primary/10 rounded-lg transition-colors"
+                            className="text-app-text-muted hover:text-primary transition-colors p-2 rounded-full hover:bg-primary/10"
                             title="Visualizar"
                           >
                             <Eye size={18} />
@@ -433,7 +442,7 @@ export default function Movimentos() {
                           {(canEdit || (currentUser?.id && mov.usuarioId === currentUser.id)) && (
                             <button 
                               onClick={() => handleOpenModal('edit', mov)}
-                              className="p-1.5 text-app-text-muted hover:text-emerald-500 hover:bg-emerald-500/10 rounded-lg transition-colors"
+                              className="text-app-text-muted hover:text-primary transition-colors p-2 rounded-full hover:bg-primary/10"
                               title="Editar"
                             >
                               <Edit2 size={18} />
@@ -442,7 +451,7 @@ export default function Movimentos() {
                           {(canDelete || (currentUser?.id && mov.usuarioId === currentUser.id)) && (
                             <button 
                               onClick={() => handleDelete(mov.id)}
-                              className="p-1.5 text-app-text-muted hover:text-red-500 hover:bg-red-500/10 rounded-lg transition-colors"
+                              className="text-app-text-muted hover:text-red-600 transition-colors p-2 rounded-full hover:bg-red-500/10"
                               title="Excluir"
                             >
                               <Trash2 size={18} />
@@ -465,59 +474,19 @@ export default function Movimentos() {
           </div>
 
           {/* Pagination Controls */}
-          {totalPages > 1 && (
-            <div className="p-4 border-t border-app-border flex items-center justify-between bg-app-secondary/30">
-              <div className="text-sm text-app-text-muted">
-                Mostrando <span className="font-medium">{(currentPage - 1) * itemsPerPage + 1}</span> a <span className="font-medium">{Math.min(currentPage * itemsPerPage, filteredMovimentos.length)}</span> de <span className="font-medium">{filteredMovimentos.length}</span> resultados
-              </div>
-              <div className="flex space-x-2">
-                <button
-                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                  disabled={currentPage === 1}
-                  className="px-3 py-1 border border-app-border rounded-md text-sm font-medium text-app-text bg-app-surface hover:bg-app-bg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  Anterior
-                </button>
-                <div className="flex items-center space-x-1">
-                  {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-                    let pageNum = i + 1;
-                    if (totalPages > 5 && currentPage > 3) {
-                      pageNum = currentPage - 2 + i;
-                      if (pageNum + (5 - i - 1) > totalPages) {
-                        pageNum = totalPages - 5 + i + 1;
-                      }
-                    }
-                    if (pageNum > totalPages) return null;
-
-                    return (
-                      <button
-                        key={pageNum}
-                        onClick={() => setCurrentPage(pageNum)}
-                        className={`px-3 py-1 rounded-md text-sm font-medium transition-colors ${
-                          currentPage === pageNum
-                            ? 'bg-primary text-white'
-                            : 'text-app-text bg-app-surface border border-app-border hover:bg-app-bg'
-                        }`}
-                      >
-                        {pageNum}
-                      </button>
-                    );
-                  })}
-                </div>
-                <button
-                  onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-                  disabled={currentPage === totalPages}
-                  className="px-3 py-1 border border-app-border rounded-md text-sm font-medium text-app-text bg-app-surface hover:bg-app-bg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  Próximo
-                </button>
-              </div>
-            </div>
-          )}
+          <Pagination 
+            currentPage={currentPage}
+            totalPages={totalPages}
+            totalItems={filteredMovimentos.length}
+            itemsPerPage={itemsPerPage}
+            onPageChange={setCurrentPage}
+            label="movimentos"
+          />
         </div>
       ) : (
         /* Tab 2: Pesquisa Movimentos (Linha do Tempo Datajud) */
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        <div className="flex-1 overflow-y-auto min-h-0 pr-1 scrollbar-thin scrollbar-thumb-app-border scrollbar-track-transparent">
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
           {/* Painel de Busca Lateral */}
           <div className="lg:col-span-1 space-y-6">
             <div className="bg-app-surface p-5 rounded-2xl shadow-sm border border-app-border space-y-4">
@@ -764,6 +733,7 @@ export default function Movimentos() {
               </div>
             )}
           </div>
+        </div>
         </div>
       )}
 

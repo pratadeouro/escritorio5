@@ -232,6 +232,7 @@ export default function Layout({ children, currentView, onNavigate }: LayoutProp
     'processosAtivos',
     'processosGeral',
     'pendencias',
+    'movimentos',
     'ia',
     'tarefas',
     'documentos',
