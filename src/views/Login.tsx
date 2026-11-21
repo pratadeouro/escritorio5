@@ -60,6 +60,15 @@ export default function Login() {
   const [registerConfirmSenha, setRegisterConfirmSenha] = useState('');
   const [isRegistering, setIsRegistering] = useState(false);
   const [registerStatus, setRegisterStatus] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [registerGoogleAuth, setRegisterGoogleAuth] = useState<{ email: string; credential: string; picture?: string } | null>(null);
+  const [isRegisterGoogleChecking, setIsRegisterGoogleChecking] = useState(false);
+
+  const isRegisterOpenRef = useRef(false);
+  const registerGoogleBtnRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    isRegisterOpenRef.current = isRegisterOpen;
+  }, [isRegisterOpen]);
 
   const handleRegisterSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -67,6 +76,8 @@ export default function Login() {
 
     const cleanEmail = registerEmail.trim().toLowerCase();
     const cleanNome = registerNome.trim();
+    const isGoogleVerified = !!(registerGoogleAuth && registerGoogleAuth.email === cleanEmail);
+
     if (!cleanNome) {
       setRegisterStatus({ type: 'error', message: 'Por favor, informe seu nome completo.' });
       return;
@@ -75,14 +86,21 @@ export default function Login() {
       setRegisterStatus({ type: 'error', message: 'Por favor, informe um e-mail válido.' });
       return;
     }
-    if (registerSenha.length < 6) {
-      setRegisterStatus({ type: 'error', message: 'A senha deve possuir no mínimo 6 caracteres.' });
-      return;
+
+    if (!isGoogleVerified || registerSenha.length > 0) {
+      if (registerSenha.length < 6) {
+        setRegisterStatus({ type: 'error', message: 'A senha deve possuir no mínimo 6 caracteres.' });
+        return;
+      }
+      if (registerSenha !== registerConfirmSenha) {
+        setRegisterStatus({ type: 'error', message: 'A confirmação de senha não confere.' });
+        return;
+      }
     }
-    if (registerSenha !== registerConfirmSenha) {
-      setRegisterStatus({ type: 'error', message: 'A confirmação de senha não confere.' });
-      return;
-    }
+
+    const passwordToPersist = registerSenha.trim().length >= 6
+      ? registerSenha.trim()
+      : `${(typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2))}Aa1!`;
 
     setIsRegistering(true);
 
@@ -90,7 +108,7 @@ export default function Login() {
       const newUserPayload: Partial<Usuario> = {
         nome: cleanNome,
         email: cleanEmail,
-        senha: registerSenha,
+        senha: passwordToPersist,
         cargo: 'Advogado(a)',
         oab: registerOab.trim() || undefined,
         contato: registerContato.trim(),
@@ -111,7 +129,9 @@ export default function Login() {
 
         setTimeout(async () => {
           try {
-            const loginSuccess = await login(cleanEmail, registerSenha);
+            const loginSuccess = isGoogleVerified && registerGoogleAuth
+              ? (await loginWithGoogleEmail(cleanEmail, registerGoogleAuth.credential)).success
+              : await login(cleanEmail, passwordToPersist);
             if (loginSuccess) {
               setIsRegisterOpen(false);
             } else {
@@ -124,7 +144,7 @@ export default function Login() {
             setSenha(registerSenha);
             setIsRegisterOpen(false);
           }
-        }, 1200);
+        }, 900);
       } else {
         setRegisterStatus({ 
           type: 'error', 
@@ -214,7 +234,7 @@ export default function Login() {
 
 
   // Decodifica JWT do Google sem dependências externas
-  const decodeGoogleCredential = (credential: string): { email?: string; name?: string; sub?: string } | null => {
+  const decodeGoogleCredential = (credential: string): { email?: string; name?: string; sub?: string; picture?: string } | null => {
     try {
       const parts = credential.split('.');
       if (parts.length < 2) return null;
@@ -245,19 +265,61 @@ export default function Login() {
         callback: async (response: any) => {
           if (!response?.credential) return;
           const payload = decodeGoogleCredential(response.credential);
-          if (payload?.email) {
-            setIsGoogleLoading(true);
-            setError('');
+          if (!payload?.email) return;
+
+          const googleEmailClean = payload.email.trim().toLowerCase();
+
+          // Se o modal de cadastro estiver aberto, pré-preenche o formulário de novo usuário (Opção 2)
+          if (isRegisterOpenRef.current) {
+            setRegisterStatus(null);
+            setIsRegisterGoogleChecking(true);
             try {
-              const result = await loginWithGoogleEmail(payload.email, response.credential);
-              if (!result.success) {
-                setError(result.error || `A conta Google ${payload.email} não possui acesso cadastrado no sistema.`);
+              const checkResp = await fetch(`/api/supabase/user-by-email?email=${encodeURIComponent(googleEmailClean)}`).catch(() => null);
+              if (checkResp?.ok && checkResp.headers.get('content-type')?.includes('application/json')) {
+                const checkJson = await checkResp.json().catch(() => null);
+                if (checkJson?.success && checkJson?.user) {
+                  setRegisterStatus({
+                    type: 'error',
+                    message: `A conta ${googleEmailClean} já está cadastrada no sistema. Feche esta janela e clique em "Entrar com o Google".`
+                  });
+                  setIsRegisterGoogleChecking(false);
+                  return;
+                }
               }
-            } catch (err) {
-              setError('Falha ao autenticar com a conta Google.');
+            } catch {
+              // prossegue para preenchimento
             } finally {
-              setIsGoogleLoading(false);
+              setIsRegisterGoogleChecking(false);
             }
+
+            if (payload.name) {
+              const googleName = payload.name.trim();
+              setRegisterNome(prev => (prev.trim() ? prev : googleName));
+            }
+            setRegisterEmail(googleEmailClean);
+            setRegisterGoogleAuth({
+              email: googleEmailClean,
+              credential: response.credential,
+              picture: payload.picture
+            });
+            setRegisterStatus({
+              type: 'success',
+              message: `Conta Google (${googleEmailClean}) verificada! Complete os dados desejados e clique em Concluir Cadastro.`
+            });
+            return;
+          }
+
+          setIsGoogleLoading(true);
+          setError('');
+          try {
+            const result = await loginWithGoogleEmail(googleEmailClean, response.credential);
+            if (!result.success) {
+              setError(result.error || `A conta Google ${payload.email} não possui acesso cadastrado no sistema.`);
+            }
+          } catch (err) {
+            setError('Falha ao autenticar com a conta Google.');
+          } finally {
+            setIsGoogleLoading(false);
           }
         },
         auto_select: false,
@@ -280,6 +342,25 @@ export default function Login() {
       console.warn('Google GSI initialize notice:', err);
     }
   }, [googleClientId, loginWithGoogleEmail]);
+
+  // Renderiza o botão oficial do Google dentro do modal de cadastro quando aberto
+  useEffect(() => {
+    if (!isRegisterOpen || !googleClientId || !window.google?.accounts?.id || !registerGoogleBtnRef.current) return;
+    try {
+      registerGoogleBtnRef.current.innerHTML = '';
+      window.google.accounts.id.renderButton(registerGoogleBtnRef.current, {
+        type: 'standard',
+        theme: 'outline',
+        size: 'large',
+        text: 'signup_with',
+        shape: 'pill',
+        logo_alignment: 'left',
+        width: '100%',
+      });
+    } catch (err) {
+      console.warn('Google GSI register button render notice:', err);
+    }
+  }, [isRegisterOpen, googleClientId, registerGoogleAuth]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -453,6 +534,7 @@ export default function Login() {
                     setRegisterConfirmSenha('');
                     setRegisterOab('');
                     setRegisterContato('');
+                    setRegisterGoogleAuth(null);
                     setIsRegisterOpen(true);
                   }}
                   className="inline-flex items-center gap-1.5 font-semibold text-primary hover:underline transition-all cursor-pointer"
@@ -791,6 +873,53 @@ export default function Login() {
             </div>
 
             <form onSubmit={handleRegisterSubmit} className="space-y-4 overflow-y-auto pr-1">
+              {/* Pré-preenchimento com conta Google (Gmail) */}
+              {googleClientId && !registerGoogleAuth && (
+                <div className="space-y-3">
+                  <div className="bg-app-bg/70 border border-app-border rounded-2xl p-3.5 space-y-2.5 text-center">
+                    <p className="text-xs font-semibold text-app-text">
+                      Preencher automaticamente com sua conta Google
+                    </p>
+                    <div ref={registerGoogleBtnRef} className="w-full flex justify-center empty:hidden min-h-[42px]" />
+                    {isRegisterGoogleChecking && (
+                      <div className="flex items-center justify-center gap-2 text-xs text-primary font-medium">
+                        <Loader2 size={14} className="animate-spin" />
+                        <span>Verificando conta Google...</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="relative flex items-center py-0.5">
+                    <div className="flex-grow border-t border-app-border" />
+                    <span className="flex-shrink mx-3 text-[11px] uppercase font-semibold text-app-text-muted tracking-wider">
+                      ou preencha manualmente
+                    </span>
+                    <div className="flex-grow border-t border-app-border" />
+                  </div>
+                </div>
+              )}
+
+              {registerGoogleAuth && (
+                <div className="p-3 bg-emerald-500/10 border border-emerald-500/25 rounded-xl text-xs flex items-center justify-between gap-2 text-emerald-700 dark:text-emerald-300">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <CheckCircle2 size={16} className="shrink-0 text-emerald-600 dark:text-emerald-400" />
+                    <span className="truncate font-medium">
+                      Gmail verificado: <b>{registerGoogleAuth.email}</b>
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRegisterGoogleAuth(null);
+                      setRegisterEmail('');
+                      setRegisterStatus(null);
+                    }}
+                    className="text-[11px] font-bold underline shrink-0 hover:opacity-80"
+                  >
+                    Alterar
+                  </button>
+                </div>
+              )}
+
               {registerStatus && (
                 <div className={`p-3.5 rounded-xl text-xs flex items-center gap-2.5 ${
                   registerStatus.type === 'success'
@@ -820,16 +949,26 @@ export default function Login() {
 
               {/* E-mail de Acesso */}
               <div className="space-y-1">
-                <label className="text-xs font-bold text-app-text-muted uppercase">E-mail Profissional *</label>
+                <label className="text-xs font-bold text-app-text-muted uppercase flex items-center justify-between">
+                  <span>E-mail Profissional *</span>
+                  {registerGoogleAuth && (
+                    <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 normal-case">
+                      Verificado via Google
+                    </span>
+                  )}
+                </label>
                 <div className="relative">
                   <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 text-app-text-muted" size={16} />
                   <input
                     type="email"
                     required
+                    readOnly={!!registerGoogleAuth}
                     value={registerEmail}
                     onChange={(e) => setRegisterEmail(e.target.value)}
                     placeholder="exemplo@adv.com.br"
-                    className="w-full pl-10 pr-3.5 py-2.5 rounded-xl border border-app-border bg-app-bg text-sm text-app-text focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                    className={`w-full pl-10 pr-3.5 py-2.5 rounded-xl border border-app-border text-sm text-app-text focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary ${
+                      registerGoogleAuth ? 'bg-app-secondary/70 cursor-not-allowed opacity-90' : 'bg-app-bg'
+                    }`}
                   />
                 </div>
               </div>
@@ -869,29 +1008,33 @@ export default function Login() {
               {/* Senha e Confirmação */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-app-text-muted uppercase">Senha de Acesso *</label>
+                  <label className="text-xs font-bold text-app-text-muted uppercase">
+                    {registerGoogleAuth ? 'Senha (Opcional c/ Google)' : 'Senha de Acesso *'}
+                  </label>
                   <div className="relative">
                     <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 text-app-text-muted" size={16} />
                     <input
                       type="password"
-                      required
-                      minLength={6}
+                      required={!registerGoogleAuth}
+                      minLength={registerGoogleAuth && !registerSenha ? undefined : 6}
                       value={registerSenha}
                       onChange={(e) => setRegisterSenha(e.target.value)}
-                      placeholder="Mínimo 6 caracteres"
+                      placeholder={registerGoogleAuth ? 'Opcional (mín. 6 caract.)' : 'Mínimo 6 caracteres'}
                       className="w-full pl-10 pr-3.5 py-2.5 rounded-xl border border-app-border bg-app-bg text-sm text-app-text focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
                     />
                   </div>
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-xs font-bold text-app-text-muted uppercase">Confirmar Senha *</label>
+                  <label className="text-xs font-bold text-app-text-muted uppercase">
+                    {registerGoogleAuth ? 'Confirmar Senha (Opcional)' : 'Confirmar Senha *'}
+                  </label>
                   <div className="relative">
                     <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 text-app-text-muted" size={16} />
                     <input
                       type="password"
-                      required
-                      minLength={6}
+                      required={!registerGoogleAuth || registerSenha.length > 0}
+                      minLength={registerGoogleAuth && !registerConfirmSenha && !registerSenha ? undefined : 6}
                       value={registerConfirmSenha}
                       onChange={(e) => setRegisterConfirmSenha(e.target.value)}
                       placeholder="Repita a senha"
