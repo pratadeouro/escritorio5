@@ -2449,7 +2449,7 @@ export default function Processos({
                 <DollarSign className="mr-2 text-primary" size={20} />
                 Financeiro Relacionado
               </h3>
-              {(isAdmin() || hasPermission('financeiro', 'write')) && (
+              {modalMode === 'edit' && (isAdmin() || hasPermission('financeiro', 'write')) && (
                 <button
                   type="button"
                   onClick={handleOpenAddFinanceiro}

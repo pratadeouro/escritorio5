@@ -806,6 +806,7 @@ export const importFromGoogleSheets = async (spreadsheetId: string, coreOnly: bo
         balcaoVirtual: (row.BALCAO01 || row.BALCAO || '').toString().trim(),
         juiz: (row.JUIZ || '').toString().trim(),
         juiz_2: (row.JUIZ_2 || '').toString().trim(),
+        secretaria: (row.SECRETARIA || row.ID_UPJ || row.UPJ || '').toString().trim() || undefined,
         id_servidores: row.ID_SERVIDORES ? row.ID_SERVIDORES.toString().split(',').map((s: string) => s.trim().toUpperCase()).filter(Boolean) : [],
         escritorioId: getOfficeId(row),
         idTj: (row.ID_TJ || row.id_tj || '').toString().trim().toUpperCase()

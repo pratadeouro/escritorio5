@@ -496,6 +496,7 @@ export const saveAllDataToScript = async (appState: AppState, scriptUrl: string)
           BALCAO01: v.balcaoVirtual || '',
           JUIZ: v.juiz || '',
           JUIZ_2: v.juiz_2 || '',
+          SECRETARIA: v.secretaria || '',
           ID_SERVIDORES: v.id_servidores ? v.id_servidores.join(',') : '',
           ID_ESCRITORIO: v.escritorioId,
           ID_TJ: v.idTj || ''

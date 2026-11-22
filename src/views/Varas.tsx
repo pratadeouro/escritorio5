@@ -99,6 +99,7 @@ export default function Varas() {
     id: '',
     nome: '',
     forum: '',
+    secretaria: '',
     localizacao: '',
     telefone: '',
     email: '',
@@ -151,6 +152,15 @@ export default function Varas() {
       );
     });
   }, [state.varas, state.forums, state.julgadores, state.upj, searchTerm, escritorioAtivoId, adminUser, currentUser]);
+
+  const availableUpjs = useMemo(() => {
+    return state.upj
+      .filter((u) =>
+        matchesOfficeFilter(u.escritorioId, escritorioAtivoId, adminUser, currentUser?.escritoriosIds)
+      )
+      .slice()
+      .sort((a, b) => (a.nome || '').localeCompare(b.nome || '', 'pt-BR'));
+  }, [state.upj, escritorioAtivoId, adminUser, currentUser]);
 
   const [forumSearch, setForumSearch] = useState('');
   const [showForumResults, setShowForumResults] = useState(false);
@@ -264,6 +274,7 @@ export default function Varas() {
       id: vara.id || '',
       nome: vara.nome || '',
       forum: vara.forum || '',
+      secretaria: vara.secretaria || '',
       localizacao: vara.localizacao || '',
       telefone: vara.telefone || '',
       email: vara.email || '',
@@ -285,6 +296,7 @@ export default function Varas() {
       id: vara.id || '',
       nome: vara.nome || '',
       forum: vara.forum || '',
+      secretaria: vara.secretaria || '',
       localizacao: vara.localizacao || '',
       telefone: vara.telefone || '',
       email: vara.email || '',
@@ -306,6 +318,7 @@ export default function Varas() {
       id: '',
       nome: '',
       forum: '',
+      secretaria: '',
       localizacao: '',
       telefone: '',
       email: '',
@@ -896,6 +909,42 @@ export default function Varas() {
                         </div>
                       )}
                     </div>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-sm font-medium text-app-text">Secretaria / UPJ Vinculada (SECRETARIA)</label>
+                    {modalMode === 'view' ? (
+                      <div className="p-2.5 bg-app-surface border border-app-border rounded-lg text-app-text text-sm flex items-center gap-2 min-h-[42px]">
+                        <Building2 size={15} className="text-app-text-muted shrink-0" />
+                        <span className="font-medium">
+                          {(() => {
+                            if (!novaVara.secretaria) return '-';
+                            const upj = state.upj.find(
+                              (u) => u.id === novaVara.secretaria || u.id.toLowerCase() === novaVara.secretaria.toLowerCase()
+                            );
+                            return upj ? upj.nome : novaVara.secretaria;
+                          })()}
+                        </span>
+                      </div>
+                    ) : (
+                      <select
+                        className="w-full px-3 py-2 border border-app-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary bg-app-surface text-app-text text-sm h-[42px]"
+                        value={novaVara.secretaria}
+                        onChange={(e) => setNovaVara({ ...novaVara, secretaria: e.target.value })}
+                      >
+                        <option value="">Nenhuma UPJ vinculada</option>
+                        {novaVara.secretaria &&
+                          !availableUpjs.some((u) => u.id === novaVara.secretaria) && (
+                            <option value={novaVara.secretaria}>
+                              {state.upj.find((u) => u.id === novaVara.secretaria)?.nome || novaVara.secretaria}
+                            </option>
+                          )}
+                        {availableUpjs.map((u) => (
+                          <option key={u.id} value={u.id}>
+                            {u.nome}
+                          </option>
+                        ))}
+                      </select>
+                    )}
                   </div>
                   <div className="space-y-1">
                     <label className="text-sm font-medium text-app-text">Localização (LOCALIZACAO)</label>
