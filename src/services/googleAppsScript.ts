@@ -1,4 +1,5 @@
 import { AppState, Contato, Processo, Evento, Movimento, Transacao, Documento, Vara, Usuario, Tarefa, Julgador, Servidor, Recurso, UPJ, Tribunal, Calendario } from '../types';
+import { getSupabase, isSupabaseConfigured } from './supabaseService';
 
 /**
  * Busca todos os dados da planilha usando o Google Apps Script
@@ -244,23 +245,34 @@ export const sendTestEmail = async (scriptUrl: string, email: string, user: stri
 };
 
 /**
- * Envia um e-mail de teste usando SMTP externo (servidor Node.js)
+ * Envia um e-mail de teste usando SMTP do servidor Node.js (integrado ao Supabase)
  */
 export const sendTestEmailExternal = async (config: { 
-  host: string; 
-  port: number; 
-  secure: boolean; 
-  user: string; 
-  pass: string; 
+  host?: string; 
+  port?: number; 
+  secure?: boolean; 
+  user?: string; 
+  pass?: string; 
   to: string;
   subject?: string;
   html?: string;
+  officeId?: string;
 }): Promise<boolean> => {
   try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    try {
+      if (isSupabaseConfigured()) {
+        const { data } = await getSupabase().auth.getSession();
+        if (data?.session?.access_token) {
+          headers.Authorization = `Bearer ${data.session.access_token}`;
+        }
+      }
+    } catch {}
+
     const response = await fetch('/api/email/test', {
       method: 'POST',
       body: JSON.stringify(config),
-      headers: { 'Content-Type': 'application/json' }
+      headers
     });
     const result = await response.json();
     if (result.success) return true;
@@ -269,6 +281,44 @@ export const sendTestEmailExternal = async (config: {
     console.error('Erro ao enviar e-mail de teste via SMTP:', error);
     throw error;
   }
+};
+
+/**
+ * Executa manualmente a rotina automática de e-mails no servidor (lendo do Supabase)
+ */
+export const triggerAutomatedEmails = async (params: {
+  type: 'daily' | 'weekly' | 'both';
+  force?: boolean;
+  officeId?: string;
+}): Promise<{
+  status: string;
+  source?: string;
+  checkedOffices?: number;
+  matchedOffices?: number;
+  sentCount?: number;
+  errors?: number;
+  details?: Array<{ officeId: string; officeName: string; emailTo: string; sent: string[]; error?: string }>;
+}> => {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  try {
+    if (isSupabaseConfigured()) {
+      const { data } = await getSupabase().auth.getSession();
+      if (data?.session?.access_token) {
+        headers.Authorization = `Bearer ${data.session.access_token}`;
+      }
+    }
+  } catch {}
+
+  const response = await fetch('/api/cron/trigger', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(params)
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(result?.error || `Erro HTTP ${response.status} ao executar disparo automático`);
+  }
+  return result;
 };
 
 /**

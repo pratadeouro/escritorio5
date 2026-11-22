@@ -154,7 +154,7 @@ function SortableMenuItem({ id, menu, index, total, onMove }: SortableMenuItemPr
 }
 
 export default function Settings() {
-  const { state, updateSettings, escritorioAtivoId, updateEscritorio, applyTheme, currentUser, isAdmin, isProductionMode } = useAppContext();
+  const { state, updateSettings, escritorioAtivoId, updateEscritorio, applyTheme, currentUser, isAdmin, isProductionMode, dataSource } = useAppContext();
   const activeOffice = state.escritorios.find(e => e.id === escritorioAtivoId);
   
   const sensors = useSensors(
@@ -182,41 +182,52 @@ export default function Settings() {
     responsibleLawyer: activeOffice?.responsavel || '',
     oabNumber: activeOffice?.oab || '',
     uf: activeOffice?.uf || '',
-    emailUser: state.settings.emailUser || '',
-    emailPass: state.settings.emailPass || '',
-    useExternalSmtp: state.settings.useExternalSmtp || false,
-    smtpHost: state.settings.smtpHost || '',
-    smtpPort: state.settings.smtpPort || 465,
-    smtpSecure: state.settings.smtpSecure ?? true,
-    enableEmailNotifications: state.settings.enableEmailNotifications || false,
-    emailWeeklyReport: state.settings.emailWeeklyReport || false,
-    emailDailyReport: state.settings.emailDailyReport || false,
-    emailNewNotifications: state.settings.emailNewNotifications || false,
-    templateWeeklyReport: state.settings.templateWeeklyReport || '',
-    templateDailyReport: state.settings.templateDailyReport || '',
-    templateNewNotifications: state.settings.templateNewNotifications || '',
-    emailDispatchTime: state.settings.emailDispatchTime || '08:00',
+    emailUser: activeOffice?.emailUser || state.settings.emailUser || '',
+    emailPass: activeOffice?.emailPass || state.settings.emailPass || '',
+    useExternalSmtp: activeOffice?.useExternalSmtp ?? state.settings.useExternalSmtp ?? false,
+    smtpHost: activeOffice?.smtpHost || state.settings.smtpHost || '',
+    smtpPort: activeOffice?.smtpPort || state.settings.smtpPort || 465,
+    smtpSecure: activeOffice?.smtpSecure ?? state.settings.smtpSecure ?? true,
+    enableEmailNotifications: activeOffice?.enableEmailNotifications ?? state.settings.enableEmailNotifications ?? false,
+    emailWeeklyReport: activeOffice?.emailWeeklyReport ?? state.settings.emailWeeklyReport ?? false,
+    emailDailyReport: activeOffice?.emailDailyReport ?? state.settings.emailDailyReport ?? false,
+    emailNewNotifications: activeOffice?.emailNewNotifications ?? state.settings.emailNewNotifications ?? false,
+    templateWeeklyReport: activeOffice?.templateWeeklyReport || state.settings.templateWeeklyReport || '',
+    templateDailyReport: activeOffice?.templateDailyReport || state.settings.templateDailyReport || '',
+    templateNewNotifications: activeOffice?.templateNewNotifications || state.settings.templateNewNotifications || '',
+    emailDispatchTime: activeOffice?.emailDispatchTime || state.settings.emailDispatchTime || '08:00',
     itemsPerPage: activeOffice?.itemsPerPage || state.settings.itemsPerPage || 10,
-    diasMorosidade: state.settings.diasMorosidade || 30,
+    diasMorosidade: activeOffice?.diasMorosidade || state.settings.diasMorosidade || 30,
     menuOrder: state.settings.menuOrder || [],
     appVersion: activeOffice?.appVersion || state.settings.appVersion || '',
   });
 
-  // Sync formData with activeOffice if it loads after mount
+  // Sync formData with activeOffice when office changes or finishes loading
   React.useEffect(() => {
     if (activeOffice) {
       setFormData(prev => ({
         ...prev,
-        theme: prev.theme || activeOffice.theme || 'light',
-        primaryColor: prev.primaryColor || activeOffice.primaryColor || '#4f46e5',
-        backgroundColor: prev.backgroundColor || activeOffice.backgroundColor || '#ffffff',
-        secondaryColor: prev.secondaryColor || activeOffice.secondaryColor || '#f8fafc',
-        officeName: prev.officeName || activeOffice.nome || '',
-        officeAddress: prev.officeAddress || activeOffice.endereco || '',
-        responsibleLawyer: prev.responsibleLawyer || activeOffice.responsavel || '',
-        oabNumber: prev.oabNumber || activeOffice.oab || '',
-        uf: prev.uf || activeOffice.uf || '',
+        theme: activeOffice.theme || prev.theme || 'light',
+        primaryColor: activeOffice.primaryColor || prev.primaryColor || '#4f46e5',
+        backgroundColor: activeOffice.backgroundColor || prev.backgroundColor || '#ffffff',
+        secondaryColor: activeOffice.secondaryColor || prev.secondaryColor || '#f8fafc',
+        officeName: activeOffice.nome || prev.officeName || '',
+        officeAddress: activeOffice.endereco || prev.officeAddress || '',
+        officeCNPJ: activeOffice.cnpj || prev.officeCNPJ || '',
+        officePhone: activeOffice.telefone || prev.officePhone || '',
+        officeEmail: activeOffice.email || prev.officeEmail || '',
+        logoUrl: activeOffice.logoUrl || prev.logoUrl || '',
+        responsibleLawyer: activeOffice.responsavel || prev.responsibleLawyer || '',
+        oabNumber: activeOffice.oab || prev.oabNumber || '',
+        uf: activeOffice.uf || prev.uf || '',
         itemsPerPage: activeOffice.itemsPerPage || prev.itemsPerPage || 10,
+        diasMorosidade: activeOffice.diasMorosidade || prev.diasMorosidade || 30,
+        emailUser: activeOffice.emailUser || prev.emailUser || state.settings.emailUser || '',
+        emailPass: activeOffice.emailPass || prev.emailPass || state.settings.emailPass || '',
+        useExternalSmtp: activeOffice.useExternalSmtp ?? prev.useExternalSmtp ?? false,
+        smtpHost: activeOffice.smtpHost || prev.smtpHost || state.settings.smtpHost || '',
+        smtpPort: activeOffice.smtpPort || prev.smtpPort || state.settings.smtpPort || 465,
+        smtpSecure: activeOffice.smtpSecure ?? prev.smtpSecure ?? true,
         enableEmailNotifications: activeOffice.enableEmailNotifications ?? prev.enableEmailNotifications ?? false,
         emailWeeklyReport: activeOffice.emailWeeklyReport ?? prev.emailWeeklyReport ?? false,
         emailDailyReport: activeOffice.emailDailyReport ?? prev.emailDailyReport ?? false,
@@ -494,30 +505,38 @@ export default function Settings() {
     setIsPreviewModalOpen(true);
   };
 
+  const useServerSmtpTransport = formData.useExternalSmtp || dataSource === 'supabase' || !state.settings.scriptUrl;
+
   const handleTestEmail = async () => {
-    if (!formData.emailUser || (!formData.useExternalSmtp && !state.settings.scriptUrl)) {
-      setTestStatus({ success: false, message: 'Configure o e-mail e salve antes de testar.' });
+    const destination = testRecipient || currentUser?.email || formData.emailUser || formData.officeEmail;
+    if (!destination) {
+      setTestStatus({ success: false, message: 'Informe um destinatário ou e-mail para enviar o teste.' });
       return;
     }
-    
+
     if (formData.useExternalSmtp && (!formData.smtpHost || !formData.smtpPort)) {
       setTestStatus({ success: false, message: 'Configure o servidor SMTP e a porta antes de testar.' });
+      return;
+    }
+
+    if (!useServerSmtpTransport && (!formData.emailUser || !state.settings.scriptUrl)) {
+      setTestStatus({ success: false, message: 'Configure o e-mail e salve antes de testar.' });
       return;
     }
 
     setIsSendingTest(true);
     setTestStatus(null);
     try {
-      const destination = testRecipient || currentUser?.email || formData.emailUser;
       let success = false;
-      if (formData.useExternalSmtp) {
+      if (useServerSmtpTransport) {
         success = await sendTestEmailExternal({
-          host: formData.smtpHost!,
-          port: formData.smtpPort!,
-          secure: formData.smtpSecure!,
-          user: formData.emailUser,
-          pass: formData.emailPass,
-          to: destination
+          host: formData.smtpHost || undefined,
+          port: formData.smtpPort || 465,
+          secure: formData.smtpSecure ?? true,
+          user: formData.emailUser || undefined,
+          pass: formData.emailPass || undefined,
+          to: destination,
+          officeId: escritorioAtivoId || undefined,
         });
       } else {
         success = await sendTestEmail(
@@ -540,8 +559,9 @@ export default function Settings() {
 
   const handleTestWeeklyReport = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!formData.emailUser || (!formData.useExternalSmtp && !state.settings.scriptUrl)) {
-      setTestStatus({ success: false, message: 'Configure o e-mail e salve antes de testar.' });
+    const destination = testRecipient || currentUser?.email || formData.emailUser || formData.officeEmail;
+    if (!destination || (!useServerSmtpTransport && (!formData.emailUser || !state.settings.scriptUrl))) {
+      setTestStatus({ success: false, message: 'Configure o e-mail/destinatário antes de testar.' });
       return;
     }
     setIsSendingWeeklyTest(true);
@@ -629,15 +649,16 @@ export default function Settings() {
         year: new Date().getFullYear()
       }, formData.templateWeeklyReport);
 
-      const success = formData.useExternalSmtp 
+      const success = useServerSmtpTransport
         ? await sendTestEmailExternal({
-            host: formData.smtpHost!,
-            port: formData.smtpPort!,
-            secure: formData.smtpSecure!,
-            user: formData.emailUser,
-            pass: formData.emailPass,
+            host: formData.smtpHost || undefined,
+            port: formData.smtpPort || 465,
+            secure: formData.smtpSecure ?? true,
+            user: formData.emailUser || undefined,
+            pass: formData.emailPass || undefined,
             to: destination,
-            subject: `Relatório Semanal - ${activeOffice?.nome || 'LEXGESTÃO'} (Teste)`,
+            officeId: escritorioAtivoId || undefined,
+            subject: `Relatório Semanal - ${activeOffice?.nome || 'Meu Escritório'} (Teste)`,
             html: reportBody
           })
         : await sendTestEmail(
@@ -645,7 +666,7 @@ export default function Settings() {
             destination, 
             formData.emailUser, 
             formData.emailPass, 
-            `Relatório Semanal - ${activeOffice?.nome || 'LEXGESTÃO'} (Teste)`,
+            `Relatório Semanal - ${activeOffice?.nome || 'Meu Escritório'} (Teste)`,
             reportBody
           );
       
@@ -661,8 +682,9 @@ export default function Settings() {
 
   const handleTestDailyReport = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!formData.emailUser || (!formData.useExternalSmtp && !state.settings.scriptUrl)) {
-      setTestStatus({ success: false, message: 'Configure o e-mail e salve antes de testar.' });
+    const destination = testRecipient || currentUser?.email || formData.emailUser || formData.officeEmail;
+    if (!destination || (!useServerSmtpTransport && (!formData.emailUser || !state.settings.scriptUrl))) {
+      setTestStatus({ success: false, message: 'Configure o e-mail/destinatário antes de testar.' });
       return;
     }
     setIsSendingDailyTest(true);
@@ -738,15 +760,16 @@ export default function Settings() {
         year: new Date().getFullYear()
       }, formData.templateDailyReport);
 
-      const success = formData.useExternalSmtp 
+      const success = useServerSmtpTransport
         ? await sendTestEmailExternal({
-            host: formData.smtpHost!,
-            port: formData.smtpPort!,
-            secure: formData.smtpSecure!,
-            user: formData.emailUser,
-            pass: formData.emailPass,
+            host: formData.smtpHost || undefined,
+            port: formData.smtpPort || 465,
+            secure: formData.smtpSecure ?? true,
+            user: formData.emailUser || undefined,
+            pass: formData.emailPass || undefined,
             to: destination,
-            subject: `Relatório Diário - ${activeOffice?.nome || 'LEXGESTÃO'} (Teste)`,
+            officeId: escritorioAtivoId || undefined,
+            subject: `Relatório Diário - ${activeOffice?.nome || 'Meu Escritório'} (Teste)`,
             html: reportBody
           })
         : await sendTestEmail(
@@ -754,7 +777,7 @@ export default function Settings() {
             destination, 
             formData.emailUser, 
             formData.emailPass, 
-            `Relatório Diário - ${activeOffice?.nome || 'LEXGESTÃO'} (Teste)`,
+            `Relatório Diário - ${activeOffice?.nome || 'Meu Escritório'} (Teste)`,
             reportBody
           );
       
@@ -770,8 +793,9 @@ export default function Settings() {
 
   const handleTestNewNotifications = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!formData.emailUser || (!formData.useExternalSmtp && !state.settings.scriptUrl)) {
-      setTestStatus({ success: false, message: 'Configure o e-mail e salve antes de testar.' });
+    const destination = testRecipient || currentUser?.email || formData.emailUser || formData.officeEmail;
+    if (!destination || (!useServerSmtpTransport && (!formData.emailUser || !state.settings.scriptUrl))) {
+      setTestStatus({ success: false, message: 'Configure o e-mail/destinatário antes de testar.' });
       return;
     }
     setIsSendingNewNotificationsTest(true);
@@ -825,15 +849,16 @@ export default function Settings() {
         year: new Date().getFullYear()
       }, formData.templateNewNotifications);
 
-      const success = formData.useExternalSmtp 
+      const success = useServerSmtpTransport
         ? await sendTestEmailExternal({
-            host: formData.smtpHost!,
-            port: formData.smtpPort!,
-            secure: formData.smtpSecure!,
-            user: formData.emailUser,
-            pass: formData.emailPass,
+            host: formData.smtpHost || undefined,
+            port: formData.smtpPort || 465,
+            secure: formData.smtpSecure ?? true,
+            user: formData.emailUser || undefined,
+            pass: formData.emailPass || undefined,
             to: destination,
-            subject: `Novas Intimações - ${activeOffice?.nome || 'LEXGESTÃO'} (Teste)`,
+            officeId: escritorioAtivoId || undefined,
+            subject: `Novas Intimações - ${activeOffice?.nome || 'Meu Escritório'} (Teste)`,
             html: notificationBody
           })
         : await sendTestEmail(
@@ -841,7 +866,7 @@ export default function Settings() {
             destination, 
             formData.emailUser, 
             formData.emailPass, 
-            `Novas Intimações - ${activeOffice?.nome || 'LEXGESTÃO'} (Teste)`,
+            `Novas Intimações - ${activeOffice?.nome || 'Meu Escritório'} (Teste)`,
             notificationBody
           );
       
@@ -1529,8 +1554,17 @@ export default function Settings() {
                 <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 p-4 rounded-lg flex items-start gap-3">
                   <Info className="text-blue-600 dark:text-blue-400 shrink-0" size={20} />
                   <div className="text-sm text-blue-800 dark:text-blue-200">
-                    <p className="font-semibold mb-1">Modo Google Apps Script:</p>
-                    <p>O sistema utiliza o serviço nativo do Google Mail (MailApp) associado à conta que publicou o Script. Ideal para envios rápidos e simples usando sua conta Gmail.</p>
+                    {dataSource === 'supabase' || !state.settings.scriptUrl ? (
+                      <>
+                        <p className="font-semibold mb-1">Modo Servidor SMTP / Supabase:</p>
+                        <p>Os envios são feitos diretamente pelo servidor Node.js usando as tabelas do Supabase. Você pode informar um e-mail Gmail (com Senha de App) abaixo, deixar em branco para usar o SMTP Global do sistema, ou ativar "Usar SMTP Externo" para servidor próprio.</p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="font-semibold mb-1">Modo Google Apps Script:</p>
+                        <p>O sistema utiliza o serviço nativo do Google Mail (MailApp) associado à conta que publicou o Script. Ideal para envios rápidos e simples usando sua conta Gmail.</p>
+                      </>
+                    )}
                   </div>
                 </div>
               ) : (
@@ -1538,7 +1572,7 @@ export default function Settings() {
                   <AlertTriangle className="text-amber-600 dark:text-amber-400 shrink-0" size={20} />
                   <div className="text-sm text-amber-800 dark:text-amber-200">
                     <p className="font-semibold mb-1">Modo SMTP Externo:</p>
-                    <p>Permite utilizar servidores de e-mail profissionais (SendGrid, Mailgun, Outlook, servidor próprio). Requer configuração manual dos dados do servidor.</p>
+                    <p>Permite utilizar servidores de e-mail profissionais (Gmail SMTP, SendGrid, Hostinger, Locaweb, Outlook, servidor próprio). Requer configuração dos dados do servidor.</p>
                   </div>
                 </div>
               )}
@@ -1628,7 +1662,7 @@ export default function Settings() {
                     <button
                       type="button"
                       onClick={handleTestEmail}
-                      disabled={isSendingTest || !formData.emailUser}
+                      disabled={isSendingTest || (!useServerSmtpTransport && !formData.emailUser)}
                       className="flex items-center gap-2 px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-all font-medium disabled:opacity-50 text-sm whitespace-nowrap"
                     >
                       {isSendingTest ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}

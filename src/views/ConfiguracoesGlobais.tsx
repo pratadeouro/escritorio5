@@ -22,9 +22,11 @@ import {
   Loader2, 
   Scale, 
   Clock,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Send
 } from 'lucide-react';
 import { isSupabaseConfigured } from '../services/supabaseService';
+import { sendTestEmailExternal, triggerAutomatedEmails } from '../services/googleAppsScript';
 import { EnvironmentMode } from '../types';
 import { SupabaseMigrationTab } from '../components/SupabaseMigrationTab';
 
@@ -161,6 +163,10 @@ export default function ConfiguracoesGlobais() {
   const [saveError, setSaveError] = useState<string | null>(null);
   const [copiedOrigin, setCopiedOrigin] = useState(false);
   const [copiedClientId, setCopiedClientId] = useState(false);
+  const [testEmailTo, setTestEmailTo] = useState(() => currentUser?.email || '');
+  const [isTestingSmtp, setIsTestingSmtp] = useState(false);
+  const [isRunningAutomation, setIsRunningAutomation] = useState<'daily' | 'weekly' | null>(null);
+  const [emailActionFeedback, setEmailActionFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   const currentOrigin = typeof window !== 'undefined' ? window.location.origin : '';
 
@@ -1207,8 +1213,139 @@ export default function ConfiguracoesGlobais() {
                       </button>
                     </div>
                   </div>
+
+                  <div className="flex items-end pb-2">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={smtpSecure}
+                        onChange={(e) => setSmtpSecure(e.target.checked)}
+                        className="w-4 h-4 text-primary border-app-border rounded focus:ring-primary bg-app-bg"
+                      />
+                      <span className="text-xs font-bold text-app-text">SSL/TLS Seguro (Porta 465)</span>
+                    </label>
+                  </div>
                 </div>
               )}
+
+              {/* Teste de SMTP Global e Disparo Manual da Automação via Supabase */}
+              <div className="border-t border-app-border pt-6 space-y-4">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div className="p-4 bg-app-bg border border-app-border rounded-2xl space-y-3">
+                    <div>
+                      <h5 className="text-xs font-bold text-app-text uppercase tracking-wider">Testar Envio SMTP Global</h5>
+                      <p className="text-[11px] text-app-text-muted">Valida o servidor SMTP configurado acima (ou fallback do .env).</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <input
+                        type="email"
+                        value={testEmailTo}
+                        onChange={(e) => setTestEmailTo(e.target.value)}
+                        placeholder="destinatario@exemplo.com"
+                        className="flex-1 px-3 py-2 rounded-xl border border-app-border bg-app-surface text-xs text-app-text"
+                      />
+                      <button
+                        type="button"
+                        disabled={isTestingSmtp}
+                        onClick={async () => {
+                          const target = testEmailTo.trim() || emailUser.trim() || currentUser?.email || '';
+                          if (!target) {
+                            setEmailActionFeedback({ type: 'error', message: 'Informe um e-mail destinatário para o teste.' });
+                            return;
+                          }
+                          setIsTestingSmtp(true);
+                          setEmailActionFeedback(null);
+                          try {
+                            await sendTestEmailExternal({
+                              host: smtpHost.trim() || undefined,
+                              port: Number(smtpPort) || 465,
+                              secure: smtpSecure,
+                              user: emailUser.trim() || undefined,
+                              pass: emailPass.trim() || undefined,
+                              to: target
+                            });
+                            setEmailActionFeedback({ type: 'success', message: `E-mail de teste enviado com sucesso para ${target}!` });
+                          } catch (err: any) {
+                            setEmailActionFeedback({ type: 'error', message: err?.message || 'Erro ao testar envio SMTP.' });
+                          } finally {
+                            setIsTestingSmtp(false);
+                          }
+                        }}
+                        className="flex items-center gap-1.5 px-4 py-2 bg-primary text-white rounded-xl text-xs font-bold hover:bg-primary/90 disabled:opacity-50 whitespace-nowrap"
+                      >
+                        {isTestingSmtp ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                        Testar SMTP
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="p-4 bg-app-bg border border-app-border rounded-2xl space-y-3">
+                    <div>
+                      <h5 className="text-xs font-bold text-app-text uppercase tracking-wider">Rotina Automática via Supabase</h5>
+                      <p className="text-[11px] text-app-text-muted">Dispara manualmente a checagem nos escritórios habilitados no Supabase.</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        disabled={isRunningAutomation !== null}
+                        onClick={async () => {
+                          setIsRunningAutomation('daily');
+                          setEmailActionFeedback(null);
+                          try {
+                            const res = await triggerAutomatedEmails({ type: 'daily', force: true });
+                            setEmailActionFeedback({
+                              type: res.errors ? 'error' : 'success',
+                              message: `Rotina Diária (${res.source?.toUpperCase()}): ${res.matchedOffices || 0} escritório(s) habilitado(s), ${res.sentCount || 0} e-mail(s) enviado(s)${res.errors ? `, ${res.errors} erro(s)` : ''}.`
+                            });
+                          } catch (err: any) {
+                            setEmailActionFeedback({ type: 'error', message: err?.message || 'Falha ao executar rotina diária.' });
+                          } finally {
+                            setIsRunningAutomation(null);
+                          }
+                        }}
+                        className="flex items-center gap-1.5 px-3.5 py-2 bg-app-surface border border-app-border text-app-text rounded-xl text-xs font-bold hover:border-primary hover:text-primary disabled:opacity-50"
+                      >
+                        {isRunningAutomation === 'daily' ? <Loader2 size={14} className="animate-spin" /> : <Clock size={14} />}
+                        Executar Diário Agora
+                      </button>
+                      <button
+                        type="button"
+                        disabled={isRunningAutomation !== null}
+                        onClick={async () => {
+                          setIsRunningAutomation('weekly');
+                          setEmailActionFeedback(null);
+                          try {
+                            const res = await triggerAutomatedEmails({ type: 'weekly', force: true });
+                            setEmailActionFeedback({
+                              type: res.errors ? 'error' : 'success',
+                              message: `Rotina Semanal (${res.source?.toUpperCase()}): ${res.matchedOffices || 0} escritório(s) habilitado(s), ${res.sentCount || 0} e-mail(s) enviado(s)${res.errors ? `, ${res.errors} erro(s)` : ''}.`
+                            });
+                          } catch (err: any) {
+                            setEmailActionFeedback({ type: 'error', message: err?.message || 'Falha ao executar rotina semanal.' });
+                          } finally {
+                            setIsRunningAutomation(null);
+                          }
+                        }}
+                        className="flex items-center gap-1.5 px-3.5 py-2 bg-app-surface border border-app-border text-app-text rounded-xl text-xs font-bold hover:border-primary hover:text-primary disabled:opacity-50"
+                      >
+                        {isRunningAutomation === 'weekly' ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                        Executar Semanal Agora
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                {emailActionFeedback && (
+                  <div className={`p-3 rounded-xl border text-xs font-medium flex items-center gap-2 ${
+                    emailActionFeedback.type === 'success'
+                      ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-700 dark:text-emerald-300'
+                      : 'bg-red-500/10 border-red-500/20 text-red-700 dark:text-red-300'
+                  }`}>
+                    {emailActionFeedback.type === 'success' ? <CheckCircle2 size={16} /> : <AlertCircle size={16} />}
+                    <span>{emailActionFeedback.message}</span>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>

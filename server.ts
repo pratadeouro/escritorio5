@@ -107,94 +107,657 @@ async function fetchSheetData(sheetName: string) {
   }
 }
 
-async function runAutomatedEmails(type: 'weekly' | 'daily') {
-  console.log(`[Automation] Checking ${type} emails due at ${new Date().toISOString()}...`);
-  
-  // 1. Get Settings (Configuracoes)
+async function fetchSupabaseTablePaged(
+  supabaseUrl: string,
+  supabaseKey: string,
+  table: string,
+  orderCol?: string,
+  ascending = true,
+  maxRows = 10000
+): Promise<any[]> {
+  const pageSize = 1000;
+  const allRows: any[] = [];
+  for (let from = 0; from < maxRows; from += pageSize) {
+    const to = from + pageSize - 1;
+    const orderParam = orderCol ? `&order=${encodeURIComponent(orderCol)}.${ascending ? 'asc' : 'desc'}` : '';
+    const resp = await fetch(`${supabaseUrl}/rest/v1/${table}?select=*${orderParam}`, {
+      headers: {
+        apikey: supabaseKey,
+        Authorization: `Bearer ${supabaseKey}`,
+        "Range-Unit": "items",
+        "Range": `${from}-${to}`
+      }
+    });
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '');
+      console.warn(`[Supabase Email] Falha ao consultar tabela ${table} (HTTP ${resp.status}): ${errText}`);
+      break;
+    }
+    const chunk = await resp.json().catch(() => []);
+    if (!Array.isArray(chunk) || chunk.length === 0) break;
+    allRows.push(...chunk);
+    if (chunk.length < pageSize) break;
+  }
+  return allRows;
+}
+
+const parseBoolFlag = (val: any): boolean => {
+  if (typeof val === 'boolean') return val;
+  if (typeof val === 'number') return val === 1;
+  const norm = String(val || '').trim().toLowerCase();
+  return norm === 'true' || norm === '1' || norm === 'sim' || norm === 'yes';
+};
+
+interface ResolvedSmtpConfig {
+  host: string;
+  port: number;
+  secure: boolean;
+  user: string;
+  pass: string;
+  source: 'office' | 'global_db' | 'env' | 'explicit';
+}
+
+const resolveSmtpFromSource = (
+  source: { smtpHost?: string; smtpPort?: any; smtpSecure?: any; emailUser?: string; emailPass?: string },
+  sourceLabel: ResolvedSmtpConfig['source']
+): ResolvedSmtpConfig | null => {
+  const user = String(source.emailUser || '').trim();
+  const pass = String(source.emailPass || '').trim();
+  let host = String(source.smtpHost || '').trim();
+  let port = Number(source.smtpPort) || 465;
+  let secure = source.smtpSecure === undefined || source.smtpSecure === null
+    ? port === 465
+    : parseBoolFlag(source.smtpSecure);
+
+  if (!host && user && /@(gmail|googlemail)\.com$/i.test(user)) {
+    host = 'smtp.gmail.com';
+    port = Number(source.smtpPort) || 465;
+    secure = port === 465;
+  }
+
+  if (!host || !user || !pass) return null;
+  return { host, port, secure, user, pass, source: sourceLabel };
+};
+
+const getEnvSmtpFallback = (): ResolvedSmtpConfig | null => {
+  return resolveSmtpFromSource({
+    smtpHost: process.env.SMTP_HOST,
+    smtpPort: process.env.SMTP_PORT || 465,
+    smtpSecure: process.env.SMTP_SECURE ?? 'true',
+    emailUser: process.env.SMTP_USER,
+    emailPass: process.env.SMTP_PASS,
+  }, 'env');
+};
+
+async function saveSupabaseEmailLog(
+  supabaseUrl: string,
+  supabaseKey: string,
+  entry: { usuario?: string; acao: string; idEscritorio?: string; detalhes: string }
+) {
+  try {
+    await fetch(`${supabaseUrl}/rest/v1/logs`, {
+      method: "POST",
+      headers: {
+        apikey: supabaseKey,
+        Authorization: `Bearer ${supabaseKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        id: `log_mail_${Math.random().toString(36).substring(2, 9)}_${Date.now()}`,
+        data: new Date().toISOString(),
+        usuario: entry.usuario || 'Sistema (Automação)',
+        acao: entry.acao,
+        id_escritorio: entry.idEscritorio || null,
+        detalhes: entry.detalhes
+      })
+    });
+  } catch (err) {
+    console.warn('[Automation] Aviso ao gravar log no Supabase:', err);
+  }
+}
+
+async function verifySupabaseCaller(req: express.Request): Promise<{
+  email: string;
+  userId?: string;
+  isAdmin: boolean;
+  escritoriosIds: string[];
+} | null> {
+  const authHeader = String(req.headers.authorization || '').trim();
+  const token = authHeader.toLowerCase().startsWith('bearer ') ? authHeader.slice(7).trim() : '';
+  if (!token) return null;
+
+  const { supabaseUrl, supabaseKey, publishableKey } = getServerSupabaseConfig();
+  const apiKey = supabaseKey || publishableKey;
+  if (!supabaseUrl || !apiKey) return null;
+
+  try {
+    const userResp = await fetch(`${supabaseUrl}/auth/v1/user`, {
+      headers: { apikey: apiKey, Authorization: `Bearer ${token}` }
+    });
+    if (!userResp.ok) return null;
+    const authUser = await userResp.json().catch(() => null);
+    const email = String(authUser?.email || '').trim().toLowerCase();
+    if (!email) return null;
+
+    let pu: any = null;
+    if (supabaseKey) {
+      const puResp = await fetch(
+        `${supabaseUrl}/rest/v1/usuarios?email=ilike.${encodeURIComponent(email)}&select=id,email,permissao,status,escritorios_ids&limit=1`,
+        { headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` } }
+      );
+      if (puResp.ok) {
+        const rows = await puResp.json().catch(() => []);
+        pu = Array.isArray(rows) ? rows[0] : null;
+      }
+    }
+
+    const meta = authUser?.user_metadata || {};
+    const status = String(pu?.status || meta.status || 'Ativo').trim().toLowerCase();
+    if (email !== 'pratadeouro@gmail.com' && status === 'inativo') return null;
+
+    const permStr = String(pu?.permissao || meta.permissao || '').toLowerCase();
+    const isAdmin =
+      email === 'pratadeouro@gmail.com' ||
+      email.includes('walber') ||
+      permStr.includes('admin') ||
+      permStr.includes('gestor');
+
+    let rawEsc = pu?.escritorios_ids ?? meta.escritorios_ids ?? meta.escritoriosIds ?? [];
+    if (typeof rawEsc === 'string') {
+      try { rawEsc = JSON.parse(rawEsc); } catch { rawEsc = rawEsc.split(',').map((s: string) => s.trim()).filter(Boolean); }
+    }
+    const escritoriosIds = Array.isArray(rawEsc)
+      ? rawEsc.map((id: any) => String(id || '').trim().toUpperCase()).filter(Boolean)
+      : [];
+
+    return { email, userId: pu?.id || authUser?.id, isAdmin, escritoriosIds };
+  } catch {
+    return null;
+  }
+}
+
+const sentAutomationRegistry = new Map<string, number>();
+
+interface AutomationRunResult {
+  success: boolean;
+  source: 'supabase' | 'sheets';
+  type: 'weekly' | 'daily';
+  checkedOffices: number;
+  matchedOffices: number;
+  sentCount: number;
+  errors: number;
+  details: Array<{ officeId: string; officeName: string; emailTo: string; sent: string[]; error?: string }>;
+}
+
+const isTimeDueNow = (
+  now: Date,
+  timezone: string,
+  dispatchTime: string,
+  type: 'weekly' | 'daily'
+): { due: boolean; currentTimeStr: string; localDateKey: string; reason?: string } => {
+  try {
+    const timeParts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23'
+    }).formatToParts(now);
+
+    const year = timeParts.find(p => p.type === 'year')?.value || '2026';
+    const month = timeParts.find(p => p.type === 'month')?.value || '01';
+    const day = timeParts.find(p => p.type === 'day')?.value || '01';
+    const currentHour = timeParts.find(p => p.type === 'hour')?.value || '00';
+    const currentMinute = timeParts.find(p => p.type === 'minute')?.value || '00';
+    const currentTimeStr = `${currentHour}:${currentMinute}`;
+    const localDateKey = `${year}-${month}-${day}`;
+
+    if (type === 'weekly') {
+      const dayName = new Intl.DateTimeFormat('pt-BR', {
+        timeZone: timezone,
+        weekday: 'long'
+      }).format(now).toLowerCase();
+      if (!dayName.includes('segunda')) {
+        return { due: false, currentTimeStr, localDateKey, reason: 'not_monday' };
+      }
+    }
+
+    const [rawH, rawM] = String(dispatchTime || '08:00').split(':');
+    const targetH = String(parseInt(rawH, 10) || 0).padStart(2, '0');
+    const targetMin = parseInt(rawM, 10) || 0;
+    const currMin = parseInt(currentMinute, 10) || 0;
+
+    if (currentHour !== targetH) {
+      return { due: false, currentTimeStr, localDateKey, reason: 'hour_mismatch' };
+    }
+    if (targetMin < currMin || targetMin >= currMin + 30) {
+      return { due: false, currentTimeStr, localDateKey, reason: 'minute_window_mismatch' };
+    }
+
+    return { due: true, currentTimeStr, localDateKey };
+  } catch (err) {
+    console.error(`[Automation] Error checking timezone for ${timezone}:`, err);
+    return { due: false, currentTimeStr: '00:00', localDateKey: now.toISOString().split('T')[0], reason: 'timezone_error' };
+  }
+};
+
+async function runAutomatedEmails(
+  type: 'weekly' | 'daily',
+  options?: { force?: boolean; officeId?: string }
+): Promise<AutomationRunResult> {
+  const now = new Date();
+  const rawDataSource = String(process.env.DATA_SOURCE || process.env.VITE_DATA_SOURCE || 'supabase').trim().toLowerCase();
+  const dataSource: 'supabase' | 'sheets' = rawDataSource === 'sheets' ? 'sheets' : 'supabase';
+  const forceRun = !!options?.force;
+  const targetOfficeUpper = options?.officeId ? String(options.officeId).trim().toUpperCase() : '';
+
+  console.log(`[Automation] Checking ${type} emails (${dataSource.toUpperCase()}${forceRun ? ', FORCE' : ''}) at ${now.toISOString()}...`);
+
+  // ============================================================================
+  // MODO SUPABASE (PADRÃO ATUAL)
+  // ============================================================================
+  if (dataSource === 'supabase') {
+    const { supabaseUrl, supabaseKey, hasServiceRole } = getServerSupabaseConfig();
+    if (!supabaseUrl || !supabaseKey) {
+      console.warn('[Automation] Supabase não configurado no .env. Abortando disparo automático.');
+      return { success: false, source: 'supabase', type, checkedOffices: 0, matchedOffices: 0, sentCount: 0, errors: 1, details: [] };
+    }
+    if (!hasServiceRole) {
+      console.warn('[Automation] SUPABASE_SECRET_KEY não configurada; a leitura em segundo plano pode sofrer restrições de RLS.');
+    }
+
+    const [escritoriosRows, settingsRows] = await Promise.all([
+      fetchSupabaseTablePaged(supabaseUrl, supabaseKey, 'escritorios'),
+      fetchSupabaseTablePaged(supabaseUrl, supabaseKey, 'app_settings'),
+    ]);
+
+    const globalSetting =
+      settingsRows.find((s: any) => String(s?.id || '').trim().toLowerCase() === 'global') ||
+      settingsRows.find((s: any) => String(s?.id_escritorio || '').trim().toUpperCase() === 'GLOBAL') ||
+      settingsRows[0] ||
+      null;
+
+    const envSmtpFallback = getEnvSmtpFallback();
+    const globalDbSmtp = globalSetting
+      ? resolveSmtpFromSource({
+          smtpHost: globalSetting.smtp_host,
+          smtpPort: globalSetting.smtp_port,
+          smtpSecure: globalSetting.smtp_secure,
+          emailUser: globalSetting.email_user,
+          emailPass: globalSetting.email_pass,
+        }, 'global_db')
+      : null;
+
+    interface OfficeEmailJob {
+      officeId: string;
+      officeIdUpper: string;
+      officeName: string;
+      responsavel: string;
+      emailTo: string;
+      wantsWeekly: boolean;
+      wantsDaily: boolean;
+      wantsNotifications: boolean;
+      diasMorosidade: number;
+      templateWeekly?: string;
+      templateDaily?: string;
+      templateNotifications?: string;
+      localDateKey: string;
+      smtp: ResolvedSmtpConfig | null;
+      scriptUrl?: string;
+    }
+
+    const jobs: OfficeEmailJob[] = [];
+
+    for (const office of escritoriosRows) {
+      const officeId = String(office?.id || '').trim();
+      const officeIdUpper = officeId.toUpperCase();
+      if (!officeId) continue;
+      if (targetOfficeUpper && officeIdUpper !== targetOfficeUpper) continue;
+
+      const officeSetting = settingsRows.find((s: any) => {
+        const sEsc = String(s?.id_escritorio || '').trim().toUpperCase();
+        const sId = String(s?.id || '').trim().toUpperCase();
+        return sEsc === officeIdUpper || sId === officeIdUpper;
+      });
+
+      const isEnabled =
+        parseBoolFlag(office?.enable_email_notifications) ||
+        parseBoolFlag(officeSetting?.enable_email_notifications);
+      const wantsWeekly =
+        parseBoolFlag(office?.email_weekly_report) ||
+        parseBoolFlag(officeSetting?.email_weekly_report);
+      const wantsDaily =
+        parseBoolFlag(office?.email_daily_report) ||
+        parseBoolFlag(officeSetting?.email_daily_report);
+      const wantsNotifications =
+        parseBoolFlag(office?.email_new_notifications) ||
+        parseBoolFlag(officeSetting?.email_new_notifications);
+
+      if (!isEnabled) continue;
+      if (type === 'weekly' && !wantsWeekly) continue;
+      if (type === 'daily' && !wantsDaily && !wantsNotifications) continue;
+
+      const timezone = office?.timezone || officeSetting?.timezone || globalSetting?.timezone || 'America/Sao_Paulo';
+      const dispatchTime = office?.email_dispatch_time || officeSetting?.email_dispatch_time || globalSetting?.email_dispatch_time || '08:00';
+
+      const scheduleCheck = isTimeDueNow(now, timezone, dispatchTime, type);
+      if (!forceRun && !scheduleCheck.due) continue;
+
+      const officeSmtp =
+        resolveSmtpFromSource({
+          smtpHost: office?.smtp_host || officeSetting?.smtp_host,
+          smtpPort: office?.smtp_port || officeSetting?.smtp_port,
+          smtpSecure: office?.smtp_secure ?? officeSetting?.smtp_secure,
+          emailUser: office?.email_user || officeSetting?.email_user,
+          emailPass: office?.email_pass || officeSetting?.email_pass,
+        }, 'office') ||
+        globalDbSmtp ||
+        envSmtpFallback;
+
+      const emailTo = String(
+        office?.email ||
+        office?.email_user ||
+        officeSetting?.email_user ||
+        officeSmtp?.user ||
+        ''
+      ).trim();
+
+      if (!emailTo) continue;
+
+      console.log(
+        `[Automation/Supabase] Escritório ${office?.nome || officeId} apto para ${type} (Hora local: ${scheduleCheck.currentTimeStr}, Agendado: ${dispatchTime})`
+      );
+
+      jobs.push({
+        officeId,
+        officeIdUpper,
+        officeName: office?.nome || 'Meu Escritório',
+        responsavel: office?.responsavel || '',
+        emailTo,
+        wantsWeekly,
+        wantsDaily,
+        wantsNotifications,
+        diasMorosidade: Number(office?.dias_morosidade || officeSetting?.dias_morosidade || globalSetting?.dias_morosidade || 30) || 30,
+        templateWeekly: office?.template_weekly_report || officeSetting?.template_weekly_report || globalSetting?.template_weekly_report,
+        templateDaily: office?.template_daily_report || officeSetting?.template_daily_report || globalSetting?.template_daily_report,
+        templateNotifications: office?.template_new_notifications || officeSetting?.template_new_notifications || globalSetting?.template_new_notifications,
+        localDateKey: scheduleCheck.localDateKey,
+        smtp: officeSmtp,
+        scriptUrl: process.env.VITE_SCRIPT_URL || process.env.SCRIPT_URL || '',
+      });
+    }
+
+    if (jobs.length === 0) {
+      console.log(`[Automation/Supabase] Nenhum escritório para notificar (${type}).`);
+      return {
+        success: true,
+        source: 'supabase',
+        type,
+        checkedOffices: escritoriosRows.length,
+        matchedOffices: 0,
+        sentCount: 0,
+        errors: 0,
+        details: []
+      };
+    }
+
+    const [processos, tarefas, contatos, eventos, movimentos] = await Promise.all([
+      fetchSupabaseTablePaged(supabaseUrl, supabaseKey, 'processos'),
+      fetchSupabaseTablePaged(supabaseUrl, supabaseKey, 'tarefas'),
+      fetchSupabaseTablePaged(supabaseUrl, supabaseKey, 'contatos'),
+      fetchSupabaseTablePaged(supabaseUrl, supabaseKey, 'eventos'),
+      fetchSupabaseTablePaged(supabaseUrl, supabaseKey, 'movimentos'),
+    ]);
+
+    let sentCount = 0;
+    let errors = 0;
+    const details: AutomationRunResult['details'] = [];
+
+    for (const job of jobs) {
+      const sentForOffice: string[] = [];
+      let officeError: string | undefined;
+
+      const sendViaJob = async (reportKind: string, to: string, sub: string, html: string): Promise<boolean> => {
+        const dedupKey = `${job.officeIdUpper}:${type}:${reportKind}:${job.localDateKey}`;
+        if (!forceRun && sentAutomationRegistry.has(dedupKey)) {
+          console.log(`[Automation/Supabase] Pulando envio duplicado hoje (${dedupKey}).`);
+          return false;
+        }
+
+        try {
+          if (job.smtp) {
+            const transporter = nodemailer.createTransport({
+              host: job.smtp.host,
+              port: job.smtp.port,
+              secure: job.smtp.secure,
+              auth: { user: job.smtp.user, pass: job.smtp.pass }
+            });
+            await transporter.sendMail({
+              from: `"${job.officeName}" <${job.smtp.user}>`,
+              to,
+              subject: sub,
+              html
+            });
+          } else if (job.scriptUrl) {
+            await fetch(job.scriptUrl, {
+              method: 'POST',
+              body: JSON.stringify({ action: 'sendEmail', to, subject: sub, body: html }),
+              headers: { 'Content-Type': 'text/plain;charset=utf-8' }
+            });
+          } else {
+            throw new Error('Nenhum servidor SMTP configurado (nem no escritório, nem nas configurações globais, nem no .env).');
+          }
+
+          if (!forceRun) {
+            sentAutomationRegistry.set(dedupKey, Date.now());
+          }
+          sentCount++;
+          sentForOffice.push(reportKind);
+          console.log(`[Automation/Supabase] E-mail (${reportKind}) enviado para ${to} - ${sub}`);
+
+          await saveSupabaseEmailLog(supabaseUrl, supabaseKey, {
+            acao: 'EMAIL_AUTOMATICO',
+            idEscritorio: job.officeId,
+            detalhes: `Disparo automático (${reportKind}) enviado para ${to}: ${sub}`
+          });
+          return true;
+        } catch (err: any) {
+          errors++;
+          officeError = err?.message || String(err);
+          console.error(`[Automation/Supabase] Erro ao enviar (${reportKind}) para ${to}:`, err);
+          await saveSupabaseEmailLog(supabaseUrl, supabaseKey, {
+            acao: 'EMAIL_AUTOMATICO_ERRO',
+            idEscritorio: job.officeId,
+            detalhes: `Falha no disparo automático (${reportKind}) para ${to}: ${officeError}`
+          });
+          return false;
+        }
+      };
+
+      const matchesOffice = (row: any) => String(row?.escritorio_id || '').trim().toUpperCase() === job.officeIdUpper;
+
+      const officeProcessosAtivos = processos.filter(p => {
+        if (!matchesOffice(p)) return false;
+        const st = String(p?.status || '').trim().toLowerCase();
+        const atv = String(p?.ativo || '').trim().toLowerCase();
+        return st === 'ativo' || atv === 'ativo' || atv === 'true';
+      });
+
+      const officeTarefasPendentes = tarefas.filter(t => {
+        if (!matchesOffice(t)) return false;
+        const st = String(t?.status || '').trim().toLowerCase();
+        return st !== 'concluída' && st !== 'concluida';
+      });
+
+      const officeClientes = contatos.filter(c => {
+        if (!matchesOffice(c)) return false;
+        return String(c?.tipo || '').trim().toLowerCase() === 'cliente';
+      });
+
+      const officeEventosPendentes = eventos.filter(e => {
+        if (!matchesOffice(e)) return false;
+        return !parseBoolFlag(e?.concluido);
+      });
+
+      const officeProcessosPendentes = processos.filter(p => {
+        if (!matchesOffice(p)) return false;
+        const statusRaw = String(p?.ativo || p?.status || '').toLowerCase();
+        const tagsRaw = String(p?.tags || '').toLowerCase();
+        return statusRaw.includes('pend') || statusRaw === 'p' || tagsRaw.includes('pendência') || tagsRaw.includes('pendencia');
+      });
+
+      const processosMorosos = officeProcessosAtivos.filter(p => {
+        const pKeys = new Set(
+          [p?.id, p?.id_proc, p?.numero].map(v => String(v || '').trim()).filter(Boolean)
+        );
+        const movs = movimentos.filter(m => pKeys.has(String(m?.processo_id || '').trim()));
+
+        if (movs.length === 0) {
+          if (!p?.data_distribuicao) return false;
+          const dataDist = new Date(p.data_distribuicao);
+          if (isNaN(dataDist.getTime())) return false;
+          const diffDays = Math.ceil(Math.abs(now.getTime() - dataDist.getTime()) / (1000 * 60 * 60 * 24));
+          return diffDays > job.diasMorosidade;
+        }
+
+        const ultMov = movs.sort((a, b) => new Date(b?.data || 0).getTime() - new Date(a?.data || 0).getTime())[0];
+        const dataMov = new Date(ultMov?.data);
+        if (isNaN(dataMov.getTime())) return false;
+        const diffDays = Math.ceil(Math.abs(now.getTime() - dataMov.getTime()) / (1000 * 60 * 60 * 24));
+        return diffDays > job.diasMorosidade;
+      });
+
+      let publicationsToday = 0;
+      let notificationsItems: any[] = [];
+      if (job.responsavel && (type === 'daily' || job.wantsNotifications)) {
+        try {
+          const today = job.localDateKey || now.toISOString().split('T')[0];
+          const url = `https://comunicaapi.pje.jus.br/api/v1/comunicacao?pagina=1&itensPorPagina=10&dataDisponibilizacaoInicio=${today}&dataDisponibilizacaoFim=${today}&nomeAdvogado=${encodeURIComponent(job.responsavel)}`;
+          const response = await fetch(url);
+          if (response.ok) {
+            const data = await response.json();
+            publicationsToday = data.count || 0;
+            notificationsItems = data.items || [];
+          }
+        } catch (err) {
+          console.error(`[Automation/Supabase] Erro ao consultar DJEN para ${job.responsavel}:`, err);
+        }
+      }
+
+      if (type === 'weekly' && job.wantsWeekly) {
+        const subject = `Resumo Semanal - ${job.officeName}`;
+        const body = getWeeklyReportTemplate({
+          officeName: job.officeName,
+          activeProcesses: officeProcessosAtivos.length,
+          pendingTasks: officeTarefasPendentes.length,
+          totalCustomers: officeClientes.length,
+          pendingEvents: officeEventosPendentes.length,
+          pendingProcesses: officeProcessosPendentes.length,
+          lateProcesses: processosMorosos.length,
+          publicationsToday,
+          year: now.getFullYear()
+        }, job.templateWeekly);
+        if (body) await sendViaJob('weekly', job.emailTo, subject, body);
+      }
+
+      if (type === 'daily') {
+        if (job.wantsDaily) {
+          const subject = `Relatório Diário - ${job.officeName}`;
+          const body = getDailyReportTemplate({
+            officeName: job.officeName,
+            publicationsToday,
+            pendingTasks: officeTarefasPendentes.length,
+            pendingProcesses: officeProcessosPendentes.length,
+            pendingEvents: officeEventosPendentes.length,
+            lateProcesses: processosMorosos.length,
+            diasMorosidade: job.diasMorosidade,
+            year: now.getFullYear()
+          }, job.templateDaily);
+          if (body) await sendViaJob('daily', job.emailTo, subject, body);
+        }
+
+        if (job.wantsNotifications && publicationsToday > 0) {
+          const subject = `Novas Intimações - ${job.officeName}`;
+          const body = getNewNotificationsTemplate({
+            officeName: job.officeName,
+            date: now.toLocaleDateString('pt-BR'),
+            count: publicationsToday,
+            responsible: job.responsavel,
+            items: notificationsItems.slice(0, 5).map(item => ({
+              numeroProcesso: item.numeroProcesso,
+              texto: item.texto || '',
+              orgao: item.orgaoMnemonic
+            })),
+            year: now.getFullYear()
+          }, job.templateNotifications);
+          if (body) await sendViaJob('notifications', job.emailTo, subject, body);
+        }
+      }
+
+      details.push({
+        officeId: job.officeId,
+        officeName: job.officeName,
+        emailTo: job.emailTo,
+        sent: sentForOffice,
+        ...(officeError ? { error: officeError } : {})
+      });
+    }
+
+    return {
+      success: errors === 0,
+      source: 'supabase',
+      type,
+      checkedOffices: escritoriosRows.length,
+      matchedOffices: jobs.length,
+      sentCount,
+      errors,
+      details
+    };
+  }
+
+  // ============================================================================
+  // MODO GOOGLE SHEETS (LEGADO, QUANDO DATA_SOURCE=sheets)
+  // ============================================================================
   const settingsData = await fetchSheetData('Configuracoes');
   const officesData = await fetchSheetData('Escritorios');
-  
-  // 30 min window for matching
-  const now = new Date();
 
-  // 2. Identify offices with enabled notifications AND whose time matches now
   const officesToNotify = settingsData.filter(setting => {
-    const isEnabled = setting.enableEmailNotifications === 'TRUE' || setting.enableEmailNotifications === 'true' || setting.enableEmailNotifications === true;
-    const wantsWeekly = setting.emailWeeklyReport === 'TRUE' || setting.emailWeeklyReport === 'true' || setting.emailWeeklyReport === true;
-    const wantsDaily = setting.emailDailyReport === 'TRUE' || setting.emailDailyReport === 'true' || setting.emailDailyReport === true;
-    const wantsNotifications = setting.emailNewNotifications === 'TRUE' || setting.emailNewNotifications === 'true' || setting.emailNewNotifications === true;
-    
+    const isEnabled = parseBoolFlag(setting.enableEmailNotifications);
+    const wantsWeekly = parseBoolFlag(setting.emailWeeklyReport);
+    const wantsDaily = parseBoolFlag(setting.emailDailyReport);
+    const wantsNotifications = parseBoolFlag(setting.emailNewNotifications);
+
     if (!isEnabled) return false;
     if (type === 'weekly' && !wantsWeekly) return false;
     if (type === 'daily' && !wantsDaily && !wantsNotifications) return false;
 
-    // Time Check
+    const officeIdUpper = String(setting.idEscritorio || setting.ID_ESCRITORIO || '').trim().toUpperCase();
+    if (targetOfficeUpper && officeIdUpper !== targetOfficeUpper) return false;
+
     const officeTimezone = setting.timezone || 'America/Sao_Paulo';
-    const dispatchTime = setting.emailDispatchTime || '08:00'; // Default to 08:00
-    
-    try {
-      // Get current hour and minute in office timezone
-      const formatter = new Intl.DateTimeFormat('pt-BR', {
-        timeZone: officeTimezone,
-        hour: '2-digit',
-        minute: '2-digit',
-        hour12: false
-      });
-      const parts = formatter.formatToParts(now);
-      const currentHour = parts.find(p => p.type === 'hour')?.value || '00';
-      const currentMinute = parts.find(p => p.type === 'minute')?.value || '00';
-      const currentTimeStr = `${currentHour}:${currentMinute}`;
-
-      // Weekly check: only on Monday in THEIR timezone
-      if (type === 'weekly') {
-        const dayNameFormatter = new Intl.DateTimeFormat('pt-BR', {
-          timeZone: officeTimezone,
-          weekday: 'long'
-        });
-        const currentDayName = dayNameFormatter.format(now).toLowerCase();
-        if (!currentDayName.includes('segunda')) return false;
-      }
-
-      const [targetH, targetM] = dispatchTime.split(':');
-      const [currH, currM] = currentTimeStr.split(':');
-
-      // Match Hour exactly
-      if (currH !== targetH) return false;
-      
-      // Match Minute within a 30-min window (since cron runs every 30 mins)
-      const targetMin = parseInt(targetM);
-      const currMin = parseInt(currM);
-      // If cron runs at :00 and :30, we check if target is in [curr, curr+29]
-      if (targetMin < currMin || targetMin >= currMin + 30) return false;
-
-      console.log(`[Automation] Office ${setting.idEscritorio} is due for ${type} email (Time: ${currentTimeStr}, Scheduled: ${dispatchTime})`);
-      return true;
-    } catch (err) {
-      console.error(`[Automation] Error checking timezone for ${officeTimezone}:`, err);
-      return false;
-    }
+    const dispatchTime = setting.emailDispatchTime || '08:00';
+    const check = isTimeDueNow(now, officeTimezone, dispatchTime, type);
+    return forceRun || check.due;
   });
 
   if (officesToNotify.length === 0) {
-    console.log(`[Automation] No offices to notify for ${type}.`);
-    return;
+    console.log(`[Automation/Sheets] No offices to notify for ${type}.`);
+    return { success: true, source: 'sheets', type, checkedOffices: officesData.length, matchedOffices: 0, sentCount: 0, errors: 0, details: [] };
   }
 
-  // Fetch only necessary data based on type
-  let processos: any[] = [];
-  let financeiro: any[] = [];
-  let tarefas: any[] = [];
-  let contatos: any[] = [];
-  let eventos: any[] = [];
-  let movimentos: any[] = [];
+  const [processos, tarefas, contatos, eventos, movimentos] = await Promise.all([
+    fetchSheetData('Processos'),
+    fetchSheetData('Tarefas'),
+    fetchSheetData('Contatos'),
+    fetchSheetData('Eventos'),
+    fetchSheetData('Movimentos'),
+  ]);
 
-  if (type === 'weekly' || type === 'daily') {
-    processos = await fetchSheetData('Processos');
-    tarefas = await fetchSheetData('Tarefas');
-    contatos = await fetchSheetData('Contatos');
-    eventos = await fetchSheetData('Eventos');
-    movimentos = await fetchSheetData('Movimentos');
-  }
+  let sentCount = 0;
+  let errors = 0;
+  const details: AutomationRunResult['details'] = [];
 
   for (const setting of officesToNotify) {
     const officeId = (setting.idEscritorio || setting.ID_ESCRITORIO || '').toString().trim();
@@ -204,41 +767,47 @@ async function runAutomatedEmails(type: 'weekly' | 'daily') {
     const emailTo = setting.emailUser || office.EMAIL || '';
     if (!emailTo) continue;
 
-    const useExternal = setting.useExternalSmtp === 'TRUE' || setting.useExternalSmtp === 'true' || setting.useExternalSmtp === true;
+    const useExternal = parseBoolFlag(setting.useExternalSmtp);
     const scriptUrl = process.env.VITE_SCRIPT_URL || setting.scriptUrl;
+    const sentForOffice: string[] = [];
+    let officeError: string | undefined;
 
-    const sendHelper = async (to: string, sub: string, content: string) => {
+    const sendHelper = async (kind: string, to: string, sub: string, content: string) => {
       try {
         const fromName = office.Escritorio_nome || 'Meu Escritório';
         if (useExternal && setting.smtpHost && setting.emailUser && setting.emailPass) {
           const transporter = nodemailer.createTransport({
             host: setting.smtpHost,
             port: parseInt(setting.smtpPort) || 465,
-            secure: setting.smtpSecure === 'TRUE' || setting.smtpSecure === 'true' || setting.smtpSecure === true,
+            secure: parseBoolFlag(setting.smtpSecure),
             auth: { user: setting.emailUser, pass: setting.emailPass }
           });
           await transporter.sendMail({ from: `"${fromName}" <${setting.emailUser}>`, to, subject: sub, html: content });
+          sentCount++;
+          sentForOffice.push(kind);
         } else if (scriptUrl) {
           await fetch(scriptUrl, {
             method: 'POST',
             body: JSON.stringify({ action: 'sendEmail', to, subject: sub, body: content, user: setting.emailUser, pass: setting.emailPass }),
             headers: { 'Content-Type': 'text/plain;charset=utf-8' }
           });
+          sentCount++;
+          sentForOffice.push(kind);
         }
-        console.log(`[Automation] Email sent to ${to} - ${sub}`);
-      } catch (err) {
-        console.error(`[Automation] Failed to send email to ${to} (${sub}):`, err);
+        console.log(`[Automation/Sheets] Email sent to ${to} - ${sub}`);
+      } catch (err: any) {
+        errors++;
+        officeError = err?.message || String(err);
+        console.error(`[Automation/Sheets] Failed to send email to ${to} (${sub}):`, err);
       }
     };
 
     if (type === 'weekly') {
       const subject = `Resumo Semanal - ${office.Escritorio_nome || 'Meu Escritorio'}`;
-      
       const officeProcessos = processos.filter(p => (p.ID_ESCRITORIO || '').toString().trim() === officeId && (p.STATUS === 'Ativo' || p.ATIVO === 'TRUE' || p.status === 'Ativo'));
       const officeTarefas = tarefas.filter(t => (t.ID_ESCRITORIO || '').toString().trim() === officeId && (t.STATUS !== 'ConcluidA' && t.STATUS !== 'Concluída' && t.STATUS !== 'concluida'));
       const officeContatos = contatos.filter(c => (c.ID_ESCRITORIO || '').toString().trim() === officeId && c.TIPO === 'Cliente');
-      const officeEventos = eventos.filter(e => (e.ID_ESCRITORIO || '').toString().trim() === officeId && (e.CONCLUIDO !== 'TRUE' && e.CONCLUIDO !== 'true' && e.CONCLUIDO !== true));
-
+      const officeEventos = eventos.filter(e => (e.ID_ESCRITORIO || '').toString().trim() === officeId && !parseBoolFlag(e.CONCLUIDO));
       const officeProcessosPendentes = processos.filter(p => {
         if ((p.ID_ESCRITORIO || '').toString().trim() !== officeId) return false;
         const statusRaw = (p.ATIVO || p.STATUS || '').toLowerCase();
@@ -246,28 +815,23 @@ async function runAutomatedEmails(type: 'weekly' | 'daily') {
         return statusRaw.includes('pend') || statusRaw === 'p' || tagsRaw.includes('pendência') || tagsRaw.includes('pendencia');
       });
 
-      // Morosidade calculation
       const diasMorosidade = parseInt(setting.diasMorosidade || '30') || 30;
       const hoje = new Date();
       const processosMorosos = officeProcessos.filter(p => {
         const procId = p.ID || p.id;
         const procNumero = p.NUMERO || p.numero;
         const movs = movimentos.filter(m => (m.PROCESSO_ID || m.processoId) == procId || (m.PROCESSO_ID || m.processoId) == procNumero);
-        
         if (movs.length === 0) {
           const dataDistStr = p.DATA_DISTRIBUICAO || p.dataDistribuicao;
           if (!dataDistStr) return false;
           const dataDist = new Date(dataDistStr);
           if (isNaN(dataDist.getTime())) return false;
-          const diffDays = Math.ceil(Math.abs(hoje.getTime() - dataDist.getTime()) / (1000 * 60 * 60 * 24));
-          return diffDays > diasMorosidade;
+          return Math.ceil(Math.abs(hoje.getTime() - dataDist.getTime()) / (1000 * 60 * 60 * 24)) > diasMorosidade;
         }
-
         const ultMov = movs.sort((a, b) => new Date(b.DATA || b.data).getTime() - new Date(a.DATA || a.data).getTime())[0];
         const dataMov = new Date(ultMov.DATA || ultMov.data);
         if (isNaN(dataMov.getTime())) return false;
-        const diffDays = Math.ceil(Math.abs(hoje.getTime() - dataMov.getTime()) / (1000 * 60 * 60 * 24));
-        return diffDays > diasMorosidade;
+        return Math.ceil(Math.abs(hoje.getTime() - dataMov.getTime()) / (1000 * 60 * 60 * 24)) > diasMorosidade;
       });
 
       const body = getWeeklyReportTemplate({
@@ -282,18 +846,15 @@ async function runAutomatedEmails(type: 'weekly' | 'daily') {
         year: new Date().getFullYear()
       }, setting.TEMPLATE_WEEKLY_REPORT || setting.templateWeeklyReport || setting.TEMPLATE_RELATORIO_SEMANAL);
 
-      if (body) await sendHelper(emailTo, subject, body);
-
+      if (body) await sendHelper('weekly', emailTo, subject, body);
     } else if (type === 'daily') {
-      // 1. Check for Daily Report
-      const wantsDailyReport = setting.emailDailyReport === 'TRUE' || setting.emailDailyReport === 'true' || setting.emailDailyReport === true;
-      const wantsNotifications = setting.emailNewNotifications === 'TRUE' || setting.emailNewNotifications === 'true' || setting.emailNewNotifications === true;
+      const wantsDailyReport = parseBoolFlag(setting.emailDailyReport);
+      const wantsNotifications = parseBoolFlag(setting.emailNewNotifications);
 
       let publicationsToday = 0;
       let notificationsItems: any[] = [];
       const responsavel = office.RESPONSAVEL || '';
 
-      // Common fetch for Notifications/Publications
       if (responsavel) {
         try {
           const today = new Date().toISOString().split('T')[0];
@@ -303,18 +864,15 @@ async function runAutomatedEmails(type: 'weekly' | 'daily') {
           publicationsToday = data.count || 0;
           notificationsItems = data.items || [];
         } catch (err) {
-          console.error(`[Automation] Error fetching notifications for ${responsavel}:`, err);
+          console.error(`[Automation/Sheets] Error fetching notifications for ${responsavel}:`, err);
         }
       }
 
-      // Handle "Daily Report"
       if (wantsDailyReport) {
         const subject = `Relatório Diário - ${office.Escritorio_nome || 'Meu Escritorio'}`;
-        
         const officeProcessos = processos.filter(p => (p.ID_ESCRITORIO || '').toString().trim() === officeId && (p.STATUS === 'Ativo' || p.ATIVO === 'TRUE' || p.status === 'Ativo'));
         const officeTarefas = tarefas.filter(t => (t.ID_ESCRITORIO || '').toString().trim() === officeId && (t.STATUS !== 'ConcluidA' && t.STATUS !== 'Concluída' && t.STATUS !== 'concluida'));
-        const officeEventos = eventos.filter(e => (e.ID_ESCRITORIO || '').toString().trim() === officeId && (e.CONCLUIDO !== 'TRUE' && e.CONCLUIDO !== 'true' && e.CONCLUIDO !== true));
-
+        const officeEventos = eventos.filter(e => (e.ID_ESCRITORIO || '').toString().trim() === officeId && !parseBoolFlag(e.CONCLUIDO));
         const officeProcessosPendentes = processos.filter(p => {
           if ((p.ID_ESCRITORIO || '').toString().trim() !== officeId) return false;
           const statusRaw = (p.ATIVO || p.STATUS || '').toLowerCase();
@@ -322,45 +880,39 @@ async function runAutomatedEmails(type: 'weekly' | 'daily') {
           return statusRaw.includes('pend') || statusRaw === 'p' || tagsRaw.includes('pendência') || tagsRaw.includes('pendencia');
         });
 
-        // Morosidade calculation
         const diasMorosidade = parseInt(setting.diasMorosidade || '30') || 30;
         const hoje = new Date();
         const processosMorosos = officeProcessos.filter(p => {
           const procId = p.ID || p.id;
           const procNumero = p.NUMERO || p.numero;
           const movs = movimentos.filter(m => (m.PROCESSO_ID || m.processoId) == procId || (m.PROCESSO_ID || m.processoId) == procNumero);
-          
           if (movs.length === 0) {
             const dataDistStr = p.DATA_DISTRIBUICAO || p.dataDistribuicao;
             if (!dataDistStr) return false;
             const dataDist = new Date(dataDistStr);
             if (isNaN(dataDist.getTime())) return false;
-            const diffDays = Math.ceil(Math.abs(hoje.getTime() - dataDist.getTime()) / (1000 * 60 * 60 * 24));
-            return diffDays > diasMorosidade;
+            return Math.ceil(Math.abs(hoje.getTime() - dataDist.getTime()) / (1000 * 60 * 60 * 24)) > diasMorosidade;
           }
-
           const ultMov = movs.sort((a, b) => new Date(b.DATA || b.data).getTime() - new Date(a.DATA || a.data).getTime())[0];
           const dataMov = new Date(ultMov.DATA || ultMov.data);
           if (isNaN(dataMov.getTime())) return false;
-          const diffDays = Math.ceil(Math.abs(hoje.getTime() - dataMov.getTime()) / (1000 * 60 * 60 * 24));
-          return diffDays > diasMorosidade;
+          return Math.ceil(Math.abs(hoje.getTime() - dataMov.getTime()) / (1000 * 60 * 60 * 24)) > diasMorosidade;
         });
 
         const body = getDailyReportTemplate({
           officeName: office.Escritorio_nome || 'Meu Escritório',
-          publicationsToday: publicationsToday,
+          publicationsToday,
           pendingTasks: officeTarefas.length,
           pendingProcesses: officeProcessosPendentes.length,
           pendingEvents: officeEventos.length,
           lateProcesses: processosMorosos.length,
-          diasMorosidade: diasMorosidade,
+          diasMorosidade,
           year: new Date().getFullYear()
         }, setting.templateDailyReport || setting.TEMPLATE_DAILY_REPORT);
 
-        if (body) await sendHelper(emailTo, subject, body);
+        if (body) await sendHelper('daily', emailTo, subject, body);
       }
 
-      // Handle "New Notifications"
       if (wantsNotifications && publicationsToday > 0) {
         const subject = `Novas Intimações - ${office.Escritorio_nome || 'Meu Escritório'}`;
         const body = getNewNotificationsTemplate({
@@ -376,10 +928,29 @@ async function runAutomatedEmails(type: 'weekly' | 'daily') {
           year: new Date().getFullYear()
         }, setting.templateNewNotifications || setting.TEMPLATE_NEW_NOTIFICATIONS);
 
-        if (body) await sendHelper(emailTo, subject, body);
+        if (body) await sendHelper('notifications', emailTo, subject, body);
       }
     }
+
+    details.push({
+      officeId,
+      officeName: office.Escritorio_nome || officeId,
+      emailTo,
+      sent: sentForOffice,
+      ...(officeError ? { error: officeError } : {})
+    });
   }
+
+  return {
+    success: errors === 0,
+    source: 'sheets',
+    type,
+    checkedOffices: officesData.length,
+    matchedOffices: officesToNotify.length,
+    sentCount,
+    errors,
+    details
+  };
 }
 
 async function startServer() {
@@ -396,14 +967,43 @@ async function startServer() {
 
   console.log("[Automation] Cron jobs scheduled.");
 
-  // For testing: Endpoint to trigger manually
+  // Trigger manual/externo da automação de e-mails (protegido por CRON_SECRET ou sessão Admin do Supabase)
   app.post("/api/cron/trigger", async (req, res) => {
-    const { type, secret } = req.body;
-    if (secret !== process.env.CRON_SECRET && process.env.NODE_ENV === 'production') {
-      return res.status(401).json({ error: "Unauthorized" });
+    const { type = 'daily', secret, force = false, officeId } = req.body || {};
+    const headerSecret = String(req.headers['x-cron-secret'] || '').trim();
+    const providedSecret = String(secret || headerSecret || '').trim();
+    const configuredSecret = String(process.env.CRON_SECRET || '').trim();
+
+    const hasValidCronSecret = !!(configuredSecret && providedSecret && providedSecret === configuredSecret);
+    const caller = !hasValidCronSecret ? await verifySupabaseCaller(req) : null;
+
+    if (!hasValidCronSecret && (!caller || !caller.isAdmin)) {
+      return res.status(401).json({ error: "Não autorizado. Informe um CRON_SECRET válido ou autentique-se como Administrador." });
     }
-    await runAutomatedEmails(type as any);
-    res.json({ status: "triggered" });
+
+    const normalizedType = String(type || 'daily').toLowerCase();
+    if (normalizedType === 'both') {
+      const [dailyRes, weeklyRes] = await Promise.all([
+        runAutomatedEmails('daily', { force: !!force, officeId }),
+        runAutomatedEmails('weekly', { force: !!force, officeId })
+      ]);
+      return res.json({
+        status: "triggered",
+        source: dailyRes.source,
+        checkedOffices: dailyRes.checkedOffices,
+        matchedOffices: dailyRes.matchedOffices + weeklyRes.matchedOffices,
+        sentCount: dailyRes.sentCount + weeklyRes.sentCount,
+        errors: dailyRes.errors + weeklyRes.errors,
+        details: [...dailyRes.details, ...weeklyRes.details]
+      });
+    }
+
+    if (normalizedType !== 'weekly' && normalizedType !== 'daily') {
+      return res.status(400).json({ error: "Tipo inválido. Use 'daily', 'weekly' ou 'both'." });
+    }
+
+    const result = await runAutomatedEmails(normalizedType, { force: !!force, officeId });
+    return res.json({ status: "triggered", ...result });
   });
 
   // API Proxy for Datajud Search to avoid CORS issues
@@ -471,57 +1071,203 @@ async function startServer() {
     }
   });
 
-  // API to test external SMTP configuration
-  app.post("/api/email/test", async (req, res) => {
-    const { host, port, secure, user, pass, to, subject, body, html } = req.body;
-    
-    console.log(`[SMTP Test] Request for: ${to || user}. Subject: ${subject || 'Default'}. Body Length: ${(body || html || '').length}`);
+  // Helper interno para resolver SMTP a partir dos parâmetros ou das tabelas do Supabase (somente para chamador autenticado)
+  const resolveEmailTransportConfig = async (
+    req: express.Request,
+    rawBody: { host?: string; port?: any; secure?: any; user?: string; pass?: string; officeId?: string }
+  ): Promise<{ smtp: ResolvedSmtpConfig | null; error?: string; statusCode?: number }> => {
+    const explicit = resolveSmtpFromSource({
+      smtpHost: rawBody.host,
+      smtpPort: rawBody.port,
+      smtpSecure: rawBody.secure,
+      emailUser: rawBody.user,
+      emailPass: rawBody.pass,
+    }, 'explicit');
 
-    if (!host || !user || !pass) {
-      return res.status(400).json({ success: false, error: "Configurações de SMTP incompletas." });
+    if (explicit) {
+      return { smtp: explicit };
+    }
+
+    // Sem credenciais completas explícitas -> só usa credenciais armazenadas no servidor/Supabase para usuário autenticado
+    const caller = await verifySupabaseCaller(req);
+    if (!caller) {
+      return {
+        smtp: null,
+        statusCode: 400,
+        error: "Configurações de SMTP incompletas. Informe servidor SMTP, usuário e senha (ou autentique-se para usar o SMTP do escritório/sistema)."
+      };
+    }
+
+    const { supabaseUrl, supabaseKey } = getServerSupabaseConfig();
+    const requestedOfficeUpper = String(rawBody.officeId || '').trim().toUpperCase();
+
+    if (requestedOfficeUpper && !caller.isAdmin && !caller.escritoriosIds.includes(requestedOfficeUpper)) {
+      return {
+        smtp: null,
+        statusCode: 403,
+        error: "Sem permissão para utilizar o SMTP deste escritório."
+      };
+    }
+
+    if (supabaseUrl && supabaseKey) {
+      const [escritoriosRows, settingsRows] = await Promise.all([
+        requestedOfficeUpper ? fetchSupabaseTablePaged(supabaseUrl, supabaseKey, 'escritorios') : Promise.resolve([]),
+        fetchSupabaseTablePaged(supabaseUrl, supabaseKey, 'app_settings'),
+      ]);
+
+      if (requestedOfficeUpper) {
+        const office = escritoriosRows.find((e: any) => String(e?.id || '').trim().toUpperCase() === requestedOfficeUpper);
+        const officeSetting = settingsRows.find((s: any) =>
+          String(s?.id_escritorio || '').trim().toUpperCase() === requestedOfficeUpper ||
+          String(s?.id || '').trim().toUpperCase() === requestedOfficeUpper
+        );
+        const officeSmtp = resolveSmtpFromSource({
+          smtpHost: rawBody.host || office?.smtp_host || officeSetting?.smtp_host,
+          smtpPort: rawBody.port || office?.smtp_port || officeSetting?.smtp_port,
+          smtpSecure: rawBody.secure ?? office?.smtp_secure ?? officeSetting?.smtp_secure,
+          emailUser: rawBody.user || office?.email_user || officeSetting?.email_user,
+          emailPass: rawBody.pass || office?.email_pass || officeSetting?.email_pass,
+        }, 'office');
+        if (officeSmtp) return { smtp: officeSmtp };
+      }
+
+      const globalSetting =
+        settingsRows.find((s: any) => String(s?.id || '').trim().toLowerCase() === 'global') ||
+        settingsRows.find((s: any) => String(s?.id_escritorio || '').trim().toUpperCase() === 'GLOBAL') ||
+        settingsRows[0];
+      if (globalSetting) {
+        const globalSmtp = resolveSmtpFromSource({
+          smtpHost: globalSetting.smtp_host,
+          smtpPort: globalSetting.smtp_port,
+          smtpSecure: globalSetting.smtp_secure,
+          emailUser: globalSetting.email_user,
+          emailPass: globalSetting.email_pass,
+        }, 'global_db');
+        if (globalSmtp) return { smtp: globalSmtp };
+      }
+    }
+
+    const envSmtp = getEnvSmtpFallback();
+    if (envSmtp) return { smtp: envSmtp };
+
+    return {
+      smtp: null,
+      statusCode: 400,
+      error: "Configurações de SMTP não encontradas no escritório, nas Configurações Globais ou no servidor (.env)."
+    };
+  };
+
+  // API to test SMTP configuration (com suporte a Gmail automático e fallback Supabase)
+  app.post("/api/email/test", async (req, res) => {
+    const { host, port, secure, user, pass, to, subject, body, html, officeId } = req.body || {};
+
+    console.log(`[SMTP Test] Request for: ${to || user || officeId || 'server-fallback'}. Subject: ${subject || 'Default'}.`);
+
+    const resolved = await resolveEmailTransportConfig(req, { host, port, secure, user, pass, officeId });
+    if (!resolved.smtp) {
+      return res.status(resolved.statusCode || 400).json({ success: false, error: resolved.error || "Configurações de SMTP incompletas." });
+    }
+
+    const smtp = resolved.smtp;
+    const recipient = String(to || smtp.user || '').trim();
+    if (!recipient) {
+      return res.status(400).json({ success: false, error: "Destinatário do e-mail de teste é obrigatório." });
     }
 
     try {
       const transporter = nodemailer.createTransport({
-        host,
-        port,
-        secure,
+        host: smtp.host,
+        port: smtp.port,
+        secure: smtp.secure,
         auth: {
-          user,
-          pass,
+          user: smtp.user,
+          pass: smtp.pass,
         },
       });
 
-      // Verify connection configuration
       await transporter.verify();
 
-      // Content determination
       const finalHtml = html || body || `
           <div style="font-family: sans-serif; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px;">
-            <h2 style="color: #4f46e5;">SMTP Externo: Teste Bem-sucedido!</h2>
-            <p>Este é um e-mail de teste enviado pelo servidor Node.js do seu sistema.</p>
-            <p>Se você recebeu este e-mail, as configurações de SMTP externo estão funcionando corretamente.</p>
+            <h2 style="color: #4f46e5;">SMTP Configurado: Teste Bem-sucedido!</h2>
+            <p>Este é um e-mail de teste enviado pelo servidor Node.js integrado ao Supabase.</p>
+            <p>As configurações de SMTP estão válidas e operando corretamente.</p>
             <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 20px 0;">
             <p style="font-size: 12px; color: #64748b;">
-              Servidor: ${host}:${port}<br>
-              Usuário: ${user}<br>
-              Destinatário: ${to || user}
+              Servidor: ${smtp.host}:${smtp.port} (${smtp.secure ? 'SSL/TLS' : 'STARTTLS'})<br>
+              Remetente: ${smtp.user}<br>
+              Destinatário: ${recipient}
             </p>
           </div>
         `;
 
-      // Send test email
       await transporter.sendMail({
-        from: `"Sistema Jurídico" <${user}>`,
-        to: to || user,
-        subject: subject || "🔒 Teste de Configuração SMTP Externo",
+        from: `"Meu Escritório Jurídico" <${smtp.user}>`,
+        to: recipient,
+        subject: subject || "Teste de Configuração SMTP - Meu Escritório Jurídico",
         html: finalHtml,
       });
 
-      res.json({ success: true });
+      res.json({ success: true, source: smtp.source });
     } catch (error: any) {
       console.error("[SMTP Test] Error:", error);
       res.status(500).json({ success: false, error: "Erro ao conectar ao SMTP: " + (error.message || String(error)) });
+    }
+  });
+
+  // Rota autenticada para envio de e-mails operacionais via servidor + Supabase
+  app.post("/api/email/send", async (req, res) => {
+    const caller = await verifySupabaseCaller(req);
+    if (!caller) {
+      return res.status(401).json({ success: false, error: "Autenticação Supabase necessária para enviar e-mails." });
+    }
+
+    const { to, subject, html, text, officeId, fromName } = req.body || {};
+    const recipient = String(to || '').trim();
+    const cleanSubject = String(subject || '').trim();
+    const cleanHtml = typeof html === 'string' ? html : '';
+    const cleanText = typeof text === 'string' ? text : '';
+
+    if (!recipient || !cleanSubject || (!cleanHtml && !cleanText)) {
+      return res.status(400).json({ success: false, error: "Campos 'to', 'subject' e 'html' (ou 'text') são obrigatórios." });
+    }
+
+    const resolved = await resolveEmailTransportConfig(req, { officeId });
+    if (!resolved.smtp) {
+      return res.status(resolved.statusCode || 400).json({ success: false, error: resolved.error || "SMTP não configurado." });
+    }
+
+    const smtp = resolved.smtp;
+    try {
+      const transporter = nodemailer.createTransport({
+        host: smtp.host,
+        port: smtp.port,
+        secure: smtp.secure,
+        auth: { user: smtp.user, pass: smtp.pass }
+      });
+
+      await transporter.sendMail({
+        from: `"${String(fromName || 'Meu Escritório Jurídico').replace(/"/g, '')}" <${smtp.user}>`,
+        to: recipient,
+        subject: cleanSubject,
+        ...(cleanHtml ? { html: cleanHtml } : {}),
+        ...(cleanText ? { text: cleanText } : {}),
+      });
+
+      const { supabaseUrl, supabaseKey } = getServerSupabaseConfig();
+      if (supabaseUrl && supabaseKey) {
+        await saveSupabaseEmailLog(supabaseUrl, supabaseKey, {
+          usuario: caller.email,
+          acao: 'EMAIL_ENVIADO',
+          idEscritorio: officeId || undefined,
+          detalhes: `E-mail enviado para ${recipient}: ${cleanSubject}`
+        });
+      }
+
+      return res.json({ success: true, source: smtp.source });
+    } catch (error: any) {
+      console.error("[Email Send] Error:", error);
+      return res.status(500).json({ success: false, error: "Erro ao enviar e-mail: " + (error?.message || String(error)) });
     }
   });
 

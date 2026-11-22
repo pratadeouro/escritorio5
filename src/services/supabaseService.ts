@@ -775,6 +775,7 @@ const mapLogFromDb = (r: any): LogRegistro => ({
 });
 
 const mapSettingsFromDb = (r: any): AppSettings => ({
+  id: r.id || undefined,
   spreadsheetId: String(import.meta.env.VITE_SPREADSHEET_ID || '').trim(),
   scriptUrl: String(import.meta.env.VITE_SCRIPT_URL || '').trim(),
   timezone: r.timezone || 'America/Sao_Paulo',
@@ -1083,8 +1084,24 @@ export const upsertEscritorioSupabase = async (e: Escritorio): Promise<boolean> 
     background_color: e.backgroundColor || '#ffffff',
     secondary_color: e.secondaryColor || '#f8fafc',
     timezone: e.timezone || 'America/Sao_Paulo',
-    items_per_page: e.itemsPerPage || 10,
+    items_per_page: Number(e.itemsPerPage) || 10,
     menu_order: e.menuOrder || [],
+    email_user: e.emailUser || null,
+    email_pass: e.emailPass || null,
+    use_external_smtp: !!e.useExternalSmtp,
+    smtp_host: e.smtpHost || null,
+    smtp_port: Number(e.smtpPort) || 465,
+    smtp_secure: e.smtpSecure !== false,
+    enable_email_notifications: !!e.enableEmailNotifications,
+    email_weekly_report: !!e.emailWeeklyReport,
+    email_daily_report: !!e.emailDailyReport,
+    email_new_notifications: !!e.emailNewNotifications,
+    template_weekly_report: e.templateWeeklyReport || null,
+    template_daily_report: e.templateDailyReport || null,
+    template_new_notifications: e.templateNewNotifications || null,
+    email_dispatch_time: e.emailDispatchTime || '08:00',
+    show_movimentos: e.showMovimentos !== false,
+    dias_morosidade: Number(e.diasMorosidade) || 30,
     google_forms_spreadsheet_id: e.googleFormsSpreadsheetId || null,
     google_forms_sheet_name: e.googleFormsSheetName || null,
     google_client_id: e.googleClientId || null,
@@ -1140,16 +1157,36 @@ export const saveLogSupabase = async (log: Partial<LogRegistro>): Promise<void> 
 };
 
 export const upsertSettingsSupabase = async (s: AppSettings): Promise<boolean> => {
+  let targetId = s.id || '';
+  if (!targetId && isSupabaseConfigured()) {
+    try {
+      const supabase = getSupabase();
+      const escFilter = s.idEscritorio || 'GLOBAL';
+      const { data: existingRows } = await supabase
+        .from('app_settings')
+        .select('id')
+        .eq('id_escritorio', escFilter)
+        .limit(1);
+      if (Array.isArray(existingRows) && existingRows[0]?.id) {
+        targetId = String(existingRows[0].id);
+      }
+    } catch {}
+  }
+  if (!targetId) {
+    targetId = s.idEscritorio || 'global';
+  }
+
   const basePayload = {
+    id: targetId,
     id_escritorio: s.idEscritorio || 'GLOBAL',
     timezone: s.timezone || 'America/Sao_Paulo',
-    items_per_page: s.itemsPerPage || 10,
+    items_per_page: Number(s.itemsPerPage) || 10,
     permissions: typeof s.permissions === 'string' ? s.permissions : JSON.stringify(s.permissions || []),
     email_user: s.emailUser || null,
     email_pass: s.emailPass || null,
     use_external_smtp: !!s.useExternalSmtp,
     smtp_host: s.smtpHost || null,
-    smtp_port: s.smtpPort || 465,
+    smtp_port: Number(s.smtpPort) || 465,
     smtp_secure: s.smtpSecure !== false,
     enable_email_notifications: !!s.enableEmailNotifications,
     email_weekly_report: !!s.emailWeeklyReport,
@@ -1159,7 +1196,7 @@ export const upsertSettingsSupabase = async (s: AppSettings): Promise<boolean> =
     template_daily_report: s.templateDailyReport || null,
     template_new_notifications: s.templateNewNotifications || null,
     show_movimentos: s.showMovimentos !== false,
-    dias_morosidade: s.diasMorosidade || 30,
+    dias_morosidade: Number(s.diasMorosidade) || 30,
     menu_order: s.menuOrder || [],
     email_dispatch_time: s.emailDispatchTime || '08:00',
     google_client_id: s.googleClientId || null,
@@ -1171,9 +1208,9 @@ export const upsertSettingsSupabase = async (s: AppSettings): Promise<boolean> =
     const withEnvOk = await executeUpsert('app_settings', {
       ...basePayload,
       environment_mode: s.environmentMode,
-    }, 'id_escritorio');
+    }, 'id');
     if (withEnvOk) return true;
   }
 
-  return executeUpsert('app_settings', basePayload, 'id_escritorio');
+  return executeUpsert('app_settings', basePayload, 'id');
 };

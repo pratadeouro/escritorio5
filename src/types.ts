@@ -96,6 +96,7 @@ export interface Forum {
 export type EnvironmentMode = 'homologacao' | 'producao';
 
 export interface AppSettings {
+  id?: string;
   spreadsheetId: string;
   scriptUrl: string;
   // These are effectively the "Active Session Settings"
