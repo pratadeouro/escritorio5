@@ -52,7 +52,8 @@ import {
   TrendingUp,
   History,
   Upload,
-  ArrowUpCircle
+  ArrowUpCircle,
+  Clock
 } from 'lucide-react';
 import { CURRENT_APP_VERSION, checkAppVersion, reloadAppForUpdate } from '../services/versionService';
 import {
@@ -259,12 +260,20 @@ export default function Settings() {
 
   const [isSaved, setIsSaved] = useState(false);
   const [activeTab, setActiveTab] = useState<'theme' | 'office' | 'email' | 'regional' | 'import'>('theme');
+  const [nowTick, setNowTick] = useState<Date>(() => new Date());
 
   useEffect(() => {
     if (isProductionMode && activeTab === 'import') {
       setActiveTab('theme');
     }
   }, [isProductionMode, activeTab]);
+
+  useEffect(() => {
+    if (activeTab !== 'regional') return;
+    setNowTick(new Date());
+    const timer = setInterval(() => setNowTick(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, [activeTab]);
 
   const [isCheckingHeaders, setIsCheckingHeaders] = useState(false);
   const [headerReport, setHeaderReport] = useState<{ sheet: string; status: string; missingColumns: string[] }[] | null>(null);
@@ -1725,6 +1734,59 @@ export default function Settings() {
                   </p>
                 </div>
               </div>
+
+              {(() => {
+                const tz = formData.timezone || 'America/Sao_Paulo';
+                let formattedDateTime = '';
+                let formattedFullDate = '';
+                try {
+                  formattedDateTime = new Intl.DateTimeFormat('pt-BR', {
+                    timeZone: tz,
+                    day: '2-digit',
+                    month: '2-digit',
+                    year: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hourCycle: 'h23'
+                  }).format(nowTick);
+                  formattedFullDate = new Intl.DateTimeFormat('pt-BR', {
+                    timeZone: tz,
+                    weekday: 'long',
+                    day: '2-digit',
+                    month: 'long',
+                    year: 'numeric'
+                  }).format(nowTick);
+                } catch {
+                  formattedDateTime = nowTick.toLocaleString('pt-BR');
+                  formattedFullDate = nowTick.toLocaleDateString('pt-BR');
+                }
+                return (
+                  <div className="p-4 rounded-xl border border-app-border bg-app-bg flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="flex items-start gap-3">
+                      <div className="p-2 rounded-lg bg-primary/10 text-primary shrink-0 mt-0.5">
+                        <Clock size={18} />
+                      </div>
+                      <div>
+                        <span className="text-xs font-semibold text-app-text block">
+                          Exemplo de Data e Hora do Sistema
+                        </span>
+                        <span className="text-[11px] text-app-text-muted capitalize">
+                          {formattedFullDate}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 sm:text-right">
+                      <span className="text-base font-mono font-bold text-app-text bg-app-surface px-3 py-1.5 rounded-lg border border-app-border">
+                        {formattedDateTime}
+                      </span>
+                      <span className="text-[11px] font-mono text-app-text-muted bg-app-secondary px-2 py-1 rounded-md border border-app-border">
+                        {tz}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })()}
 
               <div className="pt-4 border-t border-app-border space-y-4">
                 <h3 className="text-sm font-semibold text-app-text">Configurações de Alerta</h3>
