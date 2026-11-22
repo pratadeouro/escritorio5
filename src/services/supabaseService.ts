@@ -1,4 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import { safeGetStorageItem, safeSetStorageItem, supabaseSafeStorageAdapter } from '../utils/safeStorage';
 import { 
   AppState, 
   Contato, 
@@ -42,6 +43,7 @@ const SUPABASE_URL = OFFICIAL_SUPABASE_URL;
 const SUPABASE_KEY = OFFICIAL_SUPABASE_KEY;
 
 let supabaseInstance: SupabaseClient | null = null;
+let appSettingsHasEnvironmentMode: boolean | null = null;
 
 export const isSupabaseConfigured = (): boolean => {
   return !!SUPABASE_URL && !!SUPABASE_KEY && SUPABASE_URL.startsWith('https://');
@@ -56,6 +58,7 @@ export const getSupabase = (): SupabaseClient => {
       auth: {
         persistSession: true,
         autoRefreshToken: true,
+        storage: supabaseSafeStorageAdapter,
       },
       realtime: {
         params: {
@@ -71,10 +74,8 @@ export const getSupabase = (): SupabaseClient => {
  * Obtém a fonte de dados ativa ('supabase' ou 'sheets'), priorizando seleção salva / sincronizada com .env
  */
 export const getActiveDataSource = (): 'supabase' | 'sheets' => {
-  try {
-    const saved = typeof localStorage !== 'undefined' ? localStorage.getItem('advocacia_data_source') : null;
-    if (saved === 'supabase' || saved === 'sheets') return saved;
-  } catch {}
+  const saved = safeGetStorageItem('advocacia_data_source');
+  if (saved === 'supabase' || saved === 'sheets') return saved;
   const envSource = String(import.meta.env.VITE_DATA_SOURCE || '').trim().toLowerCase();
   if (envSource === 'sheets') return 'sheets';
   if (envSource === 'supabase') return 'supabase';
@@ -85,11 +86,7 @@ export const getActiveDataSource = (): 'supabase' | 'sheets' => {
  * Define a fonte de dados ativa ('supabase' ou 'sheets')
  */
 export const setActiveDataSource = (source: 'supabase' | 'sheets') => {
-  try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem('advocacia_data_source', source);
-    }
-  } catch {}
+  safeSetStorageItem('advocacia_data_source', source);
 };
 
 // ==============================================================================
@@ -103,7 +100,7 @@ export const ensureSupabaseJwtSession = async (userEmail?: string): Promise<bool
     const { data } = await supabase.auth.getSession();
     const sessionEmail = String(data?.session?.user?.email || '').trim().toLowerCase();
     const targetEmail = String(
-      userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('advocacia_user_email') : '') || ''
+      userEmail || safeGetStorageItem('advocacia_user_email') || ''
     ).trim().toLowerCase();
 
     if (data?.session?.access_token && (!targetEmail || sessionEmail === targetEmail)) {
@@ -197,6 +194,9 @@ export const fetchAllDataFromSupabase = async (coreOnly = false, userEmail?: str
 
   if (coreOnly) {
     const [escRes, setRes] = await Promise.all(coreQueries);
+    if (Array.isArray(setRes.data) && setRes.data.length > 0) {
+      appSettingsHasEnvironmentMode = Object.prototype.hasOwnProperty.call(setRes.data[0], 'environment_mode');
+    }
     let escritoriosList: Escritorio[] = (escRes.data || []).map(mapEscritorioFromDb);
     try {
       const escResp = await fetch('/api/supabase/escritorios').then(r => {
@@ -221,7 +221,7 @@ export const fetchAllDataFromSupabase = async (coreOnly = false, userEmail?: str
 
   // Garante sessão JWT autenticada antes de consultar tabelas protegidas por RLS
   const resolvedEmail = String(
-    userEmail || (typeof localStorage !== 'undefined' ? localStorage.getItem('advocacia_user_email') : '') || ''
+    userEmail || safeGetStorageItem('advocacia_user_email') || ''
   ).trim().toLowerCase();
   const hasJwtSession = await ensureSupabaseJwtSession(resolvedEmail || undefined);
 
@@ -254,7 +254,12 @@ export const fetchAllDataFromSupabase = async (coreOnly = false, userEmail?: str
     supabase.from('calendario').select('*'),
     fetchAllRowsDirect(supabase, 'leads', 'data_cadastro', false),
     supabase.from('leads_status').select('*'),
-    supabase.from('logs').select('*').order('data', { ascending: false }).limit(200),
+    resolvedEmail
+      ? fetch(`/api/supabase/logs?email=${encodeURIComponent(resolvedEmail)}`)
+          .then(r => (r.ok && r.headers.get('content-type')?.includes('application/json') ? r.json() : null))
+          .then(j => ({ data: Array.isArray(j?.logs) ? j.logs : [], error: null }))
+          .catch(() => ({ data: [], error: null }))
+      : Promise.resolve({ data: [], error: null }),
     supabase.from('app_settings').select('*')
   ]);
 
@@ -319,6 +324,9 @@ export const fetchAllDataFromSupabase = async (coreOnly = false, userEmail?: str
   };
 
   const setRows = pickRows(setRes.data, 'app_settings');
+  if (setRows.length > 0) {
+    appSettingsHasEnvironmentMode = Object.prototype.hasOwnProperty.call(setRows[0], 'environment_mode');
+  }
   const allSettings = setRows.map(mapSettingsFromDb);
   const activeSettings = allSettings[0] || ({} as AppSettings);
 
@@ -1204,7 +1212,7 @@ export const upsertSettingsSupabase = async (s: AppSettings): Promise<boolean> =
     theme: s.theme || 'light',
   };
 
-  if (s.environmentMode) {
+  if (s.environmentMode && appSettingsHasEnvironmentMode === true) {
     const withEnvOk = await executeUpsert('app_settings', {
       ...basePayload,
       environment_mode: s.environmentMode,

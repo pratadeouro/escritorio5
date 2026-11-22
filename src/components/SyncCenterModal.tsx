@@ -1,5 +1,6 @@
 import React, { useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { safeGetStorageItem } from '../utils/safeStorage';
 import { 
   RefreshCw, 
   CheckCircle2, 
@@ -73,7 +74,7 @@ export function SyncCenterModal({ isOpen, onClose }: SyncCenterModalProps) {
     ? new Date(lastSyncTime).toLocaleString('pt-BR') 
     : 'Nunca sincronizado';
 
-  const backupTimestamp = localStorage.getItem('advocacia_backup_timestamp');
+  const backupTimestamp = safeGetStorageItem('advocacia_backup_timestamp');
   const lastBackupFormatted = backupTimestamp 
     ? new Date(parseInt(backupTimestamp)).toLocaleString('pt-BR')
     : 'Nenhum backup local';

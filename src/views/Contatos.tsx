@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useAppContext } from '../context';
+import { safeGetStorageItem, safeSetStorageItem } from '../utils/safeStorage';
 import { Users, Plus, Search, Mail, Phone, Building2, ChevronRight, Edit2, Trash2, Eye, MapPin, Briefcase, User, Activity, ChevronLeft, ArrowUp, ArrowDown, Calendar, ArrowDownToLine, Loader2, DollarSign, FileText, SlidersHorizontal, RotateCcw, CheckSquare, Settings2, Scale } from 'lucide-react';
 import Modal from '../components/Modal';
 import { Contato } from '../types';
@@ -43,7 +44,7 @@ export default function Contatos() {
 
   const [visibleFields, setVisibleFields] = useState<Record<string, boolean>>(() => {
     try {
-      const saved = localStorage.getItem('contatos_visible_fields');
+      const saved = safeGetStorageItem('contatos_visible_fields');
       if (saved) return { ...defaultVisibleFields, ...JSON.parse(saved) };
     } catch (e) {
       console.error(e);
@@ -54,11 +55,7 @@ export default function Contatos() {
   const toggleFieldVisibility = (key: string) => {
     setVisibleFields(prev => {
       const updated = { ...prev, [key]: !prev[key] };
-      try {
-        localStorage.setItem('contatos_visible_fields', JSON.stringify(updated));
-      } catch (e) {
-        console.error(e);
-      }
+      safeSetStorageItem('contatos_visible_fields', JSON.stringify(updated));
       return updated;
     });
   };
@@ -69,12 +66,12 @@ export default function Contatos() {
       return acc;
     }, {} as Record<string, boolean>);
     setVisibleFields(allTrue);
-    localStorage.setItem('contatos_visible_fields', JSON.stringify(allTrue));
+    safeSetStorageItem('contatos_visible_fields', JSON.stringify(allTrue));
   };
 
   const resetFieldsDefault = () => {
     setVisibleFields(defaultVisibleFields);
-    localStorage.setItem('contatos_visible_fields', JSON.stringify(defaultVisibleFields));
+    safeSetStorageItem('contatos_visible_fields', JSON.stringify(defaultVisibleFields));
   };
 
   const [novoContato, setNovoContato] = useState<Partial<Contato>>({

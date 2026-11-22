@@ -1,6 +1,7 @@
 import React, { useState, useCallback } from 'react';
 import { GripVertical, ChevronUp, ChevronDown, AlertTriangle } from 'lucide-react';
 import Modal from './Modal';
+import { safeGetStorageItem, safeSetStorageItem } from '../utils/safeStorage';
 import {
   KeyboardSensor,
   PointerSensor,
@@ -59,7 +60,7 @@ export function useTableColumns(
 ) {
   const [columnOrder, setColumnOrder] = useState<string[]>(() => {
     try {
-      const saved = localStorage.getItem(storageKey);
+      const saved = safeGetStorageItem(storageKey);
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
@@ -78,11 +79,7 @@ export function useTableColumns(
   const persistOrder = useCallback(
     (next: string[]) => {
       setColumnOrder(next);
-      try {
-        localStorage.setItem(storageKey, JSON.stringify(next));
-      } catch {
-        // ignore storage error
-      }
+      safeSetStorageItem(storageKey, JSON.stringify(next));
     },
     [storageKey]
   );
@@ -95,11 +92,7 @@ export function useTableColumns(
             ? prev.filter((id) => id !== colId)
             : prev
           : [...prev, colId];
-        try {
-          localStorage.setItem(storageKey, JSON.stringify(next));
-        } catch {
-          // ignore
-        }
+        safeSetStorageItem(storageKey, JSON.stringify(next));
         return next;
       });
     },
@@ -124,11 +117,7 @@ export function useTableColumns(
           const newIndex = items.indexOf(String(over.id));
           if (oldIndex === -1 || newIndex === -1) return items;
           const next = arrayMove(items, oldIndex, newIndex);
-          try {
-            localStorage.setItem(storageKey, JSON.stringify(next));
-          } catch {
-            // ignore
-          }
+          safeSetStorageItem(storageKey, JSON.stringify(next));
           return next;
         });
       }

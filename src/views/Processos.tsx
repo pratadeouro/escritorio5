@@ -1,5 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { useAppContext } from '../context';
+import { safeGetStorageItem, safeSetStorageItem } from '../utils/safeStorage';
 import { Scale, Folder, Plus, Search, ChevronRight, Edit2, Trash2, Eye, X, History, DollarSign, GripVertical, UserPlus, ListTodo, Calendar, CalendarPlus, Link as LinkIcon, Settings2, ChevronLeft, Building2, Gavel, Users, Copy, Check, BarChart2, ChevronUp, ChevronDown, Tag, AlertCircle, FileText, Info } from 'lucide-react';
 import Modal from '../components/Modal';
 import TaskModal from '../components/TaskModal';
@@ -403,7 +404,7 @@ export default function Processos({
     const defaultCols = [
       'idProc', 'tipo', 'titulo', 'numero', 'instancia', 'cliente', 'escritorio', 'varaForum', 'classe', 'assunto', 'valorCausa', 'distribuicao', 'resultado', 'status', 'ultimoMov', 'link', 'tags', 'pasta'
     ];
-    const saved = localStorage.getItem('advocacia_processos_columns');
+    const saved = safeGetStorageItem('advocacia_processos_columns');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
@@ -422,7 +423,7 @@ export default function Processos({
   // Limpeza extra para garantir que colunas antigas sejam removidas do localStorage
   // E que a nova coluna 'ultimoMov' seja adicionada para usuários existentes
   useEffect(() => {
-    const saved = localStorage.getItem('advocacia_processos_columns');
+    const saved = safeGetStorageItem('advocacia_processos_columns');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
@@ -431,7 +432,7 @@ export default function Processos({
         );
         
         const columnAddedKey = 'advocacia_ultimo_mov_added_v2';
-        const alreadyAdded = localStorage.getItem(columnAddedKey);
+        const alreadyAdded = safeGetStorageItem(columnAddedKey);
 
         if (!filtered.includes('ultimoMov') && !alreadyAdded) {
           // Tenta inserir após o status ou no final
@@ -441,11 +442,11 @@ export default function Processos({
           } else {
             filtered.push('ultimoMov');
           }
-          localStorage.setItem(columnAddedKey, 'true');
+          safeSetStorageItem(columnAddedKey, 'true');
         }
 
         if (filtered.length !== parsed.length || (filtered.includes('ultimoMov') && !parsed.includes('ultimoMov'))) {
-          localStorage.setItem('advocacia_processos_columns', JSON.stringify(filtered));
+          safeSetStorageItem('advocacia_processos_columns', JSON.stringify(filtered));
           setColumnOrder(filtered);
         }
       } catch (e) {}
@@ -488,7 +489,7 @@ export default function Processos({
         const oldIndex = items.indexOf(active.id as string);
         const newIndex = items.indexOf(over.id as string);
         const newOrder = arrayMove(items, oldIndex, newIndex);
-        localStorage.setItem('advocacia_processos_columns', JSON.stringify(newOrder));
+        safeSetStorageItem('advocacia_processos_columns', JSON.stringify(newOrder));
         return newOrder;
       });
     }
@@ -880,7 +881,7 @@ export default function Processos({
       } else {
         newOrder = [...prev, colId];
       }
-      localStorage.setItem('advocacia_processos_columns', JSON.stringify(newOrder));
+      safeSetStorageItem('advocacia_processos_columns', JSON.stringify(newOrder));
       return newOrder;
     });
   };

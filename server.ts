@@ -1334,16 +1334,37 @@ async function startServer() {
 
     try {
       const conflictHeader = conflictColumn ? `resolution=merge-duplicates,on_conflict=${conflictColumn}` : 'resolution=merge-duplicates';
-      const resp = await fetch(`${supabaseUrl}/rest/v1/${table}`, {
-        method: "POST",
-        headers: {
-          "apikey": supabaseKey,
-          "Authorization": `Bearer ${supabaseKey}`,
-          "Content-Type": "application/json",
-          "Prefer": conflictHeader
-        },
-        body: JSON.stringify(record)
-      });
+      const sendUpsert = async (payloadRecord: any) => {
+        return fetch(`${supabaseUrl}/rest/v1/${table}`, {
+          method: "POST",
+          headers: {
+            "apikey": supabaseKey,
+            "Authorization": `Bearer ${supabaseKey}`,
+            "Content-Type": "application/json",
+            "Prefer": conflictHeader
+          },
+          body: JSON.stringify(payloadRecord)
+        });
+      };
+
+      let resp = await sendUpsert(record);
+
+      // Tolerância para coluna environment_mode ausente em bancos app_settings antes da migração DDL
+      if (!resp.ok && table === 'app_settings') {
+        const errText = await resp.text();
+        if (errText.includes('PGRST204') && errText.includes('environment_mode')) {
+          const cleanRecord = Array.isArray(record)
+            ? record.map(({ environment_mode, ...rest }: any) => rest)
+            : (({ environment_mode, ...rest }: any) => rest)(record);
+          resp = await sendUpsert(cleanRecord);
+          if (resp.ok) {
+            return res.json({ success: true, strippedMissingColumns: ['environment_mode'] });
+          }
+        }
+        const finalErr = await resp.text().catch(() => errText);
+        console.error(`[Server Supabase Upsert] Erro em ${table}:`, finalErr || errText);
+        return res.status(resp.status).json({ success: false, error: finalErr || errText });
+      }
 
       if (!resp.ok) {
         const errText = await resp.text();
@@ -1414,20 +1435,13 @@ async function startServer() {
       let environmentMode: 'homologacao' | 'producao' = envMode || 'homologacao';
       let environmentSource: 'env' | 'supabase' | 'default' = envMode ? 'env' : 'default';
 
-      // Fallback no Supabase app_settings para google_client_id e/ou environment_mode
+      // Fallback no Supabase app_settings para google_client_id e/ou environment_mode (usando select=* para evitar 400 se environment_mode não existir)
       const { supabaseUrl, supabaseKey } = getServerSupabaseConfig();
       if ((!googleClientId || !envMode) && supabaseUrl && supabaseKey) {
         try {
-          let sbRes = await fetch(`${supabaseUrl}/rest/v1/app_settings?select=google_client_id,environment_mode&limit=5`, {
+          const sbRes = await fetch(`${supabaseUrl}/rest/v1/app_settings?select=*&limit=5`, {
             headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
           });
-
-          // Caso a coluna environment_mode ainda não exista na tabela app_settings, faz fallback seguro para google_client_id
-          if (!sbRes.ok) {
-            sbRes = await fetch(`${supabaseUrl}/rest/v1/app_settings?select=google_client_id&limit=5`, {
-              headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
-            });
-          }
 
           const rows = sbRes.ok ? await sbRes.json().catch(() => []) : [];
           if (Array.isArray(rows) && rows.length > 0) {
@@ -1524,25 +1538,33 @@ async function startServer() {
         console.warn(`[Configuração Global] APP_ENVIRONMENT=${cleanMode} aplicado em memória; .env não gravado: ${envWriteError}`);
       }
 
-      // 2. Sincroniza na tabela app_settings do Supabase (se a coluna existir e .env estiver configurado)
+      // 2. Sincroniza na tabela app_settings do Supabase somente se a coluna environment_mode existir no schema
       let supabaseSynced = false;
       const { supabaseUrl, supabaseKey } = getServerSupabaseConfig();
       if (supabaseUrl && supabaseKey) {
         try {
-          const sbResp = await fetch(`${supabaseUrl}/rest/v1/app_settings`, {
-          method: "POST",
-          headers: {
-            apikey: supabaseKey,
-            Authorization: `Bearer ${supabaseKey}`,
-            "Content-Type": "application/json",
-            "Prefer": "resolution=merge-duplicates"
-          },
-          body: JSON.stringify({ id: "global", id_escritorio: "GLOBAL", environment_mode: cleanMode })
-        });
-        supabaseSynced = sbResp.ok;
-          if (!sbResp.ok) {
-            const errText = await sbResp.text().catch(() => '');
-            console.warn("[Configuração Global] Aviso ao gravar environment_mode no Supabase:", errText);
+          const schemaProbe = await fetch(`${supabaseUrl}/rest/v1/app_settings?select=*&limit=1`, {
+            headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+          });
+          const sampleRows = schemaProbe.ok ? await schemaProbe.json().catch(() => []) : [];
+          const hasEnvColumn = Array.isArray(sampleRows) && sampleRows.length > 0 && Object.prototype.hasOwnProperty.call(sampleRows[0], 'environment_mode');
+
+          if (hasEnvColumn) {
+            const sbResp = await fetch(`${supabaseUrl}/rest/v1/app_settings`, {
+              method: "POST",
+              headers: {
+                apikey: supabaseKey,
+                Authorization: `Bearer ${supabaseKey}`,
+                "Content-Type": "application/json",
+                "Prefer": "resolution=merge-duplicates"
+              },
+              body: JSON.stringify({ id: "global", id_escritorio: "GLOBAL", environment_mode: cleanMode })
+            });
+            supabaseSynced = sbResp.ok;
+            if (!sbResp.ok) {
+              const errText = await sbResp.text().catch(() => '');
+              console.warn("[Configuração Global] Aviso ao gravar environment_mode no Supabase:", errText);
+            }
           }
         } catch (sbSyncErr) {
           console.warn("[Configuração Global] Aviso ao sincronizar environment_mode com Supabase:", sbSyncErr);
@@ -2057,6 +2079,135 @@ async function startServer() {
   };
   app.get("/api/supabase/all-data", handleSupabaseAllData);
   app.post("/api/supabase/all-data", handleSupabaseAllData);
+
+  // Endpoint leve para carregar logs recentes sem causar statement timeout de RLS no cliente
+  app.get("/api/supabase/logs", async (req, res) => {
+    const rawEmail = String(req.query?.email || "").trim().toLowerCase();
+    if (!rawEmail) {
+      return res.json({ success: true, logs: [] });
+    }
+
+    const { supabaseUrl, supabaseKey, hasServiceRole } = getServerSupabaseConfig();
+    if (!supabaseUrl || !supabaseKey || !hasServiceRole) {
+      return res.json({ success: false, logs: [] });
+    }
+
+    try {
+      const [pubResp, logsResp] = await Promise.all([
+        fetch(`${supabaseUrl}/rest/v1/usuarios?select=id,email,permissao,status,escritorios_ids&email=ilike.${encodeURIComponent(rawEmail)}&limit=5`, {
+          headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+        }).then(r => (r.ok ? r.json() : [])).catch(() => []),
+        fetch(`${supabaseUrl}/rest/v1/logs?select=*&order=data.desc&limit=200`, {
+          headers: { apikey: supabaseKey, Authorization: `Bearer ${supabaseKey}` }
+        }).then(r => (r.ok ? r.json() : [])).catch(() => [])
+      ]);
+
+      const pubUsers = Array.isArray(pubResp) ? pubResp : [];
+      const pu = pubUsers[0];
+      const permStr = String(pu?.permissao || '').toLowerCase();
+      const isAdminUser =
+        rawEmail === 'pratadeouro@gmail.com' ||
+        rawEmail.includes('walber') ||
+        permStr.includes('admin') ||
+        permStr.includes('gestor');
+
+      let rawEsc = pu?.escritorios_ids ?? [];
+      if (typeof rawEsc === 'string') {
+        try { rawEsc = JSON.parse(rawEsc); } catch { rawEsc = rawEsc.split(',').map((s: string) => s.trim()).filter(Boolean); }
+      }
+      const userEscSet = new Set(
+        (Array.isArray(rawEsc) ? rawEsc : []).map((id: any) => String(id || '').trim().toUpperCase()).filter(Boolean)
+      );
+
+      const allLogs = Array.isArray(logsResp) ? logsResp : [];
+      const filteredLogs = isAdminUser
+        ? allLogs
+        : allLogs.filter(r => {
+            const val = String(r?.id_escritorio || '').trim().toUpperCase();
+            return !val || val === 'X' || userEscSet.has(val);
+          });
+
+      return res.json({ success: true, logs: filteredLogs.slice(0, 200) });
+    } catch (err: any) {
+      console.warn("[Server Supabase Logs] Aviso:", err?.message || err);
+      return res.json({ success: false, logs: [] });
+    }
+  });
+
+  // Proxy seguro para ComunicaAPI / DJEN evitando bloqueio de CORS no navegador
+  app.get("/api/djen/comunicacao", async (req, res) => {
+    const silent = String(req.query?.silent || '') === 'true';
+    const allowedParams = [
+      'pagina',
+      'itensPorPagina',
+      'dataDisponibilizacaoInicio',
+      'dataDisponibilizacaoFim',
+      'nomeAdvogado',
+      'numeroProcesso',
+      'numeroOab',
+      'ufOab',
+      'texto',
+      'siglaTribunal',
+      'orgaoId',
+      'nomeOrgao',
+      'nomeParte',
+    ];
+
+    const params = new URLSearchParams();
+    for (const key of allowedParams) {
+      const val = req.query?.[key];
+      if (typeof val === 'string' && val.trim() !== '') {
+        params.set(key, val.trim());
+      }
+    }
+
+    const upstreamUrl = `https://comunicaapi.pje.jus.br/api/v1/comunicacao?${params.toString()}`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 10000);
+
+    try {
+      const upstreamResp = await fetch(upstreamUrl, {
+        method: 'GET',
+        signal: controller.signal,
+        headers: {
+          'Accept': 'application/json, text/plain, */*',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+        },
+      });
+      clearTimeout(timer);
+
+      if (!upstreamResp.ok) {
+        if (silent) {
+          return res.json({ count: 0, items: [], unavailable: true, upstreamStatus: upstreamResp.status });
+        }
+        return res.status(upstreamResp.status === 403 ? 502 : upstreamResp.status).json({
+          count: 0,
+          items: [],
+          unavailable: true,
+          upstreamStatus: upstreamResp.status,
+          error: upstreamResp.status === 403
+            ? 'A API do DJEN (PJe) bloqueou temporariamente a consulta a partir do IP do servidor (HTTP 403).'
+            : `Falha ao consultar API do DJEN (HTTP ${upstreamResp.status}).`
+        });
+      }
+
+      const data = await upstreamResp.json().catch(() => ({ count: 0, items: [] }));
+      return res.json(data);
+    } catch (err: any) {
+      clearTimeout(timer);
+      if (silent) {
+        return res.json({ count: 0, items: [], unavailable: true });
+      }
+      return res.status(502).json({
+        count: 0,
+        items: [],
+        unavailable: true,
+        error: err?.name === 'AbortError'
+          ? 'Tempo limite excedido ao consultar a API do DJEN.'
+          : 'Erro de conexão ao consultar a API do DJEN.'
+      });
+    }
+  });
 
   // Endpoint leve para catálogos compartilhados/globais ('X'/'x'/NULL) quando políticas RLS antigas no Supabase bloqueiam linhas 'X'
   const handleSupabaseSharedCatalogs = async (req: express.Request, res: express.Response) => {

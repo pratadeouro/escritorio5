@@ -25,6 +25,7 @@ import {
 } from '../services/supabaseMigration';
 import { registerUserInSupabaseAuth } from '../services/supabaseAuth';
 import { OFFICIAL_SUPABASE_URL, OFFICIAL_SUPABASE_KEY, isSupabaseConfigured, getSupabase } from '../services/supabaseService';
+import { safeRemoveStorageItem } from '../utils/safeStorage';
 
 export const SupabaseMigrationTab: React.FC = () => {
   const { state, forceLoad } = useAppContext();
@@ -32,11 +33,9 @@ export const SupabaseMigrationTab: React.FC = () => {
   const supabaseConfigured = isSupabaseConfigured();
 
   useEffect(() => {
-    try {
-      localStorage.removeItem('supabase_migration_url');
-      localStorage.removeItem('supabase_migration_key');
-      localStorage.removeItem('supabase_migration_publishable_key');
-    } catch {}
+    safeRemoveStorageItem('supabase_migration_url');
+    safeRemoveStorageItem('supabase_migration_key');
+    safeRemoveStorageItem('supabase_migration_publishable_key');
   }, []);
 
   const [copiedSchema, setCopiedSchema] = useState(false);

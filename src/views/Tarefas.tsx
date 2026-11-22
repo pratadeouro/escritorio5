@@ -1,5 +1,6 @@
 import React, { useState, useMemo } from 'react';
 import { useAppContext } from '../context';
+import { safeGetStorageItem, safeSetStorageItem } from '../utils/safeStorage';
 import { ListTodo, Plus, Search, ChevronLeft, ChevronRight, Calendar as CalendarIcon, Link as LinkIcon, AlertCircle, List, LayoutGrid, Edit2, Eye, Trash2, Gavel, Users, Copy, Settings2, GripVertical, ChevronUp, ChevronDown, Building2, FileText } from 'lucide-react';
 import Modal from '../components/Modal';
 import Calendar from '../components/Calendar';
@@ -81,7 +82,7 @@ export default function Tarefas({ filterStatus: initialFilterStatus }: { filterS
     const defaultCols = [
       'titulo', 'processo', 'vara', 'upj', 'dataInicio', 'dataLimite', 'prazoTipo', 'status', 'prioridade', 'atribuido'
     ];
-    const saved = localStorage.getItem('advocacia_tarefas_columns');
+    const saved = safeGetStorageItem('advocacia_tarefas_columns');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
@@ -98,7 +99,7 @@ export default function Tarefas({ filterStatus: initialFilterStatus }: { filterS
       const newOrder = prev.includes(colId)
         ? prev.filter(id => id !== colId)
         : [...prev, colId];
-      localStorage.setItem('advocacia_tarefas_columns', JSON.stringify(newOrder));
+      safeSetStorageItem('advocacia_tarefas_columns', JSON.stringify(newOrder));
       return newOrder;
     });
   };
@@ -159,7 +160,7 @@ export default function Tarefas({ filterStatus: initialFilterStatus }: { filterS
         const oldIndex = items.indexOf(active.id as string);
         const newIndex = items.indexOf(over.id as string);
         const newOrder = arrayMove(items, oldIndex, newIndex);
-        localStorage.setItem('advocacia_tarefas_columns', JSON.stringify(newOrder));
+        safeSetStorageItem('advocacia_tarefas_columns', JSON.stringify(newOrder));
         return newOrder;
       });
     }

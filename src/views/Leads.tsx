@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx';
 import { Search, Calendar, FileText, Download, Copy, Eye, FolderPlus, UserPlus, Scale, ShieldAlert, CheckCircle, Clock, Trash2, Mail, Phone, Building2, User, Briefcase, MapPin, Activity, Edit2, Save, ExternalLink, ChevronUp, ChevronDown, DollarSign, Settings } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useAppContext } from '../context';
+import { safeGetStorageItem, safeSetStorageItem } from '../utils/safeStorage';
 import { CreateContatoModal, CreateProcessoModal } from '../components/CreateModals';
 import Modal from '../components/Modal';
 import { getTodayInTimezone } from '../utils/date';
@@ -395,10 +396,10 @@ export default function Leads() {
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
 
-  // Status de Leads locais gerenciados via localStorage
+  // Status de Leads locais gerenciados via armazenamento seguro
   const [leadsStatus, setLeadsStatus] = useState<Record<string, 'Novo' | 'Em Contato' | 'Convertido' | 'Descartado'>>(() => {
     try {
-      const saved = localStorage.getItem('adv_leads_status');
+      const saved = safeGetStorageItem('adv_leads_status');
       return saved ? JSON.parse(saved) : {};
     } catch {
       return {};
@@ -408,11 +409,7 @@ export default function Leads() {
   const updateLeadStatus = (processoId: string, status: 'Novo' | 'Em Contato' | 'Convertido' | 'Descartado') => {
     const updated = { ...leadsStatus, [processoId]: status };
     setLeadsStatus(updated);
-    try {
-      localStorage.setItem('adv_leads_status', JSON.stringify(updated));
-    } catch (e) {
-      console.error(e);
-    }
+    safeSetStorageItem('adv_leads_status', JSON.stringify(updated));
   };
 
   const formatCNJ = (numero: string) => {
@@ -513,7 +510,7 @@ export default function Leads() {
     try {
       // Buscar focando no termo distribuição ou julgo com base no filtro selecionado
       const termoBusca = julgado ? 'julgo' : 'distribuição';
-      let url = `https://comunicaapi.pje.jus.br/api/v1/comunicacao?pagina=${page}&itensPorPagina=50&dataDisponibilizacaoInicio=${formData.dataInicio}&dataDisponibilizacaoFim=${formData.dataFim}&texto=${encodeURIComponent(termoBusca)}`;
+      let url = `/api/djen/comunicacao?pagina=${page}&itensPorPagina=50&dataDisponibilizacaoInicio=${formData.dataInicio}&dataDisponibilizacaoFim=${formData.dataFim}&texto=${encodeURIComponent(termoBusca)}`;
       
       if (formData.tribunal) {
         url += `&siglaTribunal=${encodeURIComponent(formData.tribunal)}`;
@@ -530,8 +527,8 @@ export default function Leads() {
       }
 
       const response = await fetch(url);
-      if (!response.ok) throw new Error('Falha ao consultar a API de Comunicações');
-      const data = await response.json();
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error || 'Falha ao consultar a API de Comunicações');
       setResults(data);
     } catch (err: any) {
       setError(err.message || 'Erro ao consultar API de comunicações de Leads');

@@ -160,21 +160,21 @@ export default function ApiDiario() {
     let url = '';
     if (activeTab === 'processo') {
       const cleanNumero = formData.numeroProcesso.replace(/\D/g, '');
-      url = `https://comunicaapi.pje.jus.br/api/v1/comunicacao?pagina=${page}&itensPorPagina=50&dataDisponibilizacaoInicio=${formData.dataInicio}&dataDisponibilizacaoFim=${formData.dataFim}&numeroProcesso=${cleanNumero}`;
+      url = `/api/djen/comunicacao?pagina=${page}&itensPorPagina=50&dataDisponibilizacaoInicio=${formData.dataInicio}&dataDisponibilizacaoFim=${formData.dataFim}&numeroProcesso=${cleanNumero}`;
     } else if (activeTab === 'oab') {
-      url = `https://comunicaapi.pje.jus.br/api/v1/comunicacao?pagina=${page}&itensPorPagina=50&dataDisponibilizacaoInicio=${oabFormData.dataInicio}&dataDisponibilizacaoFim=${oabFormData.dataFim}&numeroOab=${oabFormData.numeroOab}&ufOab=${oabFormData.ufOab}`;
+      url = `/api/djen/comunicacao?pagina=${page}&itensPorPagina=50&dataDisponibilizacaoInicio=${oabFormData.dataInicio}&dataDisponibilizacaoFim=${oabFormData.dataFim}&numeroOab=${oabFormData.numeroOab}&ufOab=${oabFormData.ufOab}`;
     } else if (activeTab === 'nome') {
-      url = `https://comunicaapi.pje.jus.br/api/v1/comunicacao?pagina=${page}&itensPorPagina=50&dataDisponibilizacaoInicio=${nomeFormData.dataInicio}&dataDisponibilizacaoFim=${nomeFormData.dataFim}&nomeAdvogado=${encodeURIComponent(nomeFormData.nomeAdvogado)}`;
+      url = `/api/djen/comunicacao?pagina=${page}&itensPorPagina=50&dataDisponibilizacaoInicio=${nomeFormData.dataInicio}&dataDisponibilizacaoFim=${nomeFormData.dataFim}&nomeAdvogado=${encodeURIComponent(nomeFormData.nomeAdvogado)}`;
     } else {
       const activeOffice = state.escritorios.find(e => e.id === escritorioAtivoId);
       const responsavel = activeOffice?.responsavel || currentUser?.nome || 'Walber Prata de Mendonça';
-      url = `https://comunicaapi.pje.jus.br/api/v1/comunicacao?pagina=${page}&itensPorPagina=5&texto=distribui%C3%A7%C3%A3o&dataDisponibilizacaoInicio=${novosProcessosFormData.dataInicio}&dataDisponibilizacaoFim=${novosProcessosFormData.dataFim}&nomeAdvogado=${encodeURIComponent(responsavel)}`;
+      url = `/api/djen/comunicacao?pagina=${page}&itensPorPagina=5&texto=distribui%C3%A7%C3%A3o&dataDisponibilizacaoInicio=${novosProcessosFormData.dataInicio}&dataDisponibilizacaoFim=${novosProcessosFormData.dataFim}&nomeAdvogado=${encodeURIComponent(responsavel)}`;
     }
 
     try {
       const response = await fetch(url);
-      if (!response.ok) throw new Error('Falha ao consultar a API');
-      const data = await response.json();
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error || 'Falha ao consultar a API do Diário');
       setResults(data);
     } catch (err: any) {
       setError(err.message || 'Erro ao consultar API do Diário');

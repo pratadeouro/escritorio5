@@ -95,7 +95,7 @@ export default function Dashboard() {
       if (!responsavel) return;
 
       const today = new Date().toISOString().split('T')[0];
-      const url = `https://comunicaapi.pje.jus.br/api/v1/comunicacao?pagina=1&itensPorPagina=1&dataDisponibilizacaoInicio=${today}&dataDisponibilizacaoFim=${today}&nomeAdvogado=${encodeURIComponent(responsavel)}`;
+      const url = `/api/djen/comunicacao?pagina=1&itensPorPagina=1&dataDisponibilizacaoInicio=${today}&dataDisponibilizacaoFim=${today}&nomeAdvogado=${encodeURIComponent(responsavel)}&silent=true`;
 
       try {
         const response = await fetch(url);
@@ -103,8 +103,8 @@ export default function Dashboard() {
           const data = await response.json();
           setPublicacoesHoje(data.count || 0);
         }
-      } catch (e) {
-        console.error('Erro ao buscar publicações do dia:', e);
+      } catch {
+        // Falha silenciosa em verificação de plano de fundo
       }
     };
 

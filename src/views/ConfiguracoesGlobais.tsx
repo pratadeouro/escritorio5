@@ -29,6 +29,7 @@ import { isSupabaseConfigured } from '../services/supabaseService';
 import { sendTestEmailExternal, triggerAutomatedEmails } from '../services/googleAppsScript';
 import { EnvironmentMode } from '../types';
 import { SupabaseMigrationTab } from '../components/SupabaseMigrationTab';
+import { safeGetStorageItem, safeSetStorageItem } from '../utils/safeStorage';
 
 const PRIMARY_COLORS = [
   { name: 'Índigo Moderno', hex: '#4f46e5' },
@@ -57,21 +58,6 @@ export default function ConfiguracoesGlobais() {
     saveEnvironmentMode
   } = useAppContext();
 
-  // Proteção de segurança estrita para administradores
-  if (!isAdmin()) {
-    return (
-      <div className="min-h-[70vh] flex flex-col items-center justify-center p-6 text-center">
-        <div className="w-16 h-16 bg-red-500/10 text-red-500 rounded-2xl flex items-center justify-center mb-4">
-          <AlertCircle size={32} />
-        </div>
-        <h2 className="text-2xl font-black text-app-text mb-2">Acesso Restrito ao Administrador</h2>
-        <p className="text-sm text-app-text-muted max-w-md mb-6 leading-relaxed">
-          Esta área é reservada exclusivamente para o administrador do sistema. Se você acredita que deveria ter acesso, contate o administrador principal.
-        </p>
-      </div>
-    );
-  }
-
   const [activeTab, setActiveTab] = useState<'google' | 'identity' | 'theme' | 'operations' | 'email' | 'migration'>('google');
 
   useEffect(() => {
@@ -83,7 +69,7 @@ export default function ConfiguracoesGlobais() {
   // Estados do formulário global
   const [googleClientId, setGoogleClientId] = useState(() => {
     return state.settings.googleClientId || 
-           (typeof localStorage !== 'undefined' ? localStorage.getItem('advocacia_google_client_id') || '' : '') || 
+           (safeGetStorageItem('advocacia_google_client_id') || '') || 
            (import.meta as any).env.VITE_GOOGLE_CLIENT_ID || '';
   });
   const [showGoogleId, setShowGoogleId] = useState(false);
@@ -94,7 +80,7 @@ export default function ConfiguracoesGlobais() {
 
   const [siteName, setSiteName] = useState(() => {
     return state.settings.siteName || 
-           (typeof localStorage !== 'undefined' ? localStorage.getItem('advocacia_site_name') || '' : '') || 
+           (safeGetStorageItem('advocacia_site_name') || '') || 
            (activeOfficeName && activeOfficeName !== 'Todos os Escritórios' && activeOfficeName !== 'LexGestão' ? activeOfficeName : 'Meu Escritório Jurídico');
   });
   const [siteSubtitle, setSiteSubtitle] = useState(() => {
@@ -189,6 +175,21 @@ export default function ConfiguracoesGlobais() {
       });
     }
   }, [googleClientId]);
+
+  // Proteção de segurança estrita para administradores (após todos os hooks)
+  if (!isAdmin()) {
+    return (
+      <div className="min-h-[70vh] flex flex-col items-center justify-center p-6 text-center">
+        <div className="w-16 h-16 bg-red-500/10 text-red-500 rounded-2xl flex items-center justify-center mb-4">
+          <AlertCircle size={32} />
+        </div>
+        <h2 className="text-2xl font-black text-app-text mb-2">Acesso Restrito ao Administrador</h2>
+        <p className="text-sm text-app-text-muted max-w-md mb-6 leading-relaxed">
+          Esta área é reservada exclusivamente para o administrador do sistema. Se você acredita que deveria ter acesso, contate o administrador principal.
+        </p>
+      </div>
+    );
+  }
 
   const handleCopyOrigin = () => {
     if (!currentOrigin) return;
@@ -287,17 +288,15 @@ export default function ConfiguracoesGlobais() {
       // 1. Salva no contexto
       updateSettings(updatedSettings);
 
-      // 2. Persiste em localStorage para disponibilidade imediata antes do login
-      if (typeof localStorage !== 'undefined') {
-        localStorage.setItem('advocacia_google_client_id', googleClientId.trim());
-        localStorage.setItem('advocacia_site_name', siteName.trim());
-        localStorage.setItem('advocacia_environment_mode', selectedEnvMode);
-        localStorage.setItem('advocacia_theme_cache', JSON.stringify({
-          officeName: siteName.trim(),
-          theme: themeMode,
-          primaryColor
-        }));
-      }
+      // 2. Persiste em armazenamento seguro para disponibilidade imediata antes do login
+      safeSetStorageItem('advocacia_google_client_id', googleClientId.trim());
+      safeSetStorageItem('advocacia_site_name', siteName.trim());
+      safeSetStorageItem('advocacia_environment_mode', selectedEnvMode);
+      safeSetStorageItem('advocacia_theme_cache', JSON.stringify({
+        officeName: siteName.trim(),
+        theme: themeMode,
+        primaryColor
+      }));
 
       // 3. Aplica estilos globais
       applyTheme(themeMode, primaryColor, '#ffffff', '#f8fafc', siteName.trim());

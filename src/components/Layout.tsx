@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View } from '../types';
+import { safeGetStorageItem, safeSetStorageItem } from '../utils/safeStorage';
 import { 
   LayoutDashboard, 
   Scale, 
@@ -65,11 +66,7 @@ interface LayoutProps {
 export default function Layout({ children, currentView, onNavigate }: LayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState(() => {
-    try {
-      return localStorage.getItem('desktop_sidebar_collapsed') === 'true';
-    } catch {
-      return false;
-    }
+    return safeGetStorageItem('desktop_sidebar_collapsed') === 'true';
   });
   const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
   const [locaisOpen, setLocaisOpen] = useState(false);
@@ -123,7 +120,7 @@ export default function Layout({ children, currentView, onNavigate }: LayoutProp
       if (!responsavel) return;
 
       const today = new Date().toISOString().split('T')[0];
-      const url = `https://comunicaapi.pje.jus.br/api/v1/comunicacao?pagina=1&itensPorPagina=1&dataDisponibilizacaoInicio=${today}&dataDisponibilizacaoFim=${today}&nomeAdvogado=${encodeURIComponent(responsavel)}`;
+      const url = `/api/djen/comunicacao?pagina=1&itensPorPagina=1&dataDisponibilizacaoInicio=${today}&dataDisponibilizacaoFim=${today}&nomeAdvogado=${encodeURIComponent(responsavel)}&silent=true`;
 
       try {
         const response = await fetch(url);
@@ -131,8 +128,8 @@ export default function Layout({ children, currentView, onNavigate }: LayoutProp
           const data = await response.json();
           setPublicacoesHoje(data.count || 0);
         }
-      } catch (e) {
-        console.error('Erro ao buscar publicações do dia no Layout:', e);
+      } catch {
+        // Falha silenciosa em verificação de plano de fundo
       }
     };
 
@@ -294,7 +291,7 @@ export default function Layout({ children, currentView, onNavigate }: LayoutProp
             className="hidden lg:flex text-app-text-muted hover:text-primary p-1.5 hover:bg-app-secondary rounded-lg transition-colors ml-2 shrink-0"
             onClick={() => {
               setDesktopSidebarCollapsed(true);
-              localStorage.setItem('desktop_sidebar_collapsed', 'true');
+              safeSetStorageItem('desktop_sidebar_collapsed', 'true');
             }}
             title="Recolher Menu"
           >
@@ -454,7 +451,7 @@ export default function Layout({ children, currentView, onNavigate }: LayoutProp
                   setSidebarOpen(true);
                 } else {
                   setDesktopSidebarCollapsed(false);
-                  localStorage.setItem('desktop_sidebar_collapsed', 'false');
+                  safeSetStorageItem('desktop_sidebar_collapsed', 'false');
                 }
               }}
               title={desktopSidebarCollapsed ? "Expandir Menu" : "Menu"}

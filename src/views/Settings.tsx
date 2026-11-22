@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAppContext } from '../context';
 import { 
   Settings as SettingsIcon, 
@@ -203,44 +203,61 @@ export default function Settings() {
     appVersion: activeOffice?.appVersion || state.settings.appVersion || '',
   });
 
+  const lastSyncedOfficeIdRef = useRef<string | null>(activeOffice?.id || null);
+
   // Sync formData with activeOffice when office changes or finishes loading
   React.useEffect(() => {
     if (activeOffice) {
+      const officeSwitched = lastSyncedOfficeIdRef.current !== activeOffice.id;
+      lastSyncedOfficeIdRef.current = activeOffice.id;
+
       setFormData(prev => ({
         ...prev,
-        theme: activeOffice.theme || prev.theme || 'light',
-        primaryColor: activeOffice.primaryColor || prev.primaryColor || '#4f46e5',
-        backgroundColor: activeOffice.backgroundColor || prev.backgroundColor || '#ffffff',
-        secondaryColor: activeOffice.secondaryColor || prev.secondaryColor || '#f8fafc',
-        officeName: activeOffice.nome || prev.officeName || '',
-        officeAddress: activeOffice.endereco || prev.officeAddress || '',
-        officeCNPJ: activeOffice.cnpj || prev.officeCNPJ || '',
-        officePhone: activeOffice.telefone || prev.officePhone || '',
-        officeEmail: activeOffice.email || prev.officeEmail || '',
-        logoUrl: activeOffice.logoUrl || prev.logoUrl || '',
-        responsibleLawyer: activeOffice.responsavel || prev.responsibleLawyer || '',
-        oabNumber: activeOffice.oab || prev.oabNumber || '',
-        uf: activeOffice.uf || prev.uf || '',
-        itemsPerPage: activeOffice.itemsPerPage || prev.itemsPerPage || 10,
-        diasMorosidade: activeOffice.diasMorosidade || prev.diasMorosidade || 30,
-        emailUser: activeOffice.emailUser || prev.emailUser || state.settings.emailUser || '',
-        emailPass: activeOffice.emailPass || prev.emailPass || state.settings.emailPass || '',
-        useExternalSmtp: activeOffice.useExternalSmtp ?? prev.useExternalSmtp ?? false,
-        smtpHost: activeOffice.smtpHost || prev.smtpHost || state.settings.smtpHost || '',
-        smtpPort: activeOffice.smtpPort || prev.smtpPort || state.settings.smtpPort || 465,
-        smtpSecure: activeOffice.smtpSecure ?? prev.smtpSecure ?? true,
-        enableEmailNotifications: activeOffice.enableEmailNotifications ?? prev.enableEmailNotifications ?? false,
-        emailWeeklyReport: activeOffice.emailWeeklyReport ?? prev.emailWeeklyReport ?? false,
-        emailDailyReport: activeOffice.emailDailyReport ?? prev.emailDailyReport ?? false,
-        emailNewNotifications: activeOffice.emailNewNotifications ?? prev.emailNewNotifications ?? false,
-        templateWeeklyReport: activeOffice.templateWeeklyReport || prev.templateWeeklyReport || '',
-        templateDailyReport: activeOffice.templateDailyReport || prev.templateDailyReport || '',
-        templateNewNotifications: activeOffice.templateNewNotifications || prev.templateNewNotifications || '',
-        emailDispatchTime: activeOffice.emailDispatchTime || prev.emailDispatchTime || '08:00',
-        appVersion: activeOffice.appVersion || prev.appVersion || state.settings.appVersion || '',
+        theme: activeOffice.theme || (officeSwitched ? 'light' : prev.theme) || 'light',
+        primaryColor: activeOffice.primaryColor || (officeSwitched ? '#4f46e5' : prev.primaryColor) || '#4f46e5',
+        backgroundColor: activeOffice.backgroundColor || (officeSwitched ? '#ffffff' : prev.backgroundColor) || '#ffffff',
+        secondaryColor: activeOffice.secondaryColor || (officeSwitched ? '#f8fafc' : prev.secondaryColor) || '#f8fafc',
+        officeName: activeOffice.nome ?? (officeSwitched ? '' : prev.officeName) ?? '',
+        officeAddress: activeOffice.endereco ?? (officeSwitched ? '' : prev.officeAddress) ?? '',
+        officeCNPJ: activeOffice.cnpj ?? (officeSwitched ? '' : prev.officeCNPJ) ?? '',
+        officePhone: activeOffice.telefone ?? (officeSwitched ? '' : prev.officePhone) ?? '',
+        officeEmail: activeOffice.email ?? (officeSwitched ? '' : prev.officeEmail) ?? '',
+        logoUrl: activeOffice.logoUrl ?? (officeSwitched ? '' : prev.logoUrl) ?? '',
+        responsibleLawyer: activeOffice.responsavel ?? (officeSwitched ? '' : prev.responsibleLawyer) ?? '',
+        oabNumber: activeOffice.oab ?? (officeSwitched ? '' : prev.oabNumber) ?? '',
+        uf: activeOffice.uf ?? (officeSwitched ? '' : prev.uf) ?? '',
+        itemsPerPage: activeOffice.itemsPerPage || (officeSwitched ? state.settings.itemsPerPage : prev.itemsPerPage) || 10,
+        diasMorosidade: activeOffice.diasMorosidade || (officeSwitched ? state.settings.diasMorosidade : prev.diasMorosidade) || 30,
+        emailUser: officeSwitched
+          ? (activeOffice.emailUser || state.settings.emailUser || '')
+          : (activeOffice.emailUser || prev.emailUser || state.settings.emailUser || ''),
+        emailPass: officeSwitched
+          ? (activeOffice.emailPass || state.settings.emailPass || '')
+          : (activeOffice.emailPass || prev.emailPass || state.settings.emailPass || ''),
+        useExternalSmtp: activeOffice.useExternalSmtp ?? (officeSwitched ? (state.settings.useExternalSmtp ?? false) : prev.useExternalSmtp) ?? false,
+        smtpHost: officeSwitched
+          ? (activeOffice.smtpHost || state.settings.smtpHost || '')
+          : (activeOffice.smtpHost || prev.smtpHost || state.settings.smtpHost || ''),
+        smtpPort: activeOffice.smtpPort || (officeSwitched ? state.settings.smtpPort : prev.smtpPort) || state.settings.smtpPort || 465,
+        smtpSecure: activeOffice.smtpSecure ?? (officeSwitched ? (state.settings.smtpSecure ?? true) : prev.smtpSecure) ?? true,
+        enableEmailNotifications: activeOffice.enableEmailNotifications ?? (officeSwitched ? (state.settings.enableEmailNotifications ?? false) : prev.enableEmailNotifications) ?? false,
+        emailWeeklyReport: activeOffice.emailWeeklyReport ?? (officeSwitched ? (state.settings.emailWeeklyReport ?? false) : prev.emailWeeklyReport) ?? false,
+        emailDailyReport: activeOffice.emailDailyReport ?? (officeSwitched ? (state.settings.emailDailyReport ?? false) : prev.emailDailyReport) ?? false,
+        emailNewNotifications: activeOffice.emailNewNotifications ?? (officeSwitched ? (state.settings.emailNewNotifications ?? false) : prev.emailNewNotifications) ?? false,
+        templateWeeklyReport: officeSwitched
+          ? (activeOffice.templateWeeklyReport || state.settings.templateWeeklyReport || '')
+          : (activeOffice.templateWeeklyReport || prev.templateWeeklyReport || ''),
+        templateDailyReport: officeSwitched
+          ? (activeOffice.templateDailyReport || state.settings.templateDailyReport || '')
+          : (activeOffice.templateDailyReport || prev.templateDailyReport || ''),
+        templateNewNotifications: officeSwitched
+          ? (activeOffice.templateNewNotifications || state.settings.templateNewNotifications || '')
+          : (activeOffice.templateNewNotifications || prev.templateNewNotifications || ''),
+        emailDispatchTime: activeOffice.emailDispatchTime || (officeSwitched ? state.settings.emailDispatchTime : prev.emailDispatchTime) || '08:00',
+        appVersion: activeOffice.appVersion || (officeSwitched ? state.settings.appVersion : prev.appVersion) || state.settings.appVersion || '',
       }));
     }
-  }, [activeOffice]);
+  }, [activeOffice, state.settings]);
 
   // Handle immediate theme preview
   const handleThemePreview = (updates: Partial<typeof formData>) => {
@@ -814,7 +831,7 @@ export default function Settings() {
       
       const responsavel = activeOffice?.responsavel || currentUser?.nome || '';
       const today = new Date().toISOString().split('T')[0];
-      const url = `https://comunicaapi.pje.jus.br/api/v1/comunicacao?pagina=1&itensPorPagina=10&dataDisponibilizacaoInicio=${today}&dataDisponibilizacaoFim=${today}&nomeAdvogado=${encodeURIComponent(responsavel)}`;
+      const url = `/api/djen/comunicacao?pagina=1&itensPorPagina=10&dataDisponibilizacaoInicio=${today}&dataDisponibilizacaoFim=${today}&nomeAdvogado=${encodeURIComponent(responsavel)}&silent=true`;
       
       let itemsHtml = '';
       let count = 0;
@@ -1447,8 +1464,8 @@ export default function Settings() {
                           <button
                             type="button"
                             onClick={handleTestWeeklyReport}
-                            disabled={isSendingWeeklyTest || !formData.emailUser}
-                            className="flex-1 min-w-[80px] flex items-center justify-center gap-2 px-3 py-1.5 bg-white dark:bg-app-bg border border-app-border text-primary rounded-lg hover:bg-primary hover:text-white transition-all text-[10px] font-bold uppercase tracking-wider"
+                            disabled={isSendingWeeklyTest || (!useServerSmtpTransport && !formData.emailUser)}
+                            className="flex-1 min-w-[80px] flex items-center justify-center gap-2 px-3 py-1.5 bg-white dark:bg-app-bg border border-app-border text-primary rounded-lg hover:bg-primary hover:text-white transition-all text-[10px] font-bold uppercase tracking-wider disabled:opacity-50"
                           >
                             {isSendingWeeklyTest ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
                             Enviar Teste
@@ -1496,8 +1513,8 @@ export default function Settings() {
                           <button
                             type="button"
                             onClick={handleTestDailyReport}
-                            disabled={isSendingDailyTest || !formData.emailUser}
-                            className="flex-1 min-w-[80px] flex items-center justify-center gap-2 px-3 py-1.5 bg-white dark:bg-app-bg border border-app-border text-primary rounded-lg hover:bg-primary hover:text-white transition-all text-[10px] font-bold uppercase tracking-wider"
+                            disabled={isSendingDailyTest || (!useServerSmtpTransport && !formData.emailUser)}
+                            className="flex-1 min-w-[80px] flex items-center justify-center gap-2 px-3 py-1.5 bg-white dark:bg-app-bg border border-app-border text-primary rounded-lg hover:bg-primary hover:text-white transition-all text-[10px] font-bold uppercase tracking-wider disabled:opacity-50"
                           >
                             {isSendingDailyTest ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
                             Enviar Teste
@@ -1545,8 +1562,8 @@ export default function Settings() {
                           <button
                             type="button"
                             onClick={handleTestNewNotifications}
-                            disabled={isSendingNewNotificationsTest || !formData.emailUser}
-                            className="flex-1 min-w-[80px] flex items-center justify-center gap-2 px-3 py-1.5 bg-white dark:bg-app-bg border border-app-border text-primary rounded-lg hover:bg-primary hover:text-white transition-all text-[10px] font-bold uppercase tracking-wider"
+                            disabled={isSendingNewNotificationsTest || (!useServerSmtpTransport && !formData.emailUser)}
+                            className="flex-1 min-w-[80px] flex items-center justify-center gap-2 px-3 py-1.5 bg-white dark:bg-app-bg border border-app-border text-primary rounded-lg hover:bg-primary hover:text-white transition-all text-[10px] font-bold uppercase tracking-wider disabled:opacity-50"
                           >
                             {isSendingNewNotificationsTest ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
                             Enviar Teste

@@ -18,6 +18,7 @@ import {
 import { CURRENT_APP_VERSION } from '../services/versionService';
 import { Usuario } from '../types';
 import { createAuthUserAdmin } from '../services/supabaseAuth';
+import { safeGetStorageItem } from '../utils/safeStorage';
 
 declare global {
   interface Window {
@@ -195,7 +196,7 @@ export default function Login() {
     ((import.meta as any).env?.VITE_GOOGLE_CLIENT_ID || '') ||
     state.settings.googleClientId ||
     activeOffice?.googleClientId ||
-    (typeof window !== 'undefined' ? (localStorage.getItem('advocacia_google_client_id') || '') : '') ||
+    safeGetStorageItem('advocacia_google_client_id') ||
     '';
 
   const handleGoogleBtnClick = () => {
@@ -221,7 +222,7 @@ export default function Login() {
   };
 
   useEffect(() => {
-    const cached = localStorage.getItem('advocacia_theme_cache');
+    const cached = safeGetStorageItem('advocacia_theme_cache');
     if (cached) {
       try {
         const { officeName } = JSON.parse(cached);

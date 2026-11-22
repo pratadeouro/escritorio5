@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, ReactNode, useEffect, useRef, useCallback, useMemo } from 'react';
+import { safeGetStorageItem, safeSetStorageItem, safeRemoveStorageItem, safeJsonParseStorage } from './utils/safeStorage';
 import { AppState, Contato, Processo, Evento, Movimento, Transacao, Documento, Vara, Julgador, Escritorio, Usuario, Tarefa, Tribunal, View, RolePermission, Modelo, Etiqueta, TipoEnvolvimento, Envolvido, Calendario, UPJ, Recurso, Servidor, Forum, Lead, LeadStatus, DEFAULT_LEAD_STATUSES, LogRegistro, EnvironmentMode } from './types';
 import { importFromGoogleSheets, generateId } from './services/googleSheets';
 import { saveAllDataToScript, saveLogToScript, upsertItemToScript, deleteItemFromScript, saveTableToScript } from './services/googleAppsScript';
@@ -106,8 +107,8 @@ const initialState: AppState = {
   },
   allSettings: [],
   syncStatus: 'idle',
-  lastSyncTime: localStorage.getItem('advocacia_last_sync') || null,
-  syncLogs: JSON.parse(localStorage.getItem('advocacia_sync_logs') || '[]'),
+  lastSyncTime: safeGetStorageItem('advocacia_last_sync') || null,
+  syncLogs: safeJsonParseStorage<Array<{timestamp: string, action: string, status: 'success' | 'error', details?: string}>>('advocacia_sync_logs', []),
   hasLoaded: false,
   hasFullLoaded: false,
   viewParams: undefined,
@@ -238,8 +239,8 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [state, setState] = useState<AppState>(() => {
-    const saved = localStorage.getItem('advocacia_settings');
-    const savedAll = localStorage.getItem('advocacia_all_settings');
+    const saved = safeGetStorageItem('advocacia_settings');
+    const savedAll = safeGetStorageItem('advocacia_all_settings');
     if (saved) {
       try {
         const parsed = JSON.parse(saved);
@@ -287,11 +288,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const handleImportRef = useRef<(isFullLoad?: boolean) => Promise<void>>(() => Promise.resolve());
 
   const [authenticatedUserEmail, setAuthenticatedUserEmail] = useState<string | null>(() => {
-    return localStorage.getItem('advocacia_user_email');
+    return safeGetStorageItem('advocacia_user_email');
   });
 
   const [environmentMode, setEnvironmentModeState] = useState<EnvironmentMode>(() => {
-    const cached = typeof localStorage !== 'undefined' ? normalizeEnvironmentMode(localStorage.getItem('advocacia_environment_mode')) : null;
+    const cached = normalizeEnvironmentMode(safeGetStorageItem('advocacia_environment_mode'));
     if (cached) return cached;
     const viteEnv = normalizeEnvironmentMode((import.meta as any).env?.VITE_APP_ENVIRONMENT);
     if (viteEnv) return viteEnv;
@@ -323,9 +324,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (resolvedMode) {
           setEnvironmentModeState(resolvedMode);
           setEnvironmentSource(source);
-          try {
-            localStorage.setItem('advocacia_environment_mode', resolvedMode);
-          } catch {}
+          safeSetStorageItem('advocacia_environment_mode', resolvedMode);
           setState(s => ({
             ...s,
             settings: {
@@ -349,13 +348,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Limpeza de chaves residuais de credenciais em localStorage (.env é a única fonte de conexão)
   useEffect(() => {
-    try {
-      [
-        'supabase_migration_url',
-        'supabase_migration_key',
-        'supabase_migration_publishable_key'
-      ].forEach(k => localStorage.removeItem(k));
-    } catch {}
+    [
+      'supabase_migration_url',
+      'supabase_migration_key',
+      'supabase_migration_publishable_key'
+    ].forEach(k => safeRemoveStorageItem(k));
   }, []);
 
   // Monitoramento de Sessão e Eventos do Supabase Auth
@@ -369,7 +366,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (data?.session?.user?.email) {
         const sessionEmail = data.session.user.email.toLowerCase();
         setAuthenticatedUserEmail(prev => prev || sessionEmail);
-        localStorage.setItem('advocacia_user_email', sessionEmail);
+        safeSetStorageItem('advocacia_user_email', sessionEmail);
       }
     }).catch(err => {
       console.warn('[Supabase Auth] Aviso ao verificar sessão persistida:', err);
@@ -383,18 +380,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (session?.user?.email) {
           const sessionEmail = session.user.email.toLowerCase();
           setAuthenticatedUserEmail(sessionEmail);
-          localStorage.setItem('advocacia_user_email', sessionEmail);
+          safeSetStorageItem('advocacia_user_email', sessionEmail);
         }
       } else if (event === 'SIGNED_OUT') {
         if (getActiveDataSource() === 'supabase') {
           setAuthenticatedUserEmail(null);
-          localStorage.removeItem('advocacia_user_email');
+          safeRemoveStorageItem('advocacia_user_email');
         }
       } else if (event === 'PASSWORD_RECOVERY') {
         if (session?.user?.email) {
           const sessionEmail = session.user.email.toLowerCase();
           setAuthenticatedUserEmail(sessionEmail);
-          localStorage.setItem('advocacia_user_email', sessionEmail);
+          safeSetStorageItem('advocacia_user_email', sessionEmail);
         }
       }
     });
@@ -439,7 +436,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [refreshAuthUsers]);
 
   const [escritorioAtivoId, setEscritorioAtivoIdState] = useState<string | null>(() => {
-    const stored = localStorage.getItem('advocacia_escritorio_ativo');
+    const stored = safeGetStorageItem('advocacia_escritorio_ativo');
     return stored ? stored.toUpperCase() : null;
   });
 
@@ -447,9 +444,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const normalizedId = id ? id.toUpperCase() : null;
     setEscritorioAtivoIdState(normalizedId);
     if (normalizedId) {
-      localStorage.setItem('advocacia_escritorio_ativo', normalizedId);
+      safeSetStorageItem('advocacia_escritorio_ativo', normalizedId);
     } else {
-      localStorage.removeItem('advocacia_escritorio_ativo');
+      safeRemoveStorageItem('advocacia_escritorio_ativo');
     }
   }, []);
 
@@ -461,7 +458,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (session?.user?.email && !authenticatedUserEmail) {
         console.log('[Supabase Auth] Restaurando sessão ativa detectada:', session.user.email);
         setAuthenticatedUserEmail(session.user.email);
-        localStorage.setItem('advocacia_user_email', session.user.email);
+        safeSetStorageItem('advocacia_user_email', session.user.email);
       }
     }).catch(err => {
       console.warn('Aviso ao verificar sessão do Supabase:', err);
@@ -490,7 +487,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     } else {
       // Preserve existing officeName if not provided
       try {
-        const existing = localStorage.getItem('advocacia_theme_cache');
+        const existing = safeGetStorageItem('advocacia_theme_cache');
         if (existing) {
           const parsed = JSON.parse(existing);
           if (parsed.officeName) cacheData.officeName = parsed.officeName;
@@ -498,7 +495,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       } catch (e) {}
     }
 
-    localStorage.setItem('advocacia_theme_cache', JSON.stringify(cacheData));
+    safeSetStorageItem('advocacia_theme_cache', JSON.stringify(cacheData));
 
     if (isDark) {
       root.classList.add('dark');
@@ -587,7 +584,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (activeOffice) return activeOffice.nome;
     
     // Fallback to cached name if state hasn't loaded yet
-    const cached = localStorage.getItem('advocacia_theme_cache');
+    const cached = safeGetStorageItem('advocacia_theme_cache');
     if (cached) {
       try {
         const { officeName } = JSON.parse(cached);
@@ -744,8 +741,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         });
 
         setAuthenticatedUserEmail(safeUser.email);
-        localStorage.setItem('advocacia_user_email', safeUser.email);
-        localStorage.removeItem('advocacia_data_backup');
+        safeSetStorageItem('advocacia_user_email', safeUser.email);
+        safeRemoveStorageItem('advocacia_data_backup');
 
         if (getActiveDataSource() === 'supabase' && isSupabaseConfigured()) {
           await ensureSupabaseJwtSession(safeUser.email);
@@ -980,8 +977,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       });
 
       setAuthenticatedUserEmail(safeUser.email);
-      localStorage.setItem('advocacia_user_email', safeUser.email);
-      localStorage.removeItem('advocacia_data_backup');
+      safeSetStorageItem('advocacia_user_email', safeUser.email);
+      safeRemoveStorageItem('advocacia_data_backup');
 
       // Carrega dados completos do Supabase
       await handleImportRef.current(true);
@@ -1041,9 +1038,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
 
       setAuthenticatedUserEmail(null);
-      localStorage.removeItem('advocacia_user_email');
+      safeRemoveStorageItem('advocacia_user_email');
       setEscritorioAtivoIdState(null);
-      localStorage.removeItem('advocacia_escritorio_ativo');
+      safeRemoveStorageItem('advocacia_escritorio_ativo');
 
       setState(prevState => ({
         ...initialState,
@@ -1115,9 +1112,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     setAuthenticatedUserEmail(null);
-    localStorage.removeItem('advocacia_user_email');
+    safeRemoveStorageItem('advocacia_user_email');
     setEscritorioAtivoIdState(null);
-    localStorage.removeItem('advocacia_escritorio_ativo');
+    safeRemoveStorageItem('advocacia_escritorio_ativo');
 
     // Resetar o estado para o inicial (mantendo configurações)
     setState(prevState => ({
@@ -1688,14 +1685,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (isAdmin()) {
           // Se admin perdeu acesso (ex: office deletado), vai para "Todos"
           setEscritorioAtivoIdState(null);
-          localStorage.removeItem('advocacia_escritorio_ativo');
+          safeRemoveStorageItem('advocacia_escritorio_ativo');
         } else if (currentUser?.escritoriosIds && currentUser.escritoriosIds.length > 0) {
           setEscritorioAtivoId(currentUser.escritoriosIds[0]);
         } else if (state.escritorios.length > 0) {
           setEscritorioAtivoId(state.escritorios[0].id);
         } else {
           setEscritorioAtivoIdState(null);
-          localStorage.removeItem('advocacia_escritorio_ativo');
+          safeRemoveStorageItem('advocacia_escritorio_ativo');
         }
       }
     }
@@ -1801,7 +1798,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // Apply theme from cache on initial mount before state loads
   useEffect(() => {
-    const cached = localStorage.getItem('advocacia_theme_cache');
+    const cached = safeGetStorageItem('advocacia_theme_cache');
     if (cached) {
       try {
         const { theme, primaryColor, backgroundColor, secondaryColor } = JSON.parse(cached);
@@ -2048,13 +2045,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   // --- PERSISTENCE ---
   useEffect(() => {
-    localStorage.setItem('advocacia_settings', JSON.stringify(state.settings));
-    localStorage.setItem('advocacia_all_settings', JSON.stringify(state.allSettings));
+    safeSetStorageItem('advocacia_settings', JSON.stringify(state.settings));
+    safeSetStorageItem('advocacia_all_settings', JSON.stringify(state.allSettings));
   }, [state.settings, state.allSettings]);
 
   useEffect(() => {
-    localStorage.setItem('advocacia_last_sync', state.lastSyncTime || '');
-    localStorage.setItem('advocacia_sync_logs', JSON.stringify(state.syncLogs));
+    safeSetStorageItem('advocacia_last_sync', state.lastSyncTime || '');
+    safeSetStorageItem('advocacia_sync_logs', JSON.stringify(state.syncLogs));
   }, [state.lastSyncTime, state.syncLogs]);
 
   // --- LOCAL BACKUP PERSISTENCE ---
@@ -2082,13 +2079,13 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         } = state;
         
         // Save core structural data (usuarios, escritorios, etc.)
-        localStorage.setItem('advocacia_core_backup', JSON.stringify({
+        safeSetStorageItem('advocacia_core_backup', JSON.stringify({
           usuarios: state.usuarios,
           escritorios: state.escritorios,
           allSettings: state.allSettings
         }));
         
-        localStorage.setItem('advocacia_backup_timestamp', Date.now().toString());
+        safeSetStorageItem('advocacia_backup_timestamp', Date.now().toString());
       } catch (e) {
         console.error("Erro ao criar backup local:", e);
       }
@@ -2114,7 +2111,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (!isSupabaseConfigured()) {
           throw new Error('Conexão Supabase não configurada no arquivo .env.');
         }
-        const effectiveEmail = authenticatedUserEmail || localStorage.getItem('advocacia_user_email') || undefined;
+        const effectiveEmail = authenticatedUserEmail || safeGetStorageItem('advocacia_user_email') || undefined;
         importedData = await fetchAllDataFromSupabase(!shouldLoadFull, effectiveEmail);
       } else {
         importedData = await importFromGoogleSheets(stateRef.current.settings.spreadsheetId, !shouldLoadFull);
@@ -2244,7 +2241,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             if (prevState.hasLoaded && allSettings.length === 0 && importedData.allSettings !== undefined) {
               return prevState.settings;
             }
-            const eid = localStorage.getItem('advocacia_escritorio_ativo') || escritorioAtivoId;
+            const eid = safeGetStorageItem('advocacia_escritorio_ativo') || escritorioAtivoId;
             const officeSettings = allSettings.find((s: any) => s.idEscritorio === eid);
             const globalFallbackSettings = allSettings.find((s: any) => {
               const p = s.permissions;
@@ -2289,9 +2286,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (loadedEnv) {
           setEnvironmentModeState(loadedEnv);
           setEnvironmentSource('supabase');
-          try {
-            localStorage.setItem('advocacia_environment_mode', loadedEnv);
-          } catch {}
+          safeSetStorageItem('advocacia_environment_mode', loadedEnv);
         }
       }
       
@@ -3571,9 +3566,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const cleanMode: EnvironmentMode = mode === 'producao' ? 'producao' : 'homologacao';
     setEnvironmentModeState(cleanMode);
     setEnvironmentSource('env');
-    try {
-      localStorage.setItem('advocacia_environment_mode', cleanMode);
-    } catch {}
+    safeSetStorageItem('advocacia_environment_mode', cleanMode);
 
     setState(s => ({
       ...s,
@@ -3627,7 +3620,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       let data: Partial<AppState>;
       if (isSupabaseActive) {
-        const effectiveEmail = authenticatedUserEmail || localStorage.getItem('advocacia_user_email') || undefined;
+        const effectiveEmail = authenticatedUserEmail || safeGetStorageItem('advocacia_user_email') || undefined;
         data = await fetchAllDataFromSupabase(false, effectiveEmail);
       } else {
         data = await importFromGoogleSheets(state.settings.spreadsheetId);

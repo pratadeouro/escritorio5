@@ -3,10 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { Component, useState, useEffect } from 'react';
 import { AppProvider, useAppContext } from './context';
 import { View } from './types';
-import { Loader2, Save, Ban, LogOut, RefreshCw } from 'lucide-react';
+import { Loader2, Save, Ban, LogOut, RefreshCw, AlertTriangle } from 'lucide-react';
 import Layout from './components/Layout';
 import Login from './views/Login';
 import Dashboard from './views/Dashboard';
@@ -208,11 +208,58 @@ function AppContent() {
   );
 }
 
+interface ErrorBoundaryState {
+  hasError: boolean;
+  errorMessage: string;
+}
+
+class AppErrorBoundary extends Component<{ children: React.ReactNode }, ErrorBoundaryState> {
+  state: ErrorBoundaryState = { hasError: false, errorMessage: '' };
+
+  static getDerivedStateFromError(error: any): ErrorBoundaryState {
+    return {
+      hasError: true,
+      errorMessage: error?.message || String(error || 'Erro inesperado ao renderizar o aplicativo.')
+    };
+  }
+
+  componentDidCatch(error: any) {
+    console.error('[AppErrorBoundary]', error);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6">
+          <div className="max-w-md w-full bg-white border border-slate-200 rounded-2xl shadow-xl p-8 text-center space-y-4">
+            <div className="mx-auto w-14 h-14 rounded-2xl bg-amber-500/10 text-amber-600 flex items-center justify-center">
+              <AlertTriangle size={28} />
+            </div>
+            <h1 className="text-xl font-bold text-slate-900">Não foi possível carregar a tela</h1>
+            <p className="text-sm text-slate-600 break-words">{this.state.errorMessage}</p>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-indigo-600 text-white text-sm font-semibold hover:bg-indigo-700 transition-colors cursor-pointer"
+            >
+              <RefreshCw size={16} />
+              Recarregar Sistema
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function App() {
   return (
-    <AppProvider>
-      <AppContent />
-    </AppProvider>
+    <AppErrorBoundary>
+      <AppProvider>
+        <AppContent />
+      </AppProvider>
+    </AppErrorBoundary>
   );
 }
 

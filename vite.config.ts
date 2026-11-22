@@ -82,7 +82,11 @@ export default defineConfig(({ mode }) => {
       host: '0.0.0.0',
       port: 5173,
       allowedHosts: true,
-      hmr: process.env.DISABLE_HMR !== 'true',
+      hmr: process.env.DISABLE_HMR !== 'true' && !process.env.K_SERVICE && !process.env.K_REVISION,
+    },
+
+    optimizeDeps: {
+      force: true,
     },
 
     preview: {
