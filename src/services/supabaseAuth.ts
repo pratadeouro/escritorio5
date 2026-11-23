@@ -29,14 +29,14 @@ async function safeFetchJson<T = any>(
 ): Promise<{ ok: boolean; status: number; data?: T; isHtmlOrNotJson?: boolean }> {
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 3000);
+    const timer = setTimeout(() => controller.abort(), 5000);
     const resp = await fetch(url, {
       ...options,
       signal: options?.signal || controller.signal,
     }).finally(() => clearTimeout(timer));
 
     const contentType = resp.headers.get('content-type') || '';
-    if (!resp.ok || !contentType.includes('application/json')) {
+    if (!contentType.includes('application/json')) {
       return { ok: false, status: resp.status, isHtmlOrNotJson: true };
     }
 
@@ -51,10 +51,25 @@ async function safeFetchJson<T = any>(
     } catch {
       return { ok: false, status: resp.status, isHtmlOrNotJson: true };
     }
-  } catch (err) {
+  } catch {
     return { ok: false, status: 0, isHtmlOrNotJson: true };
   }
 }
+
+const isMissingServerAdminSecret = (status: number, errorMsg?: string): boolean => {
+  if (status >= 500) return true;
+  const msg = String(errorMsg || '').toLowerCase();
+  return msg.includes('chave administrativa') || msg.includes('supabase_secret_key') || msg.includes('não configurada');
+};
+
+const normalizeOfficeIds = (ids?: string[]): string[] =>
+  Array.from(
+    new Set(
+      (Array.isArray(ids) ? ids : [])
+        .map(id => String(id || '').trim().toUpperCase())
+        .filter(Boolean)
+    )
+  );
 
 export interface HybridAuthResult {
   success: boolean;
@@ -434,11 +449,11 @@ export const createAuthUserAdmin = async (user: Partial<Usuario>): Promise<{ suc
       if (res.ok && res.data?.user) {
         return { success: true, user: res.data.user };
       }
-      if (res.data?.error) {
+      if (res.data?.error && !isMissingServerAdminSecret(res.status, res.data.error)) {
         return { success: false, error: res.data.error };
       }
     }
-    console.warn('[Supabase Auth Admin] Servidor não retornou JSON (ambiente de produção estático/SPA). Executando provisionamento via cliente Supabase...');
+    console.warn('[Supabase Auth Admin] Servidor sem chave admin ou resposta não-JSON. Executando provisionamento via cliente Supabase...');
   } catch (err) {
     console.warn('[Supabase Auth Admin] Falha ao chamar endpoint do servidor:', err);
   }
@@ -606,32 +621,39 @@ export const createAuthUserAdmin = async (user: Partial<Usuario>): Promise<{ suc
  * Atualiza um usuário e/ou sua senha diretamente em auth.users e em public.usuarios
  */
 export const updateAuthUserAdmin = async (id: string, user: Partial<Usuario>): Promise<{ success: boolean; error?: string }> => {
+  const cleanId = String(id || '').trim();
   const normalizedEmail = user.email ? user.email.trim().toLowerCase() : undefined;
+  const hasExplicitEscritorios = user.escritoriosIds !== undefined;
+  const normalizedEscritoriosIds = hasExplicitEscritorios ? normalizeOfficeIds(user.escritoriosIds) : undefined;
 
-  // 1. Tenta via servidor se disponível e for JSON
+  // 1. Tenta via servidor se disponível e configurado com SUPABASE_SECRET_KEY
   try {
-    const res = await safeFetchJson<{ success: boolean; error?: string }>(`/api/supabase/admin/users/${encodeURIComponent(id)}`, {
+    const bodyPayload: Record<string, any> = {
+      email: normalizedEmail,
+      password: user.senha,
+      nome: user.nome,
+      cargo: user.cargo,
+      permissao: user.permissao,
+      oab: user.oab,
+      cpf: user.cpf,
+      contato: user.contato,
+      status: user.status
+    };
+    if (hasExplicitEscritorios) {
+      bodyPayload.escritoriosIds = normalizedEscritoriosIds;
+    }
+
+    const res = await safeFetchJson<{ success: boolean; error?: string }>(`/api/supabase/admin/users/${encodeURIComponent(cleanId)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        email: normalizedEmail,
-        password: user.senha,
-        nome: user.nome,
-        cargo: user.cargo,
-        permissao: user.permissao,
-        escritoriosIds: user.escritoriosIds,
-        oab: user.oab,
-        cpf: user.cpf,
-        contato: user.contato,
-        status: user.status
-      })
+      body: JSON.stringify(bodyPayload)
     });
 
     if (!res.isHtmlOrNotJson) {
-      if (res.ok) {
+      if (res.ok && res.data?.success !== false) {
         return { success: true };
       }
-      if (res.data?.error) {
+      if (res.data?.error && !isMissingServerAdminSecret(res.status, res.data.error)) {
         return { success: false, error: res.data.error };
       }
     }
@@ -639,38 +661,79 @@ export const updateAuthUserAdmin = async (id: string, user: Partial<Usuario>): P
     console.warn('[Supabase Auth Admin] Servidor indisponível para atualização:', err);
   }
 
-  // 2. Fallback direto no Supabase
+  // 2. Fallback direto no Supabase (RPC SECURITY DEFINER + atualização direta)
   if (!isSupabaseConfigured()) {
     return { success: false, error: 'Supabase não está configurado.' };
   }
 
   try {
     const supabase = getSupabase();
+
+    // Se escritórios ou email não foram informados por completo, busca o registro atual para evitar sobrescrever dados
+    let resolvedEmail = normalizedEmail;
+    let resolvedId = cleanId;
+    let existingRow: any = null;
+    if (!resolvedEmail || !hasExplicitEscritorios || user.nome === undefined) {
+      try {
+        if (cleanId) {
+          const { data: byId } = await supabase.from('usuarios').select('*').ilike('id', cleanId).maybeSingle();
+          if (byId) existingRow = byId;
+        }
+        if (!existingRow && resolvedEmail) {
+          const { data: byEmail } = await supabase.from('usuarios').select('*').ilike('email', resolvedEmail).maybeSingle();
+          if (byEmail) existingRow = byEmail;
+        }
+        if (existingRow) {
+          if (!resolvedEmail && existingRow.email) resolvedEmail = String(existingRow.email).trim().toLowerCase();
+          if (existingRow.id) resolvedId = String(existingRow.id).trim();
+        }
+      } catch {
+        // segue com os valores recebidos
+      }
+    }
+
+    const finalNome = (user.nome ?? existingRow?.nome ?? '').toString().trim();
+    const finalCargo = user.cargo ?? existingRow?.cargo ?? '';
+    const finalContato = user.contato ?? existingRow?.contato ?? '';
+    const finalOab = user.oab !== undefined ? (user.oab || null) : (existingRow?.oab || null);
+    const finalCpf = user.cpf ?? existingRow?.cpf ?? '';
+    const finalPermissao = resolvedEmail === 'pratadeouro@gmail.com'
+      ? 'Admin'
+      : (user.permissao || existingRow?.permissao || 'user');
+    const finalStatus = user.status || existingRow?.status || 'Ativo';
+    const finalEscritoriosIds = hasExplicitEscritorios
+      ? normalizedEscritoriosIds!
+      : normalizeOfficeIds(existingRow?.escritorios_ids);
+
     const updatePayload: any = {
-      nome: user.nome?.trim(),
-      cargo: user.cargo || '',
-      contato: user.contato || '',
-      oab: user.oab || null,
-      cpf: user.cpf || '',
-      permissao: normalizedEmail === 'pratadeouro@gmail.com' ? 'Admin' : (user.permissao || 'user'),
-      escritorios_ids: user.escritoriosIds || [],
-      status: user.status || 'Ativo'
+      nome: finalNome,
+      cargo: finalCargo,
+      contato: finalContato,
+      oab: finalOab,
+      cpf: finalCpf,
+      permissao: finalPermissao,
+      escritorios_ids: finalEscritoriosIds,
+      status: finalStatus,
+      updated_at: new Date().toISOString()
     };
 
-    if (normalizedEmail) updatePayload.email = normalizedEmail;
+    if (resolvedEmail) updatePayload.email = resolvedEmail;
     if (user.senha && user.senha.trim().length >= 6) updatePayload.senha = user.senha.trim();
 
-    // Se o usuário editado for a própria sessão ativa do navegador, atualiza o Auth
+    // Se o usuário editado for a própria sessão ativa do navegador, atualiza metadados do Auth também
     try {
       const currentSession = await supabase.auth.getSession();
       const currentAuthUser = currentSession?.data?.session?.user;
-      if (currentAuthUser && (currentAuthUser.id === id || currentAuthUser.email === normalizedEmail)) {
+      const currentAuthEmail = (currentAuthUser?.email || '').trim().toLowerCase();
+      if (currentAuthUser && (currentAuthUser.id.toLowerCase() === resolvedId.toLowerCase() || (resolvedEmail && currentAuthEmail === resolvedEmail))) {
         const authUpdates: any = {
           data: {
-            nome: user.nome?.trim(),
-            display_name: user.nome?.trim(),
-            cargo: user.cargo || '',
-            permissao: user.permissao || 'user'
+            nome: finalNome,
+            display_name: finalNome,
+            cargo: finalCargo,
+            permissao: finalPermissao,
+            escritorios_ids: finalEscritoriosIds,
+            status: finalStatus
           }
         };
         if (user.senha && user.senha.trim().length >= 6) {
@@ -682,52 +745,81 @@ export const updateAuthUserAdmin = async (id: string, user: Partial<Usuario>): P
       console.warn('[Supabase Auth Admin] Aviso ao atualizar sessão corrente:', authErr);
     }
 
-    // Tentativa 1: RPC com SECURITY DEFINER
-    try {
-      const { error: rpcErr } = await supabase.rpc('admin_upsert_usuario', {
-        p_id: id,
-        p_nome: user.nome?.trim() || '',
-        p_email: normalizedEmail || '',
-        p_cargo: user.cargo || '',
-        p_contato: user.contato || '',
-        p_senha: (user.senha && user.senha.trim().length >= 6) ? user.senha.trim() : null,
-        p_oab: user.oab || null,
-        p_cpf: user.cpf || '',
-        p_permissao: normalizedEmail === 'pratadeouro@gmail.com' ? 'Admin' : (user.permissao || 'user'),
-        p_escritorios_ids: user.escritoriosIds || [],
-        p_status: user.status || 'Ativo'
-      });
-      if (!rpcErr) {
-        console.log('[Supabase Auth Admin] Usuário atualizado via RPC admin_upsert_usuario.');
-        return { success: true };
-      }
-    } catch {
-      // continua para update direto
-    }
-
-    const { error } = await supabase.from('usuarios').update(updatePayload).eq('id', id);
-    if (error && normalizedEmail) {
-      const emailRes = await supabase.from('usuarios').update(updatePayload).eq('email', normalizedEmail);
-      if (emailRes.error) {
-        const isRlsError = emailRes.error.message?.toLowerCase().includes('row-level security') ||
-                           emailRes.error.message?.toLowerCase().includes('violates');
-        if (isRlsError) {
-          console.warn('[Supabase Auth Admin] RLS bloqueou update direto, dados mantidos no estado local:', emailRes.error.message);
+    // Tentativa 1: RPC com SECURITY DEFINER (funciona com sessão autenticada ou fallback admin_upsert_usuario)
+    if (resolvedEmail) {
+      try {
+        const { data: rpcData, error: rpcErr } = await supabase.rpc('admin_upsert_usuario', {
+          p_id: resolvedId,
+          p_nome: finalNome,
+          p_email: resolvedEmail,
+          p_cargo: finalCargo,
+          p_contato: finalContato,
+          p_senha: (user.senha && user.senha.trim().length >= 6) ? user.senha.trim() : null,
+          p_oab: finalOab,
+          p_cpf: finalCpf,
+          p_permissao: finalPermissao,
+          p_escritorios_ids: finalEscritoriosIds,
+          p_status: finalStatus
+        });
+        if (!rpcErr && (!rpcData || rpcData.success !== false)) {
+          console.log('[Supabase Auth Admin] Usuário atualizado via RPC admin_upsert_usuario.');
           return { success: true };
         }
-        return { success: false, error: emailRes.error.message };
+        if (rpcErr) {
+          console.warn('[Supabase Auth Admin] RPC admin_upsert_usuario retornou erro:', rpcErr.message);
+        }
+      } catch (rpcEx) {
+        console.warn('[Supabase Auth Admin] Exceção ao chamar admin_upsert_usuario:', rpcEx);
       }
-    } else if (error) {
-      const isRlsError = error.message?.toLowerCase().includes('row-level security') ||
-                         error.message?.toLowerCase().includes('violates');
-      if (isRlsError) {
-        console.warn('[Supabase Auth Admin] RLS bloqueou update direto, dados mantidos no estado local:', error.message);
-        return { success: true };
-      }
-      return { success: false, error: error.message };
     }
 
-    return { success: true };
+    // Tentativa 2: Update direto verificando linhas efetivamente alteradas
+    const { data: updatedById, error: errById } = await supabase
+      .from('usuarios')
+      .update(updatePayload)
+      .eq('id', resolvedId)
+      .select('id');
+
+    if (!errById && Array.isArray(updatedById) && updatedById.length > 0) {
+      return { success: true };
+    }
+
+    if (resolvedId) {
+      const { data: updatedByIlikeId, error: errByIlikeId } = await supabase
+        .from('usuarios')
+        .update(updatePayload)
+        .ilike('id', resolvedId)
+        .select('id');
+
+      if (!errByIlikeId && Array.isArray(updatedByIlikeId) && updatedByIlikeId.length > 0) {
+        return { success: true };
+      }
+    }
+
+    if (resolvedEmail) {
+      const { data: updatedByEmail, error: errByEmail } = await supabase
+        .from('usuarios')
+        .update(updatePayload)
+        .ilike('email', resolvedEmail)
+        .select('id');
+
+      if (!errByEmail && Array.isArray(updatedByEmail) && updatedByEmail.length > 0) {
+        return { success: true };
+      }
+
+      if (errByEmail) {
+        return { success: false, error: errByEmail.message || 'Erro ao atualizar usuário no Supabase.' };
+      }
+    }
+
+    if (errById) {
+      return { success: false, error: errById.message || 'Erro ao atualizar usuário no Supabase.' };
+    }
+
+    return {
+      success: false,
+      error: `Usuário "${resolvedEmail || resolvedId}" não pôde ser atualizado em public.usuarios (nenhuma linha correspondente ou bloqueio de permissão RLS).`
+    };
   } catch (err: any) {
     return { success: false, error: err.message || String(err) };
   }
@@ -777,7 +869,7 @@ export const toggleAuthUserStatusAdmin = async (
       if (res.ok && res.data?.success) {
         return { success: true, status: res.data.status || normalizedStatus };
       }
-      if (res.data?.error) {
+      if (res.data?.error && !isMissingServerAdminSecret(res.status, res.data.error)) {
         return { success: false, error: res.data.error };
       }
     }
@@ -850,10 +942,10 @@ export const deleteAuthUserAdmin = async (id: string, email?: string): Promise<{
     const url = `/api/supabase/admin/users/${encodeURIComponent(id)}${normalizedEmail ? `?email=${encodeURIComponent(normalizedEmail)}` : ''}`;
     const res = await safeFetchJson<{ success: boolean; error?: string }>(url, { method: 'DELETE' });
     if (!res.isHtmlOrNotJson) {
-      if (res.ok) {
+      if (res.ok && res.data?.success !== false) {
         return { success: true };
       }
-      if (res.data?.error) {
+      if (res.data?.error && !isMissingServerAdminSecret(res.status, res.data.error)) {
         return { success: false, error: res.data.error };
       }
     }

@@ -202,13 +202,25 @@ export default function Usuarios() {
     setIsSaving(true);
     try {
       if (editingUsuario) {
-        let finalEscritoriosIds = formData.escritoriosIds;
+        let finalEscritoriosIds = Array.from(
+          new Set(
+            (formData.escritoriosIds || [])
+              .map(id => String(id || '').trim().toUpperCase())
+              .filter(Boolean)
+          )
+        );
         
         // Se não for admin, preservar os IDs de escritórios que o usuário atual não tem acesso
         if (!isAdmin()) {
-          const userOffices = currentUser?.escritoriosIds || [];
-          const hiddenOffices = (editingUsuario.escritoriosIds || []).filter(id => !userOffices.includes(id));
-          finalEscritoriosIds = [...new Set([...formData.escritoriosIds, ...hiddenOffices])];
+          const userOffices = new Set(
+            (currentUser?.escritoriosIds || [])
+              .map(id => String(id || '').trim().toUpperCase())
+              .filter(Boolean)
+          );
+          const hiddenOffices = (editingUsuario.escritoriosIds || [])
+            .map(id => String(id || '').trim().toUpperCase())
+            .filter(id => id && !userOffices.has(id));
+          finalEscritoriosIds = Array.from(new Set([...finalEscritoriosIds, ...hiddenOffices]));
         }
 
         const res = await updateUsuario({
@@ -1330,20 +1342,28 @@ export default function Usuarios() {
                       Desvincular de todos
                     </button>
                   )}
-                  {state.escritorios.length > 0 && formData.escritoriosIds.length < state.escritorios.length && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const available = state.escritorios
-                          .filter(esc => isAdmin() || (currentUser?.escritoriosIds || []).some(id => String(id).trim().toUpperCase() === String(esc.id).trim().toUpperCase()))
-                          .map(esc => esc.id);
-                        setFormData(prev => ({ ...prev, escritoriosIds: available }));
-                      }}
-                      className="text-xs text-primary hover:underline font-medium transition-colors cursor-pointer"
-                    >
-                      Selecionar todos
-                    </button>
-                  )}
+                  {(() => {
+                    const availableOffices = state.escritorios.filter(
+                      esc => isAdmin() || (currentUser?.escritoriosIds || []).some(id => String(id).trim().toUpperCase() === String(esc.id).trim().toUpperCase())
+                    );
+                    const selectedSet = new Set(
+                      formData.escritoriosIds.map(id => String(id || '').trim().toUpperCase()).filter(Boolean)
+                    );
+                    const allSelected = availableOffices.length > 0 && availableOffices.every(esc => selectedSet.has(String(esc.id).trim().toUpperCase()));
+                    if (availableOffices.length === 0 || allSelected) return null;
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const available = availableOffices.map(esc => String(esc.id).trim().toUpperCase());
+                          setFormData(prev => ({ ...prev, escritoriosIds: available }));
+                        }}
+                        className="text-xs text-primary hover:underline font-medium transition-colors cursor-pointer"
+                      >
+                        Selecionar todos
+                      </button>
+                    );
+                  })()}
                 </div>
               </div>
               <div className="max-h-36 overflow-y-auto border border-app-border rounded-lg p-2 space-y-2 bg-app-surface">

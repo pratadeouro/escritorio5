@@ -2782,22 +2782,31 @@ async function startServer() {
         if (match) targetAuthId = match.id;
       }
 
+      const hasExplicitEscritorios = Array.isArray(escritoriosIds);
+      const normalizedEscritorios = hasExplicitEscritorios
+        ? Array.from(new Set(escritoriosIds.map((eid: any) => String(eid || '').trim().toUpperCase()).filter(Boolean)))
+        : undefined;
+
+      const userMetadata: Record<string, any> = {
+        nome: nome?.trim(),
+        display_name: nome?.trim(),
+        full_name: nome?.trim(),
+        name: nome?.trim(),
+        cargo: cargo || '',
+        permissao: normalizedEmail === 'pratadeouro@gmail.com' ? 'Admin' : (permissao || 'user'),
+        oab: oab || '',
+        cpf: cpf || '',
+        contato: contato || '',
+        status: normalizedStatus
+      };
+      if (hasExplicitEscritorios) {
+        userMetadata.escritorios_ids = normalizedEscritorios;
+      }
+
       // Monta payload de atualização para auth.users
       const authUpdatePayload: any = {
         ban_duration: normalizedStatus === 'Inativo' ? '876000h' : 'none',
-        user_metadata: {
-          nome: nome?.trim(),
-          display_name: nome?.trim(),
-          full_name: nome?.trim(),
-          name: nome?.trim(),
-          cargo: cargo || '',
-          permissao: permissao || 'user',
-          escritorios_ids: escritoriosIds || [],
-          oab: oab || '',
-          cpf: cpf || '',
-          contato: contato || '',
-          status: normalizedStatus
-        }
+        user_metadata: userMetadata
       };
 
       if (password && password.trim().length >= 6) {
@@ -2826,18 +2835,18 @@ async function startServer() {
         return res.status(updateAuthResp.status).json({ success: false, error: errJson.msg || errJson.message || JSON.stringify(errJson) });
       }
 
-      // 2. Sincroniza em public.usuarios (atualiza registro existente por id ou e-mail antes de upsert)
+      // 2. Sincroniza em public.usuarios (atualiza registro existente por id exato/ilike ou e-mail antes de upsert)
       const pubPayload: any = {
         nome: nome?.trim(),
         cargo: cargo || '',
         contato: contato || '',
         oab: oab || null,
         cpf: cpf || '',
-        permissao: permissao || 'user',
-        escritorios_ids: escritoriosIds || [],
+        permissao: normalizedEmail === 'pratadeouro@gmail.com' ? 'Admin' : (permissao || 'user'),
         status: normalizedStatus,
         updated_at: new Date().toISOString()
       };
+      if (hasExplicitEscritorios) pubPayload.escritorios_ids = normalizedEscritorios;
       if (normalizedEmail) pubPayload.email = normalizedEmail;
       if (password && password.trim().length >= 6) pubPayload.senha = password.trim();
 
@@ -2855,6 +2864,23 @@ async function startServer() {
       if (patchByIdResp.ok) {
         const patchedRows = await patchByIdResp.json().catch(() => []);
         if (Array.isArray(patchedRows) && patchedRows.length > 0) patched = true;
+      }
+
+      if (!patched) {
+        const patchByIlikeIdResp = await fetch(`${supabaseUrl}/rest/v1/usuarios?id=ilike.${encodeURIComponent(id)}`, {
+          method: "PATCH",
+          headers: {
+            "apikey": supabaseKey,
+            "Authorization": `Bearer ${supabaseKey}`,
+            "Content-Type": "application/json",
+            "Prefer": "return=representation"
+          },
+          body: JSON.stringify(pubPayload)
+        });
+        if (patchByIlikeIdResp.ok) {
+          const patchedRows = await patchByIlikeIdResp.json().catch(() => []);
+          if (Array.isArray(patchedRows) && patchedRows.length > 0) patched = true;
+        }
       }
 
       if (!patched && normalizedEmail) {
@@ -2875,7 +2901,7 @@ async function startServer() {
       }
 
       if (!patched) {
-        await fetch(`${supabaseUrl}/rest/v1/usuarios?on_conflict=email`, {
+        const upsertResp = await fetch(`${supabaseUrl}/rest/v1/usuarios?on_conflict=email`, {
           method: "POST",
           headers: {
             "apikey": supabaseKey,
@@ -2883,8 +2909,16 @@ async function startServer() {
             "Content-Type": "application/json",
             "Prefer": "resolution=merge-duplicates"
           },
-          body: JSON.stringify({ id: targetAuthId, ...pubPayload })
+          body: JSON.stringify({
+            id: targetAuthId,
+            escritorios_ids: normalizedEscritorios || [],
+            ...pubPayload
+          })
         });
+        if (!upsertResp.ok) {
+          const upsertErr = await upsertResp.text().catch(() => 'Falha ao gravar em public.usuarios');
+          return res.status(upsertResp.status).json({ success: false, error: upsertErr });
+        }
       }
 
       return res.json({ success: true, updated: true });

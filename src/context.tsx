@@ -149,8 +149,8 @@ interface AppContextType {
   addPendencia: (pendencia: any) => void;
   updatePendencia: (id: string, pendencia: any) => void;
   deletePendencia: (id: string) => void;
-  addEscritorio: (escritorio: Escritorio, updatedUsers?: Usuario[]) => void;
-  updateEscritorio: (escritorio: Escritorio, updatedUsers?: Usuario[]) => void;
+  addEscritorio: (escritorio: Escritorio, updatedUsers?: Usuario[]) => Promise<{ success: boolean; error?: string }>;
+  updateEscritorio: (escritorio: Escritorio, updatedUsers?: Usuario[]) => Promise<{ success: boolean; error?: string }>;
   deleteEscritorio: (id: string) => void;
   addTribunal: (tribunal: Tribunal) => void;
   updateTribunal: (tribunal: Tribunal) => void;
@@ -1128,7 +1128,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, [authenticatedUserEmail, escritorioAtivoId, dataSource]);
 
   // Helper for centralized logging of actions with record details and error handling
-  const saveAndLog = useCallback(async (newState: AppState, acao: string, detalhes: string, record?: any) => {
+  const saveAndLog = useCallback(async (newState: AppState, acao: string, detalhes: string, record?: any, skipRemoteRecordSync = false) => {
     if (!newState.hasLoaded) return;
     const isSupabase = isSupabaseConfigured() && getActiveDataSource() === 'supabase';
     if (!isSupabase && !newState.settings.scriptUrl) return;
@@ -1172,7 +1172,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     try {
       // 1. Salvamento atômico direto no Supabase (se configurado)
-      if (isSupabaseConfigured() && record) {
+      if (!skipRemoteRecordSync && isSupabaseConfigured() && record) {
         try {
           if (acao === 'ADD_PROCESSO' || acao === 'UPDATE_PROCESSO') {
             await upsertProcessoSupabase(record);
@@ -2806,31 +2806,60 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     });
   }, [saveAndLog]);
 
-  const addEscritorio = useCallback((escritorio: Escritorio, updatedUsers?: Usuario[]) => {
+  const addEscritorio = useCallback(async (escritorio: Escritorio, updatedUsers?: Usuario[]): Promise<{ success: boolean; error?: string }> => {
+    const normalizeOfficeList = (ids?: string[]) =>
+      Array.from(
+        new Set(
+          (Array.isArray(ids) ? ids : [])
+            .map(id => String(id || '').trim().toUpperCase())
+            .filter(Boolean)
+        )
+      );
+
+    const newEscritorio = { 
+      ...escritorio, 
+      id: (escritorio.id || generateId()).toString().trim().toUpperCase() 
+    };
+
+    const normalizedPassedUsers = (updatedUsers || []).map(usuario => ({
+      ...usuario,
+      id: String(usuario.id || '').trim(),
+      escritoriosIds: normalizeOfficeList(usuario.escritoriosIds)
+    }));
+    const passedByKey = new Map<string, Usuario>();
+    normalizedPassedUsers.forEach(u => {
+      if (u.id) passedByKey.set(u.id.toLowerCase(), u);
+      if (u.email) passedByKey.set(u.email.trim().toLowerCase(), u);
+    });
+
+    const usersToPersist: Usuario[] = [...normalizedPassedUsers];
+    const currentMaster = (stateRef.current.usuarios || []).find(
+      u => (u.email || '').trim().toLowerCase() === 'pratadeouro@gmail.com'
+    );
+    if (currentMaster) {
+      const existingMaster = normalizeOfficeList(currentMaster.escritoriosIds);
+      if (!existingMaster.includes(newEscritorio.id) && !passedByKey.has((currentMaster.email || '').trim().toLowerCase())) {
+        usersToPersist.push({
+          ...currentMaster,
+          escritoriosIds: [...existingMaster, newEscritorio.id]
+        });
+      }
+    }
+
     setState(s => {
-      const newEscritorio = { 
-        ...escritorio, 
-        id: (escritorio.id || generateId()).toString().trim().toUpperCase() 
-      };
-      
       let updatedUsuarios = s.usuarios;
-      if (updatedUsers && updatedUsers.length > 0) {
-        const normalizedUsers = updatedUsers.map(usuario => ({
-          ...usuario,
-          id: (usuario.id || '').toString().trim().toUpperCase(),
-          escritoriosIds: (usuario.escritoriosIds || []).map(id => id.toString().trim().toUpperCase())
-        }));
-        const normalizedUsersMap = new Map(normalizedUsers.map(u => [u.id, u]));
+      if (normalizedPassedUsers.length > 0) {
         updatedUsuarios = s.usuarios.map(u => {
-          const normId = (u.id || '').toString().trim().toUpperCase();
-          return normalizedUsersMap.has(normId) ? normalizedUsersMap.get(normId)! : u;
+          const matchById = u.id ? passedByKey.get(String(u.id).trim().toLowerCase()) : undefined;
+          const matchByEmail = u.email ? passedByKey.get(u.email.trim().toLowerCase()) : undefined;
+          return matchById || matchByEmail || u;
         });
       }
 
       // Garante que o administrador mestre (pratadeouro@gmail.com) receba o novo escritório automaticamente
       updatedUsuarios = updatedUsuarios.map(u => {
         if ((u.email || '').trim().toLowerCase() === 'pratadeouro@gmail.com') {
-          const existing = (u.escritoriosIds || []).map(id => String(id || '').trim().toUpperCase()).filter(Boolean);
+          const existing = normalizeOfficeList(u.escritoriosIds);
           if (!existing.includes(newEscritorio.id)) {
             return { ...u, escritoriosIds: [...existing, newEscritorio.id] };
           }
@@ -2846,32 +2875,62 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       saveAndLog(newState, 'ADD_ESCRITORIO', `Novo escritório adicionado: ${newEscritorio.nome}`, newEscritorio);
       return newState;
     });
-  }, [saveAndLog]);
+
+    if (getActiveDataSource() === 'supabase' && isSupabaseConfigured() && usersToPersist.length > 0) {
+      const results = await Promise.all(
+        usersToPersist.map(u => updateAuthUserAdmin(u.id, u))
+      );
+      const failed = results.find(r => !r.success);
+      if (failed) {
+        return { success: false, error: failed.error || 'Erro ao vincular usuários no Supabase.' };
+      }
+      setTimeout(() => {
+        refreshAuthUsers().catch(() => {});
+      }, 300);
+    }
+
+    return { success: true };
+  }, [saveAndLog, refreshAuthUsers]);
   
-  const updateEscritorio = useCallback((escritorio: Escritorio, updatedUsers?: Usuario[]) => {
+  const updateEscritorio = useCallback(async (escritorio: Escritorio, updatedUsers?: Usuario[]): Promise<{ success: boolean; error?: string }> => {
+    const normalizeOfficeList = (ids?: string[]) =>
+      Array.from(
+        new Set(
+          (Array.isArray(ids) ? ids : [])
+            .map(id => String(id || '').trim().toUpperCase())
+            .filter(Boolean)
+        )
+      );
+
+    const normalizedPassedUsers = (updatedUsers || []).map(usuario => ({
+      ...usuario,
+      id: String(usuario.id || '').trim(),
+      escritoriosIds: normalizeOfficeList(usuario.escritoriosIds)
+    }));
+    const passedByKey = new Map<string, Usuario>();
+    normalizedPassedUsers.forEach(u => {
+      if (u.id) passedByKey.set(u.id.toLowerCase(), u);
+      if (u.email) passedByKey.set(u.email.trim().toLowerCase(), u);
+    });
+
     setState(s => {
       let updatedUsuarios = s.usuarios;
-      if (updatedUsers && updatedUsers.length > 0) {
-        const normalizedUsers = updatedUsers.map(usuario => ({
-          ...usuario,
-          id: (usuario.id || '').toString().trim().toUpperCase(),
-          escritoriosIds: (usuario.escritoriosIds || []).map(id => id.toString().trim().toUpperCase())
-        }));
-        const normalizedUsersMap = new Map(normalizedUsers.map(u => [u.id, u]));
+      if (normalizedPassedUsers.length > 0) {
         updatedUsuarios = s.usuarios.map(u => {
-          const normId = (u.id || '').toString().trim().toUpperCase();
-          return normalizedUsersMap.has(normId) ? normalizedUsersMap.get(normId)! : u;
+          const matchById = u.id ? passedByKey.get(String(u.id).trim().toLowerCase()) : undefined;
+          const matchByEmail = u.email ? passedByKey.get(u.email.trim().toLowerCase()) : undefined;
+          return matchById || matchByEmail || u;
         });
       }
 
       const newState = {
         ...s,
-        escritorios: s.escritorios.map(e => e.id === escritorio.id ? escritorio : e),
+        escritorios: s.escritorios.map(e => (e.id || '').toString().trim().toUpperCase() === (escritorio.id || '').toString().trim().toUpperCase() ? escritorio : e),
         usuarios: updatedUsuarios
       };
       
       // Se for o escritório ativo, atualizar também as settings locais
-      if (escritorio.id === escritorioAtivoId) {
+      if ((escritorio.id || '').toString().trim().toUpperCase() === (escritorioAtivoId || '').trim().toUpperCase()) {
         const updatedLocalSettings = {
           ...s.settings,
           timezone: escritorio.timezone,
@@ -2905,7 +2964,22 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       saveAndLog(newState, 'UPDATE_ESCRITORIO', `Escritório atualizado: ${escritorio.nome}`, escritorio);
       return newState;
     });
-  }, [saveAndLog, escritorioAtivoId]);
+
+    if (getActiveDataSource() === 'supabase' && isSupabaseConfigured() && normalizedPassedUsers.length > 0) {
+      const results = await Promise.all(
+        normalizedPassedUsers.map(u => updateAuthUserAdmin(u.id, u))
+      );
+      const failed = results.find(r => !r.success);
+      if (failed) {
+        return { success: false, error: failed.error || 'Erro ao atualizar vínculos de usuários no Supabase.' };
+      }
+      setTimeout(() => {
+        refreshAuthUsers().catch(() => {});
+      }, 300);
+    }
+
+    return { success: true };
+  }, [saveAndLog, escritorioAtivoId, refreshAuthUsers]);
 
   const deleteEscritorio = useCallback((id: string) => {
     setState(s => {
@@ -3027,14 +3101,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
         const createdUser: Usuario = {
           ...usuario,
-          id: res.user?.id || (usuario.id || generateId('usuario')).toString().trim().toUpperCase(),
-          escritoriosIds: (usuario.escritoriosIds || []).map(id => id.toString().trim().toUpperCase())
+          id: String(res.user?.id || usuario.id || generateId('usuario')).trim(),
+          escritoriosIds: Array.from(new Set((usuario.escritoriosIds || []).map(id => id.toString().trim().toUpperCase()).filter(Boolean)))
         };
 
         setState(s => {
-          const filtered = s.usuarios.filter(u => u.email.toLowerCase() !== createdUser.email.toLowerCase() && u.id !== createdUser.id);
+          const filtered = s.usuarios.filter(
+            u => u.email.trim().toLowerCase() !== createdUser.email.trim().toLowerCase() &&
+                 String(u.id || '').trim().toLowerCase() !== createdUser.id.toLowerCase()
+          );
           const newState = { ...s, usuarios: [...filtered, createdUser] };
-          saveAndLog(newState, 'ADD_USUARIO', `Novo usuário adicionado: ${createdUser.nome}`, createdUser);
+          saveAndLog(newState, 'ADD_USUARIO', `Novo usuário adicionado: ${createdUser.nome}`, createdUser, true);
           return newState;
         });
 
@@ -3051,7 +3128,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const newUsuario: Usuario = { 
         ...usuario, 
         id: (usuario.id || generateId('usuario')).toString().trim().toUpperCase(),
-        escritoriosIds: (usuario.escritoriosIds || []).map(id => id.toString().trim().toUpperCase())
+        escritoriosIds: Array.from(new Set((usuario.escritoriosIds || []).map(id => id.toString().trim().toUpperCase()).filter(Boolean)))
       };
       setState(s => {
         const newState = { ...s, usuarios: [...s.usuarios, newUsuario] };
@@ -3068,7 +3145,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const normalizedUsuario: Usuario = {
       ...usuario,
       id: (usuario.id || '').toString().trim(),
-      escritoriosIds: (usuario.escritoriosIds || []).map(id => id.toString().trim().toUpperCase())
+      escritoriosIds: Array.from(new Set((usuario.escritoriosIds || []).map(id => id.toString().trim().toUpperCase()).filter(Boolean)))
     };
 
     if (isSupabase) {
@@ -3079,11 +3156,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
 
         setState(s => {
+          const normIdLower = normalizedUsuario.id.toLowerCase();
+          const normEmailLower = (normalizedUsuario.email || '').trim().toLowerCase();
           const newState = {
             ...s,
-            usuarios: s.usuarios.map(u => (u.id === normalizedUsuario.id || u.email.toLowerCase() === normalizedUsuario.email.toLowerCase()) ? normalizedUsuario : u)
+            usuarios: s.usuarios.map(u =>
+              (String(u.id || '').trim().toLowerCase() === normIdLower ||
+               (normEmailLower && (u.email || '').trim().toLowerCase() === normEmailLower))
+                ? normalizedUsuario
+                : u
+            )
           };
-          saveAndLog(newState, 'UPDATE_USUARIO', `Usuário atualizado: ${normalizedUsuario.nome}`, normalizedUsuario);
+          saveAndLog(newState, 'UPDATE_USUARIO', `Usuário atualizado: ${normalizedUsuario.nome}`, normalizedUsuario, true);
           return newState;
         });
 
@@ -3212,7 +3296,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             ...s,
             usuarios: s.usuarios.filter(u => u.id !== id)
           };
-          saveAndLog(newState, 'DELETE_USUARIO', `Usuário excluído: ${itemToDelete?.nome || id}`, itemToDelete);
+          saveAndLog(newState, 'DELETE_USUARIO', `Usuário excluído: ${itemToDelete?.nome || id}`, itemToDelete, true);
           return newState;
         });
 

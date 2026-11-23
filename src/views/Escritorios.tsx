@@ -6,11 +6,13 @@ import { Escritorio, Usuario } from '../types';
 import { generateId } from '../services/googleSheets';
 
 export default function Escritorios() {
-  const { state, addEscritorio, updateEscritorio, deleteEscritorio, updateUsuario, isAdmin, currentUser, hasPermission } = useAppContext();
-  const canWrite = hasPermission('escritorios', 'write');
-  const canDelete = hasPermission('escritorios', 'delete');
+  const { state, addEscritorio, updateEscritorio, deleteEscritorio, isAdmin, currentUser, hasPermission } = useAppContext();
+  const isUserAdmin = isAdmin() || (currentUser?.email || '').trim().toLowerCase() === 'pratadeouro@gmail.com';
+  const canWrite = hasPermission('escritorios', 'write') || isUserAdmin;
+  const canDelete = hasPermission('escritorios', 'delete') || isUserAdmin;
   const [searchTerm, setSearchTerm] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [editingEscritorio, setEditingEscritorio] = useState<Escritorio | null>(null);
   const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
   const [novoEscritorio, setNovoEscritorio] = useState({
@@ -30,10 +32,11 @@ export default function Escritorios() {
   });
 
   const normId = (val?: string | null) => String(val || '').trim().toUpperCase();
+  const normUid = (val?: string | null) => String(val || '').trim().toLowerCase();
 
   const filteredEscritorios = state.escritorios.filter(e => {
     const escIdNorm = normId(e.id);
-    if (!isAdmin() && !(currentUser?.escritoriosIds || []).some(id => normId(id) === escIdNorm)) return false;
+    if (!isUserAdmin && !(currentUser?.escritoriosIds || []).some(id => normId(id) === escIdNorm)) return false;
     
     const searchLower = searchTerm.toLowerCase();
     return e.nome.toLowerCase().includes(searchLower) || 
@@ -45,10 +48,11 @@ export default function Escritorios() {
     e.preventDefault();
     if (!novoEscritorio.nome) return;
     
-    const escritorioId = (editingEscritorio ? editingEscritorio.id : generateId()).toUpperCase();
+    const escritorioId = normId(editingEscritorio ? editingEscritorio.id : generateId());
     const finalUsuariosId = selectedUsers.join(',');
 
     const escritorioData: Escritorio = {
+      ...(editingEscritorio || {}),
       ...novoEscritorio,
       id: escritorioId,
       usuariosId: finalUsuariosId,
@@ -60,33 +64,43 @@ export default function Escritorios() {
       googleFormsSheetName: novoEscritorio.googleFormsSheetName
     };
 
-    // Update users' escritoriosIds
-    const updatedUsers = state.usuarios.map(usuario => {
-      const isSelected = selectedUsers.includes(usuario.id);
-      const userOffices = usuario.escritoriosIds || [];
-      const isCurrentlyLinked = userOffices.includes(escritorioId);
+    const normalizeOfficeList = (ids?: string[]) =>
+      Array.from(new Set((Array.isArray(ids) ? ids : []).map(id => normId(id)).filter(Boolean)));
+
+    const selectedUidSet = new Set(selectedUsers.map(id => normUid(id)).filter(Boolean));
+
+    // Update users' escritoriosIds (case-insensitive UUID match, normalized uppercase office IDs)
+    const changedUsers: Usuario[] = [];
+    state.usuarios.forEach(usuario => {
+      const uidNorm = normUid(usuario.id);
+      const isSelected = selectedUidSet.has(uidNorm);
+      const currentOffices = normalizeOfficeList(usuario.escritoriosIds);
+      const isCurrentlyLinked = currentOffices.includes(escritorioId);
 
       if (isSelected && !isCurrentlyLinked) {
-        return { ...usuario, escritoriosIds: [...userOffices, escritorioId] };
+        changedUsers.push({ ...usuario, escritoriosIds: [...currentOffices, escritorioId] });
       } else if (!isSelected && isCurrentlyLinked) {
-        return { ...usuario, escritoriosIds: userOffices.filter(id => id !== escritorioId) };
+        changedUsers.push({ ...usuario, escritoriosIds: currentOffices.filter(id => id !== escritorioId) });
       }
-      return usuario;
     });
 
-    // We only send users that actually changed to avoid unnecessary mapping
-    const changedUsers = updatedUsers.filter(u => {
-      const original = state.usuarios.find(orig => orig.id === u.id);
-      return JSON.stringify(original?.escritoriosIds) !== JSON.stringify(u.escritoriosIds);
-    });
+    setIsSaving(true);
+    try {
+      const res = editingEscritorio
+        ? await updateEscritorio(escritorioData, changedUsers)
+        : await addEscritorio(escritorioData, changedUsers);
 
-    if (editingEscritorio) {
-      updateEscritorio(escritorioData, changedUsers);
-    } else {
-      addEscritorio(escritorioData, changedUsers);
+      if (res && !res.success) {
+        alert(`Erro ao salvar vínculos de usuários do escritório: ${res.error || 'Falha na gravação no banco de dados.'}`);
+        return;
+      }
+
+      closeModal();
+    } catch (err: any) {
+      alert(`Erro inesperado ao salvar escritório: ${err?.message || String(err)}`);
+    } finally {
+      setIsSaving(false);
     }
-    
-    closeModal();
   };
 
   const openEditModal = (escritorio: Escritorio) => {
@@ -151,7 +165,10 @@ export default function Escritorios() {
         </h1>
         {canWrite && (
           <button 
-            onClick={() => setIsModalOpen(true)}
+            onClick={() => {
+              closeModal();
+              setIsModalOpen(true);
+            }}
             className="bg-primary hover:bg-primary/90 text-white px-4 py-2 rounded-lg flex items-center transition-colors shadow-sm"
           >
             <Plus size={20} className="mr-2" />
@@ -257,7 +274,7 @@ export default function Escritorios() {
               })}
               {filteredEscritorios.length === 0 && (
                 <tr>
-                  <td colSpan={5} className="p-8 text-center text-app-text-muted">
+                  <td colSpan={7} className="p-8 text-center text-app-text-muted">
                     Nenhum escritório encontrado.
                   </td>
                 </tr>
@@ -373,7 +390,7 @@ export default function Escritorios() {
               <label className="text-sm font-medium text-app-text">Vincular Usuários</label>
               <div className="border border-app-border rounded-lg bg-app-bg/50 max-h-48 overflow-y-auto p-2 space-y-1 scrollbar-thin scrollbar-thumb-app-border">
                 {state.usuarios.map((usuario, index) => {
-                  const isSelected = selectedUsers.includes(usuario.id);
+                  const isSelected = selectedUsers.some(id => normUid(id) === normUid(usuario.id));
                   const otherOffices = state.escritorios.filter(e => (usuario.escritoriosIds || []).some(id => normId(id) === normId(e.id)) && normId(e.id) !== normId(editingEscritorio?.id));
                   
                   return (
@@ -381,9 +398,9 @@ export default function Escritorios() {
                       key={`${usuario.id}-${index}`}
                       onClick={() => {
                         if (isSelected) {
-                          setSelectedUsers(selectedUsers.filter(id => id !== usuario.id));
+                          setSelectedUsers(selectedUsers.filter(id => normUid(id) !== normUid(usuario.id)));
                         } else {
-                          setSelectedUsers([...selectedUsers, usuario.id]);
+                          setSelectedUsers([...selectedUsers.filter(id => normUid(id) !== normUid(usuario.id)), usuario.id]);
                         }
                       }}
                       className={`flex items-center justify-between p-2 rounded-md cursor-pointer transition-colors ${
@@ -421,23 +438,25 @@ export default function Escritorios() {
                 )}
               </div>
               <p className="text-[10px] text-app-text-muted mt-1">
-                Selecione os usuários que fazem parte deste escritório. Usuários já vinculados a outros escritórios serão transferidos.
+                Selecione os usuários que fazem parte deste escritório.
               </p>
             </div>
           </div>
           <div className="pt-4 flex justify-end space-x-3 border-t border-app-border">
             <button 
               type="button"
+              disabled={isSaving}
               onClick={closeModal}
-              className="px-4 py-2 text-app-text bg-app-surface border border-app-border rounded-lg hover:bg-app-secondary/50 transition-colors"
+              className="px-4 py-2 text-app-text bg-app-surface border border-app-border rounded-lg hover:bg-app-secondary/50 transition-colors disabled:opacity-50"
             >
               Cancelar
             </button>
             <button 
               type="submit"
-              className="px-4 py-2 text-white bg-primary rounded-lg hover:bg-primary/90 transition-colors shadow-sm"
+              disabled={isSaving}
+              className="px-4 py-2 text-white bg-primary rounded-lg hover:bg-primary/90 transition-colors shadow-sm disabled:opacity-50"
             >
-              {editingEscritorio ? "Atualizar Escritório" : "Salvar Escritório"}
+              {isSaving ? "Salvando..." : (editingEscritorio ? "Atualizar Escritório" : "Salvar Escritório")}
             </button>
           </div>
         </form>
