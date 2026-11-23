@@ -11,6 +11,7 @@ import { formatDate, calculateDeadline, getTribunalHolidays, formatDateTime } fr
 import { CreateContatoModal, CreateVaraModal, CreateEventoModal } from '../components/CreateModals';
 import TipoEnvolvimentoModal from '../components/TipoEnvolvimentoModal';
 import Pagination from '../components/Pagination';
+import { SafeDeleteEntityModal } from '../components/SafeDeleteEntityModal';
 import {
   DndContext,
   closestCenter,
@@ -268,7 +269,6 @@ export default function Processos({
     state, 
     addProcesso, 
     updateProcesso, 
-    deleteProcesso, 
     addContato, 
     updateContato,
     addMovimento, 
@@ -313,6 +313,7 @@ export default function Processos({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalMode, setModalMode] = useState<ModalMode>('create');
   const [selectedProcesso, setSelectedProcesso] = useState<Processo | null>(null);
+  const [processToDelete, setProcessToDelete] = useState<Processo | null>(null);
   const [selectedContactToAdd, setSelectedContactToAdd] = useState('');
   const [contactSearchTerm, setContactSearchTerm] = useState('');
   const [selectedTipoEnvolvimento, setSelectedTipoEnvolvimento] = useState('');
@@ -1227,8 +1228,9 @@ export default function Processos({
   };
 
   const handleDelete = (id: string) => {
-    if (window.confirm('Tem certeza que deseja excluir este processo?')) {
-      deleteProcesso(id);
+    const target = state.processos.find(p => p.id === id) || null;
+    if (target) {
+      setProcessToDelete(target);
     }
   };
 
@@ -4435,6 +4437,13 @@ export default function Processos({
         isOpen={isTipoEnvolvimentoModalOpen}
         onClose={() => setIsTipoEnvolvimentoModalOpen(false)}
         onSelectCreated={(nome) => setSelectedTipoEnvolvimento(nome)}
+      />
+
+      <SafeDeleteEntityModal
+        isOpen={!!processToDelete}
+        onClose={() => setProcessToDelete(null)}
+        entityType="processo"
+        processo={processToDelete}
       />
     </div>
   );

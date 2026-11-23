@@ -1380,9 +1380,16 @@ async function startServer() {
   });
 
   app.post("/api/supabase/delete", async (req, res) => {
-    const { table, id, column } = req.body;
-    if (!table || !id) {
-      return res.status(400).json({ success: false, error: "Tabela e id são obrigatórios." });
+    const { table, id, ids, column } = req.body;
+    const idList: string[] = Array.isArray(ids)
+      ? ids.map((v: any) => String(v ?? '').trim()).filter(Boolean)
+      : (id ? [String(id).trim()] : []);
+
+    if (!table || idList.length === 0) {
+      return res.status(400).json({ success: false, error: "Tabela e id(s) são obrigatórios." });
+    }
+    if (!/^[a-zA-Z0-9_]+$/.test(String(table))) {
+      return res.status(400).json({ success: false, error: "Nome de tabela inválido." });
     }
 
     const { supabaseUrl, supabaseKey } = getServerSupabaseConfig();
@@ -1391,8 +1398,16 @@ async function startServer() {
     }
 
     try {
-      const idCol = column || 'id';
-      const resp = await fetch(`${supabaseUrl}/rest/v1/${table}?${idCol}=eq.${encodeURIComponent(id)}`, {
+      const idCol = String(column || 'id').trim();
+      if (!/^[a-zA-Z0-9_]+$/.test(idCol)) {
+        return res.status(400).json({ success: false, error: "Nome de coluna inválido." });
+      }
+
+      const filterExpr = idList.length === 1
+        ? `${idCol}=eq.${encodeURIComponent(idList[0])}`
+        : `${idCol}=in.(${idList.map(v => `"${v.replace(/"/g, '\\"')}"`).join(',')})`;
+
+      const resp = await fetch(`${supabaseUrl}/rest/v1/${table}?${filterExpr}`, {
         method: "DELETE",
         headers: {
           "apikey": supabaseKey,
@@ -1406,9 +1421,70 @@ async function startServer() {
         return res.status(resp.status).json({ success: false, error: errText });
       }
 
-      return res.json({ success: true });
+      return res.json({ success: true, count: idList.length });
     } catch (err: any) {
       console.error(`[Server Supabase Delete] Exceção em ${table}:`, err);
+      return res.status(500).json({ success: false, error: err.message });
+    }
+  });
+
+  app.post("/api/supabase/patch-batch", async (req, res) => {
+    const { table, ids, patch } = req.body;
+    const ALLOWED_TABLES = new Set([
+      'tarefas', 'eventos', 'movimentos', 'financeiro', 'documentos', 'recursos', 'envolvidos', 'processos'
+    ]);
+    const ALLOWED_COLUMNS = new Set([
+      'processo_id', 'processo_originario_id', 'responsavel_id', 'atribuido_id', 'usuario_id', 'advogado_id', 'proc_nome'
+    ]);
+
+    if (!table || !ALLOWED_TABLES.has(String(table))) {
+      return res.status(400).json({ success: false, error: "Tabela não permitida para atualização em lote." });
+    }
+    const idList: string[] = Array.isArray(ids)
+      ? ids.map((v: any) => String(v ?? '').trim()).filter(Boolean)
+      : [];
+    if (idList.length === 0 || !patch || typeof patch !== 'object') {
+      return res.status(400).json({ success: false, error: "IDs e objeto patch são obrigatórios." });
+    }
+
+    const sanitizedPatch: Record<string, string | null> = {};
+    for (const [k, v] of Object.entries(patch)) {
+      if (!ALLOWED_COLUMNS.has(k)) {
+        return res.status(400).json({ success: false, error: `Coluna não permitida: ${k}` });
+      }
+      sanitizedPatch[k] = v === null || v === undefined || String(v).trim() === '' ? null : String(v).trim();
+    }
+
+    const { supabaseUrl, supabaseKey } = getServerSupabaseConfig();
+    if (!supabaseUrl || !supabaseKey) {
+      return res.status(500).json({ success: false, error: "Conexão Supabase não configurada no arquivo .env." });
+    }
+
+    try {
+      const filterExpr = idList.length === 1
+        ? `id=eq.${encodeURIComponent(idList[0])}`
+        : `id=in.(${idList.map(v => `"${v.replace(/"/g, '\\"')}"`).join(',')})`;
+
+      const resp = await fetch(`${supabaseUrl}/rest/v1/${table}?${filterExpr}`, {
+        method: "PATCH",
+        headers: {
+          "apikey": supabaseKey,
+          "Authorization": `Bearer ${supabaseKey}`,
+          "Content-Type": "application/json",
+          "Prefer": "return=minimal"
+        },
+        body: JSON.stringify(sanitizedPatch)
+      });
+
+      if (!resp.ok) {
+        const errText = await resp.text();
+        console.error(`[Server Supabase Patch Batch] Erro em ${table}:`, errText);
+        return res.status(resp.status).json({ success: false, error: errText });
+      }
+
+      return res.json({ success: true, count: idList.length });
+    } catch (err: any) {
+      console.error(`[Server Supabase Patch Batch] Exceção em ${table}:`, err);
       return res.status(500).json({ success: false, error: err.message });
     }
   });

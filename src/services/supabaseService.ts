@@ -1222,3 +1222,107 @@ export const upsertSettingsSupabase = async (s: AppSettings): Promise<boolean> =
 
   return executeUpsert('app_settings', basePayload, 'id');
 };
+
+export const batchPatchRecordsSupabase = async (
+  table: string,
+  ids: string[],
+  patch: Record<string, string | null>
+): Promise<{ ok: number; failed: number }> => {
+  if (!isSupabaseConfigured() || ids.length === 0) return { ok: 0, failed: 0 };
+  const supabase = getSupabase();
+  let hasSession = false;
+  try {
+    const { data: sessData } = await supabase.auth.getSession();
+    hasSession = !!sessData?.session;
+  } catch {
+    hasSession = false;
+  }
+
+  let ok = 0;
+  let failed = 0;
+  const chunkSize = 80;
+
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    const chunk = ids.slice(i, i + chunkSize);
+    let chunkSuccess = false;
+
+    if (hasSession) {
+      const { error } = await supabase.from(table).update(patch).in('id', chunk);
+      if (!error) {
+        chunkSuccess = true;
+      }
+    }
+
+    if (!chunkSuccess) {
+      try {
+        const resp = await fetch('/api/supabase/patch-batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ table, ids: chunk, patch })
+        });
+        if (resp.ok) {
+          chunkSuccess = true;
+        }
+      } catch (err) {
+        console.error(`[Supabase] Erro no batch patch em ${table}:`, err);
+      }
+    }
+
+    if (chunkSuccess) ok += chunk.length;
+    else failed += chunk.length;
+  }
+
+  return { ok, failed };
+};
+
+export const batchDeleteRecordsSupabase = async (
+  table: string,
+  ids: string[]
+): Promise<{ ok: number; failed: number }> => {
+  if (!isSupabaseConfigured() || ids.length === 0) return { ok: 0, failed: 0 };
+  const supabase = getSupabase();
+  let hasSession = false;
+  try {
+    const { data: sessData } = await supabase.auth.getSession();
+    hasSession = !!sessData?.session;
+  } catch {
+    hasSession = false;
+  }
+
+  let ok = 0;
+  let failed = 0;
+  const chunkSize = 80;
+
+  for (let i = 0; i < ids.length; i += chunkSize) {
+    const chunk = ids.slice(i, i + chunkSize);
+    let chunkSuccess = false;
+
+    if (hasSession) {
+      const { error } = await supabase.from(table).delete().in('id', chunk);
+      if (!error) {
+        chunkSuccess = true;
+      }
+    }
+
+    if (!chunkSuccess) {
+      try {
+        const resp = await fetch('/api/supabase/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ table, ids: chunk, column: 'id' })
+        });
+        if (resp.ok) {
+          chunkSuccess = true;
+        }
+      } catch (err) {
+        console.error(`[Supabase] Erro no batch delete em ${table}:`, err);
+      }
+    }
+
+    if (chunkSuccess) ok += chunk.length;
+    else failed += chunk.length;
+  }
+
+  return { ok, failed };
+};
+

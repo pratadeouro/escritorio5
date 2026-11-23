@@ -4,6 +4,7 @@ import { Users, Plus, Search, Edit2, Trash2, Mail, Phone, ShieldCheck, ChevronRi
 import Modal from '../components/Modal';
 import { Usuario, RolePermission, View } from '../types';
 import { SupabaseAuthImportModule } from '../components/SupabaseAuthImportModule';
+import { SafeDeleteEntityModal } from '../components/SafeDeleteEntityModal';
 
 const knownOfficeNames: Record<string, string> = {
   '1': 'Escritório Walber Mendonça',
@@ -25,7 +26,6 @@ export default function Usuarios() {
     addUsuario, 
     updateUsuario, 
     toggleUsuarioStatus,
-    deleteUsuario, 
     hasPermission, 
     getPermissions, 
     currentUser, 
@@ -48,6 +48,7 @@ export default function Usuarios() {
     }
   }, [isProductionMode, activeTab]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [userToDelete, setUserToDelete] = useState<Usuario | null>(null);
   const [statusFilter, setStatusFilter] = useState<'all' | 'Ativo' | 'Inativo'>('all');
   const [togglingUserId, setTogglingUserId] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -292,21 +293,10 @@ export default function Usuarios() {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    const userToDelete = state.usuarios.find(u => u.id === id);
-    const confirmMsg = dataSource === 'supabase'
-      ? `Tem certeza que deseja excluir o usuário "${userToDelete?.nome || id}"? Esta ação removerá a conta permanentemente da tabela auth.users e do banco de dados.`
-      : 'Tem certeza que deseja excluir este usuário?';
-
-    if (window.confirm(confirmMsg)) {
-      try {
-        const res = await deleteUsuario(id);
-        if (res && !res.success) {
-          alert(`Erro ao excluir usuário: ${res.error || 'Falha ao remover'}`);
-        }
-      } catch (err: any) {
-        alert(`Erro ao excluir usuário: ${err.message || String(err)}`);
-      }
+  const handleDelete = (id: string) => {
+    const target = state.usuarios.find(u => u.id === id) || null;
+    if (target) {
+      setUserToDelete(target);
     }
   };
 
@@ -1503,6 +1493,13 @@ export default function Usuarios() {
           </div>
         </form>
       </Modal>
+
+      <SafeDeleteEntityModal
+        isOpen={!!userToDelete}
+        onClose={() => setUserToDelete(null)}
+        entityType="usuario"
+        usuario={userToDelete}
+      />
     </div>
   );
 }

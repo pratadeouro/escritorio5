@@ -30,6 +30,8 @@ import {
   deleteItemGenericSupabase,
   saveLogSupabase,
   upsertSettingsSupabase,
+  batchPatchRecordsSupabase,
+  batchDeleteRecordsSupabase,
   getSupabase,
   mapUsuarioFromDb
 } from './services/supabaseService';
@@ -222,7 +224,20 @@ interface AppContextType {
   isProductionMode: boolean;
   isHomologationMode: boolean;
   saveEnvironmentMode: (mode: EnvironmentMode) => Promise<{ success: boolean; supabaseSynced?: boolean; error?: string }>;
+  applyOrphanCleanupBatch: (
+    targets: OrphanBatchTarget[],
+    mode: OrphanBatchMode,
+    newTargetId?: string
+  ) => Promise<{ successCount: number; errorCount: number; affectedModules: string[] }>;
 }
+
+export interface OrphanBatchTarget {
+  module: 'tarefas' | 'eventos' | 'movimentos' | 'financeiro' | 'documentos' | 'recursos' | 'envolvidos' | 'processos';
+  recordId: string;
+  field: 'processoId' | 'processoOriginarioId' | 'responsavelId' | 'atribuidoId' | 'usuarioId' | 'advogadoId';
+}
+
+export type OrphanBatchMode = 'assign' | 'unlink' | 'delete';
 
 const normalizeEnvironmentMode = (val: any): EnvironmentMode | null => {
   const clean = String(val || '').trim().toLowerCase();
@@ -1312,6 +1327,26 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             });
           } else if (acao === 'DELETE_ENVOLVIMENTO') {
             await deleteItemGenericSupabase('envolvidos', record?.id || record);
+          } else if (acao === 'ADD_RECURSO' || acao === 'UPDATE_RECURSO') {
+            await upsertItemGenericSupabase('recursos', {
+              id: record.id,
+              processo_originario_id: record.processoOriginarioId || null,
+              recurso_originario: record.recursoOriginario || null,
+              classe: record.classe || null,
+              assunto: record.assunto || null,
+              secao: record.secao || null,
+              orgao_julgador_id: record.orgaoJulgadorId || null,
+              area: record.area || null,
+              relator_id: record.relatorId || null,
+              link: record.link || null,
+              marcador: record.marcador || null,
+              resultado: record.resultado || null,
+              status: record.status || 'Ativo',
+              escritorio_id: record.escritorioId || null,
+              envolvidos_ids: Array.isArray(record.envolvidosIds) ? record.envolvidosIds : [],
+            });
+          } else if (acao === 'DELETE_RECURSO') {
+            await deleteItemGenericSupabase('recursos', record?.id || record);
           } else if (acao === 'UPDATE_SETTINGS') {
             await upsertSettingsSupabase(record);
           }
@@ -3360,6 +3395,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const generatedId = generateId('tarefa');
       const taskId = (tarefa.ID_TAREFA || generatedId).toString().trim().toUpperCase();
       
+      const rawResp = (tarefa.RESPONSAVEL_ID || tarefa.ID_USER || '').toString().trim();
+      const isUuidResp = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawResp);
+      const rawAtrib = (tarefa.ATRIBUIDO_ID || '').toString().trim();
+      const isUuidAtrib = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawAtrib);
+
       const newTarefa: Tarefa = { 
         ...tarefa, 
         ID_TAREFA: taskId,
@@ -3368,7 +3408,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         DATA_CRIACAO: tarefa.DATA_CRIACAO || tarefa.PRAZO_IN || new Date().toISOString().split('T')[0],
         DATA_LIMITE: tarefa.DATA_LIMITE || tarefa.PRAZO_FIM || '',
         PROCESSO_ID: (tarefa.PROCESSO_ID || tarefa.ID_PROC || '').toString().trim().toUpperCase(),
-        RESPONSAVEL_ID: (tarefa.RESPONSAVEL_ID || tarefa.ID_USER || '').toString().trim().toUpperCase()
+        RESPONSAVEL_ID: isUuidResp ? rawResp.toLowerCase() : rawResp.toUpperCase(),
+        ATRIBUIDO_ID: rawAtrib ? (isUuidAtrib ? rawAtrib.toLowerCase() : rawAtrib.toUpperCase()) : undefined
       };
       
       const newState = { ...s, tarefas: [...s.tarefas, newTarefa] };
@@ -3379,13 +3420,19 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const updateTarefa = useCallback((tarefa: Tarefa) => {
     setState(s => {
+      const rawResp = (tarefa.RESPONSAVEL_ID || tarefa.ID_USER || '').toString().trim();
+      const isUuidResp = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawResp);
+      const rawAtrib = (tarefa.ATRIBUIDO_ID || '').toString().trim();
+      const isUuidAtrib = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawAtrib);
+
       const normalizedTarefa: Tarefa = {
         ...tarefa,
         TITULO: tarefa.TITULO || tarefa.TAREFA || '',
         DATA_CRIACAO: tarefa.DATA_CRIACAO || tarefa.PRAZO_IN || '',
         DATA_LIMITE: tarefa.DATA_LIMITE || tarefa.PRAZO_FIM || '',
         PROCESSO_ID: (tarefa.PROCESSO_ID || tarefa.ID_PROC || '').toString().trim().toUpperCase(),
-        RESPONSAVEL_ID: (tarefa.RESPONSAVEL_ID || tarefa.ID_USER || '').toString().trim().toUpperCase()
+        RESPONSAVEL_ID: isUuidResp ? rawResp.toLowerCase() : rawResp.toUpperCase(),
+        ATRIBUIDO_ID: rawAtrib ? (isUuidAtrib ? rawAtrib.toLowerCase() : rawAtrib.toUpperCase()) : undefined
       };
       
       const newState = {
@@ -3556,6 +3603,259 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       return newState;
     });
   }, [saveAndLog]);
+
+  const applyOrphanCleanupBatch = useCallback(async (
+    targets: OrphanBatchTarget[],
+    mode: OrphanBatchMode,
+    newTargetId?: string
+  ): Promise<{ successCount: number; errorCount: number; affectedModules: string[] }> => {
+    if (!targets || targets.length === 0) {
+      return { successCount: 0, errorCount: 0, affectedModules: [] };
+    }
+
+    const cleanTargetId = mode === 'assign' ? String(newTargetId || '').trim() : '';
+    if (mode === 'assign' && !cleanTargetId) {
+      return { successCount: 0, errorCount: targets.length, affectedModules: [] };
+    }
+
+    const FIELD_TO_DB_COLUMN: Record<OrphanBatchTarget['field'], string> = {
+      processoId: 'processo_id',
+      processoOriginarioId: 'processo_originario_id',
+      responsavelId: 'responsavel_id',
+      atribuidoId: 'atribuido_id',
+      usuarioId: 'usuario_id',
+      advogadoId: 'advogado_id',
+    };
+
+    const MODULE_TO_TABLE: Record<OrphanBatchTarget['module'], string> = {
+      tarefas: 'tarefas',
+      eventos: 'eventos',
+      movimentos: 'movimentos',
+      financeiro: 'financeiro',
+      documentos: 'documentos',
+      recursos: 'recursos',
+      envolvidos: 'envolvidos',
+      processos: 'processos',
+    };
+
+    // Resolve nome/número do processo destino para manter PROC_NOME sincronizado em tarefas
+    let resolvedProcessLabel: string | null = null;
+    if (mode === 'assign') {
+      const targetProc = state.processos.find(
+        p => String(p.id || '').trim().toUpperCase() === cleanTargetId.toUpperCase() ||
+             String(p.idProc || '').trim().toUpperCase() === cleanTargetId.toUpperCase()
+      );
+      if (targetProc) {
+        resolvedProcessLabel = targetProc.numero || targetProc.titulo || targetProc.id;
+      }
+    }
+
+    let successCount = 0;
+    let errorCount = 0;
+    const succeededKeys = new Set<string>();
+    const affectedModulesSet = new Set<string>();
+
+    if (mode === 'delete') {
+      const byModule = new Map<OrphanBatchTarget['module'], string[]>();
+      targets.forEach(t => {
+        const list = byModule.get(t.module) || [];
+        if (!list.includes(t.recordId)) list.push(t.recordId);
+        byModule.set(t.module, list);
+      });
+
+      for (const [mod, ids] of byModule.entries()) {
+        affectedModulesSet.add(mod);
+        if (dataSource === 'supabase' && isSupabaseConfigured()) {
+          const res = await batchDeleteRecordsSupabase(MODULE_TO_TABLE[mod], ids);
+          successCount += res.ok;
+          errorCount += res.failed;
+          if (res.ok > 0) {
+            ids.forEach(id => succeededKeys.add(`${mod}:${id}`));
+          }
+        } else {
+          successCount += ids.length;
+          ids.forEach(id => succeededKeys.add(`${mod}:${id}`));
+        }
+      }
+    } else {
+      const byGroup = new Map<string, { module: OrphanBatchTarget['module']; field: OrphanBatchTarget['field']; ids: string[] }>();
+      targets.forEach(t => {
+        // Movimentos, Recursos e Envolvidos exigem vínculo com processo (não podem ficar null)
+        if (
+          mode === 'unlink' &&
+          (t.module === 'movimentos' || t.module === 'recursos' || t.module === 'envolvidos') &&
+          (t.field === 'processoId' || t.field === 'processoOriginarioId')
+        ) {
+          errorCount += 1;
+          return;
+        }
+        const key = `${t.module}:${t.field}`;
+        const group = byGroup.get(key) || { module: t.module, field: t.field, ids: [] };
+        if (!group.ids.includes(t.recordId)) group.ids.push(t.recordId);
+        byGroup.set(key, group);
+      });
+
+      for (const group of byGroup.values()) {
+        affectedModulesSet.add(group.module);
+        const dbCol = FIELD_TO_DB_COLUMN[group.field];
+        const patchPayload: Record<string, string | null> = {
+          [dbCol]: mode === 'unlink' ? null : cleanTargetId
+        };
+        if (group.module === 'tarefas' && group.field === 'processoId') {
+          patchPayload.proc_nome = mode === 'unlink' ? null : resolvedProcessLabel;
+        }
+
+        if (dataSource === 'supabase' && isSupabaseConfigured()) {
+          const res = await batchPatchRecordsSupabase(MODULE_TO_TABLE[group.module], group.ids, patchPayload);
+          successCount += res.ok;
+          errorCount += res.failed;
+          if (res.ok > 0) {
+            group.ids.forEach(id => succeededKeys.add(`${group.module}:${group.field}:${id}`));
+          }
+        } else {
+          successCount += group.ids.length;
+          group.ids.forEach(id => succeededKeys.add(`${group.module}:${group.field}:${id}`));
+        }
+      }
+    }
+
+    if (successCount > 0) {
+      let nextStateSnapshot: AppState | null = null;
+      setState(prev => {
+        const next: AppState = { ...prev };
+
+        if (mode === 'delete') {
+          if (affectedModulesSet.has('tarefas')) {
+            next.tarefas = prev.tarefas.filter(t => !succeededKeys.has(`tarefas:${t.ID_TAREFA || t.id}`));
+          }
+          if (affectedModulesSet.has('eventos')) {
+            next.eventos = prev.eventos.filter(e => !succeededKeys.has(`eventos:${e.id}`));
+          }
+          if (affectedModulesSet.has('movimentos')) {
+            next.movimentos = prev.movimentos.filter(m => !succeededKeys.has(`movimentos:${m.id}`));
+          }
+          if (affectedModulesSet.has('financeiro')) {
+            next.financeiro = prev.financeiro.filter(f => !succeededKeys.has(`financeiro:${f.id}`));
+          }
+          if (affectedModulesSet.has('documentos')) {
+            next.documentos = prev.documentos.filter(d => !succeededKeys.has(`documentos:${d.id}`));
+          }
+          if (affectedModulesSet.has('recursos')) {
+            next.recursos = prev.recursos.filter(r => !succeededKeys.has(`recursos:${r.id}`));
+          }
+          if (affectedModulesSet.has('envolvidos')) {
+            next.envolvidos = prev.envolvidos.filter(ev => !succeededKeys.has(`envolvidos:${ev.id}`));
+          }
+        } else {
+          const valOrUndef = mode === 'unlink' ? undefined : cleanTargetId;
+
+          if (affectedModulesSet.has('tarefas')) {
+            next.tarefas = prev.tarefas.map(t => {
+              const tid = String(t.ID_TAREFA || t.id || '');
+              let updated = t;
+              if (succeededKeys.has(`tarefas:processoId:${tid}`)) {
+                updated = {
+                  ...updated,
+                  PROCESSO_ID: valOrUndef || '',
+                  ID_PROC: valOrUndef || '',
+                  PROC_NOME: mode === 'unlink' ? '' : (resolvedProcessLabel || updated.PROC_NOME || '')
+                };
+              }
+              if (succeededKeys.has(`tarefas:responsavelId:${tid}`)) {
+                updated = {
+                  ...updated,
+                  RESPONSAVEL_ID: valOrUndef || '',
+                  ID_USER: valOrUndef || ''
+                };
+              }
+              if (succeededKeys.has(`tarefas:atribuidoId:${tid}`)) {
+                updated = {
+                  ...updated,
+                  ATRIBUIDO_ID: valOrUndef
+                };
+              }
+              return updated;
+            });
+          }
+
+          if (affectedModulesSet.has('eventos')) {
+            next.eventos = prev.eventos.map(e => {
+              let updated = e;
+              if (succeededKeys.has(`eventos:processoId:${e.id}`)) updated = { ...updated, processoId: valOrUndef };
+              if (succeededKeys.has(`eventos:usuarioId:${e.id}`)) updated = { ...updated, usuarioId: valOrUndef };
+              return updated;
+            });
+          }
+
+          if (affectedModulesSet.has('movimentos')) {
+            next.movimentos = prev.movimentos.map(m => {
+              let updated = m;
+              if (succeededKeys.has(`movimentos:processoId:${m.id}`)) updated = { ...updated, processoId: valOrUndef || '' };
+              if (succeededKeys.has(`movimentos:usuarioId:${m.id}`)) updated = { ...updated, usuarioId: valOrUndef };
+              return updated;
+            });
+          }
+
+          if (affectedModulesSet.has('financeiro')) {
+            next.financeiro = prev.financeiro.map(f => {
+              let updated = f;
+              if (succeededKeys.has(`financeiro:processoId:${f.id}`)) updated = { ...updated, processoId: valOrUndef };
+              if (succeededKeys.has(`financeiro:usuarioId:${f.id}`)) updated = { ...updated, usuarioId: valOrUndef };
+              return updated;
+            });
+          }
+
+          if (affectedModulesSet.has('documentos')) {
+            next.documentos = prev.documentos.map(d =>
+              succeededKeys.has(`documentos:processoId:${d.id}`) ? { ...d, processoId: valOrUndef } : d
+            );
+          }
+
+          if (affectedModulesSet.has('recursos')) {
+            next.recursos = prev.recursos.map(r =>
+              succeededKeys.has(`recursos:processoOriginarioId:${r.id}`) ? { ...r, processoOriginarioId: valOrUndef || '' } : r
+            );
+          }
+
+          if (affectedModulesSet.has('envolvidos')) {
+            next.envolvidos = prev.envolvidos.map(ev =>
+              succeededKeys.has(`envolvidos:processoId:${ev.id}`) ? { ...ev, processoId: valOrUndef } : ev
+            );
+          }
+
+          if (affectedModulesSet.has('processos')) {
+            next.processos = prev.processos.map(p =>
+              succeededKeys.has(`processos:advogadoId:${p.id}`) ? { ...p, advogadoId: valOrUndef } : p
+            );
+          }
+        }
+
+        nextStateSnapshot = next;
+        return next;
+      });
+
+      const modeLabel = mode === 'delete' ? 'Exclusão' : (mode === 'unlink' ? 'Desvínculo' : 'Reatribuição');
+      const modulesList = Array.from(affectedModulesSet).join(', ');
+      const logSummary = `${modeLabel} em lote de registros órfãos (${successCount} vínculo(s) em ${modulesList})${cleanTargetId ? ` -> Destino: ${cleanTargetId}` : ''}`;
+
+      if (dataSource === 'supabase' && isSupabaseConfigured()) {
+        await saveLogSupabase({
+          usuario: authenticatedUserEmail || 'Admin',
+          acao: 'ORPHAN_CLEANUP_BATCH',
+          idEscritorio: escritorioAtivoId || 'GLOBAL',
+          detalhes: logSummary,
+        });
+      } else if (nextStateSnapshot) {
+        saveAndLog(nextStateSnapshot, 'ORPHAN_CLEANUP_BATCH', logSummary);
+      }
+    }
+
+    return {
+      successCount,
+      errorCount,
+      affectedModules: Array.from(affectedModulesSet)
+    };
+  }, [state.processos, dataSource, authenticatedUserEmail, escritorioAtivoId, saveAndLog]);
 
   const setViewParams = useCallback((params: any) => {
     setState(s => ({ ...s, viewParams: params }));
@@ -3996,6 +4296,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     isProductionMode: environmentMode === 'producao',
     isHomologationMode: environmentMode === 'homologacao',
     saveEnvironmentMode,
+    applyOrphanCleanupBatch,
     lastSyncTime: state.lastSyncTime,
     syncLogs: state.syncLogs,
   }), [
@@ -4094,6 +4395,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     environmentMode,
     environmentSource,
     saveEnvironmentMode,
+    applyOrphanCleanupBatch,
     resetPassword,
     updatePassword,
   ]);

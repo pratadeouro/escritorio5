@@ -23,12 +23,14 @@ import {
   Scale, 
   Clock,
   FileSpreadsheet,
-  Send
+  Send,
+  Unlink
 } from 'lucide-react';
 import { isSupabaseConfigured } from '../services/supabaseService';
 import { sendTestEmailExternal, triggerAutomatedEmails } from '../services/googleAppsScript';
 import { EnvironmentMode } from '../types';
 import { SupabaseMigrationTab } from '../components/SupabaseMigrationTab';
+import { OrphanRecordsTab } from '../components/OrphanRecordsTab';
 import { safeGetStorageItem, safeSetStorageItem } from '../utils/safeStorage';
 
 const PRIMARY_COLORS = [
@@ -58,7 +60,7 @@ export default function ConfiguracoesGlobais() {
     saveEnvironmentMode
   } = useAppContext();
 
-  const [activeTab, setActiveTab] = useState<'google' | 'identity' | 'theme' | 'operations' | 'email' | 'migration'>('google');
+  const [activeTab, setActiveTab] = useState<'google' | 'identity' | 'theme' | 'operations' | 'email' | 'orphans' | 'migration'>('google');
 
   useEffect(() => {
     if (isProductionMode && activeTab === 'migration') {
@@ -615,6 +617,18 @@ export default function ConfiguracoesGlobais() {
         >
           <Mail size={15} />
           E-mails & Disparos
+        </button>
+
+        <button
+          onClick={() => setActiveTab('orphans')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs transition-all whitespace-nowrap ${
+            activeTab === 'orphans'
+              ? 'bg-primary text-white shadow-md'
+              : 'text-app-text-muted hover:text-app-text hover:bg-app-surface'
+          }`}
+        >
+          <Unlink size={15} />
+          Registros Órfãos
         </button>
 
         {!isProductionMode && (
@@ -1350,12 +1364,16 @@ export default function ConfiguracoesGlobais() {
         </div>
       )}
 
+      {activeTab === 'orphans' && (
+        <OrphanRecordsTab />
+      )}
+
       {!isProductionMode && activeTab === 'migration' && (
         <SupabaseMigrationTab />
       )}
 
       {/* Botão de Rodapé Flutuante para Salvar */}
-      {activeTab !== 'migration' && (
+      {activeTab !== 'migration' && activeTab !== 'orphans' && (
         <div className="flex justify-end pt-4">
           <button
             onClick={handleSaveAll}
