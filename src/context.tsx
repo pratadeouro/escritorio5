@@ -229,6 +229,15 @@ interface AppContextType {
     mode: OrphanBatchMode,
     newTargetId?: string
   ) => Promise<{ successCount: number; errorCount: number; affectedModules: string[] }>;
+  mergeDuplicateProcessesBatch: (
+    plans: DuplicateMergePlan[]
+  ) => Promise<{
+    mergedGroups: number;
+    removedProcesses: number;
+    transferredLinks: number;
+    deduplicatedParties: number;
+    errorCount: number;
+  }>;
 }
 
 export interface OrphanBatchTarget {
@@ -238,6 +247,12 @@ export interface OrphanBatchTarget {
 }
 
 export type OrphanBatchMode = 'assign' | 'unlink' | 'delete';
+
+export interface DuplicateMergePlan {
+  masterId: string;
+  duplicateIds: string[];
+  mergedMaster: Processo;
+}
 
 const normalizeEnvironmentMode = (val: any): EnvironmentMode | null => {
   const clean = String(val || '').trim().toLowerCase();
@@ -3857,6 +3872,265 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
   }, [state.processos, dataSource, authenticatedUserEmail, escritorioAtivoId, saveAndLog]);
 
+  const mergeDuplicateProcessesBatch = useCallback(async (
+    plans: DuplicateMergePlan[]
+  ): Promise<{
+    mergedGroups: number;
+    removedProcesses: number;
+    transferredLinks: number;
+    deduplicatedParties: number;
+    errorCount: number;
+  }> => {
+    if (!plans || plans.length === 0) {
+      return { mergedGroups: 0, removedProcesses: 0, transferredLinks: 0, deduplicatedParties: 0, errorCount: 0 };
+    }
+
+    const useSupabase = dataSource === 'supabase' && isSupabaseConfigured();
+    let mergedGroups = 0;
+    let removedProcesses = 0;
+    let transferredLinks = 0;
+    let deduplicatedParties = 0;
+    let errorCount = 0;
+
+    // Mapas de alteração acumulados para aplicar atomicamente no estado local
+    const mergedMasterById = new Map<string, Processo>();
+    const allDeletedProcessIds = new Set<string>();
+    const movTargetById = new Map<string, string>();
+    const tarTargetById = new Map<string, { masterId: string; procNome: string }>();
+    const eveTargetById = new Map<string, string>();
+    const finTargetById = new Map<string, string>();
+    const docTargetById = new Map<string, string>();
+    const recTargetById = new Map<string, string>();
+    const envTargetById = new Map<string, string>();
+    const dedupEnvDeleteIds = new Set<string>();
+
+    for (const plan of plans) {
+      const masterProc = state.processos.find(p => p.id === plan.masterId);
+      if (!masterProc || !plan.duplicateIds || plan.duplicateIds.length === 0) continue;
+
+      const dupProcs = state.processos.filter(
+        p => p.id !== plan.masterId && plan.duplicateIds.includes(p.id)
+      );
+      if (dupProcs.length === 0) continue;
+
+      const masterKeys = new Set<string>(
+        [plan.masterId, masterProc.idProc, plan.mergedMaster.idProc]
+          .map(v => String(v || '').trim().toUpperCase())
+          .filter(Boolean)
+      );
+
+      const dupKeys = new Set<string>();
+      dupProcs.forEach(dp => {
+        const k1 = String(dp.id || '').trim().toUpperCase();
+        const k2 = String(dp.idProc || '').trim().toUpperCase();
+        if (k1 && !masterKeys.has(k1)) dupKeys.add(k1);
+        if (k2 && !masterKeys.has(k2)) dupKeys.add(k2);
+      });
+
+      const matchesDup = (raw?: string) => {
+        const clean = String(raw || '').trim().toUpperCase();
+        return !!clean && dupKeys.has(clean);
+      };
+
+      const matchesMaster = (raw?: string) => {
+        const clean = String(raw || '').trim().toUpperCase();
+        return !!clean && masterKeys.has(clean);
+      };
+
+      const masterProcLabel = plan.mergedMaster.numero || plan.mergedMaster.titulo || plan.masterId;
+
+      const movIds = state.movimentos.filter(m => matchesDup(m.processoId)).map(m => m.id);
+      const tarIds = state.tarefas
+        .filter(t => matchesDup(t.PROCESSO_ID || t.ID_PROC))
+        .map(t => String(t.ID_TAREFA || t.id || ''))
+        .filter(Boolean);
+      const eveIds = state.eventos.filter(e => matchesDup(e.processoId)).map(e => e.id);
+      const finIds = state.financeiro.filter(f => matchesDup(f.processoId)).map(f => f.id);
+      const docIds = state.documentos.filter(d => matchesDup(d.processoId)).map(d => d.id);
+      const recIds = state.recursos.filter(r => matchesDup(r.processoOriginarioId)).map(r => r.id);
+
+      // Deduplica envolvidos (mesmo contatoId + tipoEnvolvimento já existente no Mestre)
+      const seenPartyKeys = new Set<string>();
+      state.envolvidos.forEach(ev => {
+        if (matchesMaster(ev.processoId)) {
+          seenPartyKeys.add(
+            `${String(ev.contatoId || '').trim().toUpperCase()}::${String(ev.tipoEnvolvimento || '').trim().toLowerCase()}`
+          );
+        }
+      });
+
+      const envMoveIds: string[] = [];
+      const envDedupIds: string[] = [];
+      state.envolvidos.forEach(ev => {
+        if (!matchesDup(ev.processoId)) return;
+        const pKey = `${String(ev.contatoId || '').trim().toUpperCase()}::${String(ev.tipoEnvolvimento || '').trim().toLowerCase()}`;
+        if (seenPartyKeys.has(pKey)) {
+          envDedupIds.push(ev.id);
+        } else {
+          seenPartyKeys.add(pKey);
+          envMoveIds.push(ev.id);
+        }
+      });
+
+      if (useSupabase) {
+        // 1. Atualiza o Processo Mestre consolidado
+        const masterOk = await upsertProcessoSupabase(plan.mergedMaster);
+        if (!masterOk) {
+          errorCount += 1;
+          continue;
+        }
+
+        // 2. Transfere dependentes para o Master
+        if (movIds.length > 0) {
+          const r = await batchPatchRecordsSupabase('movimentos', movIds, { processo_id: plan.masterId });
+          transferredLinks += r.ok;
+          errorCount += r.failed;
+        }
+        if (tarIds.length > 0) {
+          const r = await batchPatchRecordsSupabase('tarefas', tarIds, {
+            processo_id: plan.masterId,
+            proc_nome: masterProcLabel
+          });
+          transferredLinks += r.ok;
+          errorCount += r.failed;
+        }
+        if (eveIds.length > 0) {
+          const r = await batchPatchRecordsSupabase('eventos', eveIds, { processo_id: plan.masterId });
+          transferredLinks += r.ok;
+          errorCount += r.failed;
+        }
+        if (finIds.length > 0) {
+          const r = await batchPatchRecordsSupabase('financeiro', finIds, { processo_id: plan.masterId });
+          transferredLinks += r.ok;
+          errorCount += r.failed;
+        }
+        if (docIds.length > 0) {
+          const r = await batchPatchRecordsSupabase('documentos', docIds, { processo_id: plan.masterId });
+          transferredLinks += r.ok;
+          errorCount += r.failed;
+        }
+        if (recIds.length > 0) {
+          const r = await batchPatchRecordsSupabase('recursos', recIds, { processo_originario_id: plan.masterId });
+          transferredLinks += r.ok;
+          errorCount += r.failed;
+        }
+        if (envMoveIds.length > 0) {
+          const r = await batchPatchRecordsSupabase('envolvidos', envMoveIds, { processo_id: plan.masterId });
+          transferredLinks += r.ok;
+          errorCount += r.failed;
+        }
+        if (envDedupIds.length > 0) {
+          const r = await batchDeleteRecordsSupabase('envolvidos', envDedupIds);
+          deduplicatedParties += r.ok;
+          errorCount += r.failed;
+        }
+
+        // 3. Remove as cópias duplicadas do processo
+        const delIds = dupProcs.map(d => d.id);
+        const delRes = await batchDeleteRecordsSupabase('processos', delIds);
+        removedProcesses += delRes.ok;
+        errorCount += delRes.failed;
+        if (delRes.ok > 0) {
+          delIds.forEach(id => allDeletedProcessIds.add(id));
+        }
+      } else {
+        transferredLinks += movIds.length + tarIds.length + eveIds.length + finIds.length + docIds.length + recIds.length + envMoveIds.length;
+        deduplicatedParties += envDedupIds.length;
+        removedProcesses += dupProcs.length;
+        dupProcs.forEach(d => allDeletedProcessIds.add(d.id));
+      }
+
+      mergedGroups += 1;
+      mergedMasterById.set(plan.masterId, plan.mergedMaster);
+      movIds.forEach(id => movTargetById.set(id, plan.masterId));
+      tarIds.forEach(id => tarTargetById.set(id, { masterId: plan.masterId, procNome: masterProcLabel }));
+      eveIds.forEach(id => eveTargetById.set(id, plan.masterId));
+      finIds.forEach(id => finTargetById.set(id, plan.masterId));
+      docIds.forEach(id => docTargetById.set(id, plan.masterId));
+      recIds.forEach(id => recTargetById.set(id, plan.masterId));
+      envMoveIds.forEach(id => envTargetById.set(id, plan.masterId));
+      envDedupIds.forEach(id => dedupEnvDeleteIds.add(id));
+    }
+
+    if (mergedGroups > 0) {
+      let nextStateSnapshot: AppState | null = null;
+      setState(prev => {
+        const next: AppState = {
+          ...prev,
+          processos: prev.processos
+            .filter(p => !allDeletedProcessIds.has(p.id))
+            .map(p => mergedMasterById.get(p.id) || p),
+          movimentos: prev.movimentos.map(m =>
+            movTargetById.has(m.id) ? { ...m, processoId: movTargetById.get(m.id)! } : m
+          ),
+          tarefas: prev.tarefas.map(t => {
+            const tid = String(t.ID_TAREFA || t.id || '');
+            const upd = tarTargetById.get(tid);
+            if (!upd) return t;
+            return {
+              ...t,
+              PROCESSO_ID: upd.masterId,
+              ID_PROC: upd.masterId,
+              PROC_NOME: upd.procNome
+            };
+          }),
+          eventos: prev.eventos.map(e =>
+            eveTargetById.has(e.id) ? { ...e, processoId: eveTargetById.get(e.id)! } : e
+          ),
+          financeiro: prev.financeiro.map(f =>
+            finTargetById.has(f.id) ? { ...f, processoId: finTargetById.get(f.id)! } : f
+          ),
+          documentos: prev.documentos.map(d =>
+            docTargetById.has(d.id) ? { ...d, processoId: docTargetById.get(d.id)! } : d
+          ),
+          recursos: prev.recursos.map(r =>
+            recTargetById.has(r.id) ? { ...r, processoOriginarioId: recTargetById.get(r.id)! } : r
+          ),
+          envolvidos: prev.envolvidos
+            .filter(ev => !dedupEnvDeleteIds.has(ev.id))
+            .map(ev =>
+              envTargetById.has(ev.id) ? { ...ev, processoId: envTargetById.get(ev.id)! } : ev
+            ),
+        };
+        nextStateSnapshot = next;
+        return next;
+      });
+
+      const logSummary = `Mesclagem de processos duplicados: ${mergedGroups} grupo(s) consolidado(s), ${removedProcesses} cópia(s) removida(s), ${transferredLinks} vínculo(s) transferido(s), ${deduplicatedParties} envolvido(s) deduplicado(s).`;
+      if (useSupabase) {
+        await saveLogSupabase({
+          usuario: authenticatedUserEmail || 'Admin',
+          acao: 'PROCESS_MERGE_BATCH',
+          idEscritorio: escritorioAtivoId || 'GLOBAL',
+          detalhes: logSummary,
+        });
+      } else if (nextStateSnapshot) {
+        saveAndLog(nextStateSnapshot, 'PROCESS_MERGE_BATCH', logSummary);
+      }
+    }
+
+    return {
+      mergedGroups,
+      removedProcesses,
+      transferredLinks,
+      deduplicatedParties,
+      errorCount,
+    };
+  }, [
+    state.processos,
+    state.movimentos,
+    state.tarefas,
+    state.eventos,
+    state.financeiro,
+    state.documentos,
+    state.recursos,
+    state.envolvidos,
+    dataSource,
+    authenticatedUserEmail,
+    escritorioAtivoId,
+    saveAndLog
+  ]);
+
   const setViewParams = useCallback((params: any) => {
     setState(s => ({ ...s, viewParams: params }));
   }, []);
@@ -4297,6 +4571,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     isHomologationMode: environmentMode === 'homologacao',
     saveEnvironmentMode,
     applyOrphanCleanupBatch,
+    mergeDuplicateProcessesBatch,
     lastSyncTime: state.lastSyncTime,
     syncLogs: state.syncLogs,
   }), [
@@ -4396,6 +4671,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     environmentSource,
     saveEnvironmentMode,
     applyOrphanCleanupBatch,
+    mergeDuplicateProcessesBatch,
     resetPassword,
     updatePassword,
   ]);

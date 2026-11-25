@@ -12,6 +12,7 @@ import { CreateContatoModal, CreateVaraModal, CreateEventoModal } from '../compo
 import TipoEnvolvimentoModal from '../components/TipoEnvolvimentoModal';
 import Pagination from '../components/Pagination';
 import { SafeDeleteEntityModal } from '../components/SafeDeleteEntityModal';
+import { normalizeProcessMergeKey } from '../components/DuplicateProcessesTab';
 import {
   DndContext,
   closestCenter,
@@ -523,6 +524,7 @@ export default function Processos({
   });
 
   const [formError, setFormError] = useState<string | null>(null);
+  const [duplicateProcessMatch, setDuplicateProcessMatch] = useState<Processo | null>(null);
 
   const getUltimoMovDate = (processo: any) => {
     const movimentosProc = state.movimentos.filter(m => 
@@ -1068,6 +1070,7 @@ export default function Processos({
   const handleOpenModal = (mode: ModalMode, processo?: Processo) => {
     setModalMode(mode);
     setFormError(null);
+    setDuplicateProcessMatch(null);
     setVaraSearch('');
     setShowVaraResults(false);
     setClientSearch('');
@@ -1156,6 +1159,7 @@ export default function Processos({
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
+    setDuplicateProcessMatch(null);
     
     // Validar Título
     if (!formData.titulo || !formData.titulo.trim()) {
@@ -1183,6 +1187,25 @@ export default function Processos({
         }
       }, 50);
       return;
+    }
+
+    // Prevenção de duplicidade: valida número CNJ normalizado dentro do mesmo escritório
+    const normalizedNumKey = normalizeProcessMergeKey(formData.numero);
+    if (normalizedNumKey) {
+      const targetOfficeNorm = String(finalOfficeId || '').trim().toUpperCase();
+      const existingSameOffice = state.processos.find(p => {
+        if (modalMode === 'edit' && selectedProcesso && p.id === selectedProcesso.id) return false;
+        const pOfficeNorm = String(p.escritorioId || '').trim().toUpperCase();
+        if (pOfficeNorm !== targetOfficeNorm) return false;
+        return normalizeProcessMergeKey(p.numero) === normalizedNumKey;
+      });
+      if (existingSameOffice) {
+        setDuplicateProcessMatch(existingSameOffice);
+        setFormError(
+          `Já existe um processo cadastrado neste escritório com o número ${existingSameOffice.numero || formData.numero} (ID: ${existingSameOffice.id}).`
+        );
+        return;
+      }
     }
     
     if (modalMode === 'create') {
@@ -3285,6 +3308,20 @@ export default function Processos({
               <div className="flex-1">
                 <h4 className="font-bold">Não foi possível salvar o processo</h4>
                 <p className="mt-1 text-xs opacity-90">{formError}</p>
+                {duplicateProcessMatch && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const target = duplicateProcessMatch;
+                      setDuplicateProcessMatch(null);
+                      setFormError(null);
+                      handleOpenModal('edit', target);
+                    }}
+                    className="mt-2 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold transition-colors"
+                  >
+                    Abrir processo existente
+                  </button>
+                )}
               </div>
             </div>
           )}

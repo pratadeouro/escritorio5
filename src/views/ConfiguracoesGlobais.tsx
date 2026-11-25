@@ -24,13 +24,15 @@ import {
   Clock,
   FileSpreadsheet,
   Send,
-  Unlink
+  Unlink,
+  GitMerge
 } from 'lucide-react';
 import { isSupabaseConfigured } from '../services/supabaseService';
 import { sendTestEmailExternal, triggerAutomatedEmails } from '../services/googleAppsScript';
 import { EnvironmentMode } from '../types';
 import { SupabaseMigrationTab } from '../components/SupabaseMigrationTab';
 import { OrphanRecordsTab } from '../components/OrphanRecordsTab';
+import { DuplicateProcessesTab } from '../components/DuplicateProcessesTab';
 import { safeGetStorageItem, safeSetStorageItem } from '../utils/safeStorage';
 
 const PRIMARY_COLORS = [
@@ -60,7 +62,7 @@ export default function ConfiguracoesGlobais() {
     saveEnvironmentMode
   } = useAppContext();
 
-  const [activeTab, setActiveTab] = useState<'google' | 'identity' | 'theme' | 'operations' | 'email' | 'orphans' | 'migration'>('google');
+  const [activeTab, setActiveTab] = useState<'google' | 'identity' | 'theme' | 'operations' | 'email' | 'orphans' | 'duplicates' | 'migration'>('google');
 
   useEffect(() => {
     if (isProductionMode && activeTab === 'migration') {
@@ -629,6 +631,18 @@ export default function ConfiguracoesGlobais() {
         >
           <Unlink size={15} />
           Registros Órfãos
+        </button>
+
+        <button
+          onClick={() => setActiveTab('duplicates')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-xs transition-all whitespace-nowrap ${
+            activeTab === 'duplicates'
+              ? 'bg-primary text-white shadow-md'
+              : 'text-app-text-muted hover:text-app-text hover:bg-app-surface'
+          }`}
+        >
+          <GitMerge size={15} />
+          Processos Duplicados
         </button>
 
         {!isProductionMode && (
@@ -1368,12 +1382,16 @@ export default function ConfiguracoesGlobais() {
         <OrphanRecordsTab />
       )}
 
+      {activeTab === 'duplicates' && (
+        <DuplicateProcessesTab />
+      )}
+
       {!isProductionMode && activeTab === 'migration' && (
         <SupabaseMigrationTab />
       )}
 
       {/* Botão de Rodapé Flutuante para Salvar */}
-      {activeTab !== 'migration' && activeTab !== 'orphans' && (
+      {activeTab !== 'migration' && activeTab !== 'orphans' && activeTab !== 'duplicates' && (
         <div className="flex justify-end pt-4">
           <button
             onClick={handleSaveAll}
